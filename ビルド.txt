@@ -1,0 +1,2 @@
+g++ orion_receaver.cpp  -lwiringPi -o b.out
+ g++ orion_comunication_core.cpp  -lwiringPi -o a.out

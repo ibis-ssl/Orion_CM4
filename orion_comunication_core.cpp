@@ -16,8 +16,8 @@ int main()
  int sock;
  struct sockaddr_in addr;
 
- char buf[12];
- char senddata[14];
+ char buf[16];
+ char senddata[18];
 
   int fd = serialOpen("/dev/serial0",921600);    
     
@@ -41,10 +41,10 @@ while(1){
  recv(sock, buf, sizeof(buf), 0);
  
 	printf(
-	  "=%x =%x =%x =%x =%x =%x =%x =%x =%x =%x =%x =%x", static_cast<int>(buf[0]),
+	  "=%x =%x =%x =%x =%x =%x =%x =%x =%x =%x =%x =%x =%x =%x =%x =%x", static_cast<int>(buf[0]),
 	  buf[1], buf[2], buf[3], buf[4], buf[5],
 	  buf[6], buf[7], buf[8], buf[9], buf[10],
-	  buf[11]);
+	  buf[11], buf[12], buf[13], buf[14], buf[15]);
 	printf("\n");
 	
 	senddata[0]=254;
@@ -60,7 +60,11 @@ while(1){
 	senddata[10]=buf[9];
 	senddata[11]=buf[10];
 	senddata[12]=buf[11];
-	senddata[13]=253;
+	senddata[13]=buf[12];
+	senddata[14]=buf[13];
+	senddata[15]=buf[14];
+	senddata[16]=buf[15];
+	senddata[17]=253;
 	
 	serialPutchar(fd,senddata[0]);
 	serialPutchar(fd,senddata[1]);
@@ -76,6 +80,11 @@ while(1){
 	serialPutchar(fd,senddata[11]);
 	serialPutchar(fd,senddata[12]);
 	serialPutchar(fd,senddata[13]);
+	serialPutchar(fd,senddata[14]);
+	serialPutchar(fd,senddata[15]);
+	serialPutchar(fd,senddata[16]);
+	serialPutchar(fd,senddata[17]);
+
 
  close(sock);
 }
