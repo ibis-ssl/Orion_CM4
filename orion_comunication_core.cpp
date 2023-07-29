@@ -7,19 +7,22 @@
 #include <wiringPi.h>
 #include <wiringSerial.h>
 #include <termios.h>		//ttyパラメータの構造体
+#include <iostream>
+#include <stringstream>
 
 int main()
 {
-
 	printf("start");
 
- int sock;
- struct sockaddr_in addr;
+ 	int sock;
+ 	struct sockaddr_in addr;
 
- char buf[20];
- char senddata[22];
+ 	constexpr int BUFFER_SIZE = 25;
+	constexpr int PACKET_SIZE = 32;
+ 	char buf[BUFFER_SIZE] = {};
+ 	char senddata[PACKET_SIZE];
 
-  int fd = serialOpen("/dev/serial0",921600);    
+  	int fd = serialOpen("/dev/serial0",921600);    
     
     wiringPiSetup();
     fflush(stdout);
@@ -29,75 +32,35 @@ int main()
     }
 
 
-while(1){
- sock = socket(AF_INET, SOCK_DGRAM, 0);
+	while(1){
+ 		sock = socket(AF_INET, SOCK_DGRAM, 0);
 
- addr.sin_family = AF_INET;
- addr.sin_port = htons(12345);
- addr.sin_addr.s_addr = INADDR_ANY;
-
- bind(sock, (struct sockaddr *)&addr, sizeof(addr));
-
- recv(sock, buf, sizeof(buf), 0);
- 
-	printf(
-	  "=%x =%x =%x =%x =%x =%x =%x =%x =%x =%x =%x =%x =%x =%x =%x =%x", static_cast<int>(buf[0]),
-	  buf[1], buf[2], buf[3], buf[4], buf[5],
-	  buf[6], buf[7], buf[8], buf[9], buf[10],
-	  buf[11], buf[12], buf[13], buf[14], buf[15]);
-	printf("\n");
+		 addr.sin_family = AF_INET;
+		 addr.sin_port = htons(12345);
+		 addr.sin_addr.s_addr = INADDR_ANY;
+		
+		 bind(sock, (struct sockaddr *)&addr, sizeof(addr));
+		
+		 recv(sock, buf, sizeof(buf), 0);
+ 	
+		std::stringstream ss;
+		for(int i=0; i< BUFFER_SIZE; i++){
+			ss << buff[i] << ", ";
+		}
+		std::cout << ss.str() << std::endl;
+		
+		senddata[0]=254;
+		for(int i = 1; i< PACKET_SIZE - 1; i++){
+			senddata[i]=buf[i-1];	
+		}
+		senddata[PACKET_SIZE - 1]=253;
 	
-	senddata[0]=254;
-	senddata[1]=buf[0];
-	senddata[2]=buf[1];
-	senddata[3]=buf[2];
-	senddata[4]=buf[3];
-	senddata[5]=buf[4];
-	senddata[6]=buf[5];
-	senddata[7]=buf[6];
-	senddata[8]=buf[7];
-	senddata[9]=buf[8];
-	senddata[10]=buf[9];
-	senddata[11]=buf[10];
-	senddata[12]=buf[11];
-	senddata[13]=buf[12];
-	senddata[14]=buf[13];
-	senddata[15]=buf[14];
-	senddata[16]=buf[15];
-	senddata[17]=buf[16];
-	senddata[18]=buf[17];
-	senddata[19]=buf[18];
-	senddata[20]=buf[19];
-	senddata[21]=253;
-	
-	serialPutchar(fd,senddata[0]);
-	serialPutchar(fd,senddata[1]);
-	serialPutchar(fd,senddata[2]);
-	serialPutchar(fd,senddata[3]);
-	serialPutchar(fd,senddata[4]);
-	serialPutchar(fd,senddata[5]);
-	serialPutchar(fd,senddata[6]);
-	serialPutchar(fd,senddata[7]);
-	serialPutchar(fd,senddata[8]);
-	serialPutchar(fd,senddata[9]);
-	serialPutchar(fd,senddata[10]);
-	serialPutchar(fd,senddata[11]);
-	serialPutchar(fd,senddata[12]);
-	serialPutchar(fd,senddata[13]);
-	serialPutchar(fd,senddata[14]);
-	serialPutchar(fd,senddata[15]);
-	serialPutchar(fd,senddata[16]);
-	serialPutchar(fd,senddata[17]);
-	serialPutchar(fd,senddata[18]);
-	serialPutchar(fd,senddata[19]);
-	serialPutchar(fd,senddata[20]);
-	serialPutchar(fd,senddata[21]);
+		for(int i=0; i< 32; i++){
+			serialPutchar(fd,senddata[i]);	
+		}
 
+ 		close(sock);
+	}
 
-
- close(sock);
+ 	return 0;
 }
-
- return 0;
-}
-
