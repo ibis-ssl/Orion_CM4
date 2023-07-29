@@ -20,5 +20,6 @@ jobs:
           sudo apt-get install -y build-essential
       - run: |
           cd /home/runner/work/Orion_CM4
-          g++ orion_receaver.cpp  -lwiringPi -o b.out
-          g++ orion_comunication_core.cpp  -lwiringPi -o a.out
+          ls -R
+          g++ ./orion_receaver.cpp  -lwiringPi -o b.out
+          g++ ./orion_comunication_core.cpp  -lwiringPi -o a.out
