@@ -17,10 +17,9 @@ int main()
  	int sock;
  	struct sockaddr_in addr;
 
- 	constexpr int BUFFER_SIZE = 25;
 	constexpr int PACKET_SIZE = 32;
- 	char buf[BUFFER_SIZE] = {};
- 	char senddata[PACKET_SIZE];
+ 	char buf[PACKET_SIZE-2] = {};
+ 	char senddata[PACKET_SIZE] = {};
 
   	int fd = serialOpen("/dev/serial0",921600);    
     
@@ -44,12 +43,13 @@ int main()
 		 recv(sock, buf, sizeof(buf), 0);
  	
 		std::stringstream ss;
-		for(int i=0; i< BUFFER_SIZE; i++){
+		for(int i=0; i< PACKET_SIZE-2; i++){
 			ss << buff[i] << ", ";
 		}
 		std::cout << ss.str() << std::endl;
 		
-		senddata[0]=254;
+		senddata[0] = 254;
+		// contennt: 1~30 
 		for(int i = 1; i< PACKET_SIZE - 1; i++){
 			senddata[i]=buf[i-1];	
 		}
