@@ -8,7 +8,7 @@
 #include <wiringSerial.h>
 #include <termios.h>		//ttyパラメータの構造体
 #include <iostream>
-#include <stringstream>
+#include <sstream>
 
 int main()
 {
@@ -44,7 +44,7 @@ int main()
  	
 		std::stringstream ss;
 		for(int i=0; i< PACKET_SIZE-2; i++){
-			ss << buff[i] << ", ";
+			ss << buf[i] << ", ";
 		}
 		std::cout << ss.str() << std::endl;
 		
