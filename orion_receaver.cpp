@@ -17,9 +17,10 @@ int main()
  int sock;
  struct sockaddr_in addr;
  int count=0;
+constexpr int PACKET_SIZE = 64;
 
- char Rxbuf[8];
- char Rxdata[7];
+ char Rxbuf[PACKET_SIZE];
+ char Rxdata[PACKET_SIZE-1];
 
   int fd = serialOpen("/dev/serial0",921600);    
     
@@ -32,38 +33,30 @@ int main()
 
 
 while(1){
- while(serialDataAvail(fd)>7){
-        Rxbuf[0] =  serialGetchar(fd);
-        Rxbuf[1] =  serialGetchar(fd);
-        Rxbuf[2] =  serialGetchar(fd);
-        Rxbuf[3] =  serialGetchar(fd);
-        Rxbuf[4] =  serialGetchar(fd);
-        Rxbuf[5] =  serialGetchar(fd);
-        Rxbuf[6] =  serialGetchar(fd);
-        Rxbuf[7] =  serialGetchar(fd);
-		
-		
-		
-		uint8_t j = 0;
+ while(serialDataAvail(fd)>PACKET_SIZE){
 
-		while (Rxbuf[j] != 254 &&  j<sizeof(Rxbuf)) {
-			j++;
+	
+		for(int i = 1; i< PACKET_SIZE - 1; i++){
+			Rxbuf[i]=serialGetchar(fd);;	
 		}
-		if(j>=sizeof(Rxbuf)){
-			for(uint8_t k=0;k<(sizeof(Rxdata));k++){
-				Rxdata[k]=0;
+		
+		uint8_t start_byte_idx = 0;
+
+		while ((Rxbuf[start_byte_idx] != 0xFE  && Rxbuf[start_byte_idx+1] != 0xFC )&& Rxbuf < sizeof(Rxbuf)) {
+			start_byte_idx++;
 			}
+		if (start_byte_idx >= sizeof(Rxbuf)) {
+		for (uint8_t k = 0; k < (sizeof(Rxdata)); k++) {
+			Rxdata[k] = 0;
 		}
-		else{
-			for (uint8_t k = 0; k < sizeof(Rxdata); k++) {
-				if ((j + k) >= sizeof(Rxdata)) {
-					Rxdata[k] = Rxbuf[k - (sizeof(Rxdata) - j)];
-				}
-				else {
-					Rxdata[k] = Rxbuf[j + k + 1];
-				}
-			}
+		return;
+		//受信なしデータクリア
+		} else {
+		for (int i = 0; i < PACKET_SIZE - 1; i++) {
+			Rxdata[i] = Rxbuf[i + 1];
 		}
+		}
+
 		count++;
 		
 		if(count>30){

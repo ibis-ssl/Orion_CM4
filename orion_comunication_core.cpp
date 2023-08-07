@@ -17,7 +17,7 @@ int main()
  	int sock;
  	struct sockaddr_in addr;
 
-	constexpr int PACKET_SIZE = 32;
+	constexpr int PACKET_SIZE = 64;
  	char buf[PACKET_SIZE-2] = {};
  	char senddata[PACKET_SIZE] = {};
 
