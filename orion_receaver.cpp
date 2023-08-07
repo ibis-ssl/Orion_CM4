@@ -20,7 +20,7 @@ int main()
 constexpr int PACKET_SIZE = 64;
 
  char Rxbuf[PACKET_SIZE];
- char Rxdata[PACKET_SIZE-1];
+ char Rxdata[PACKET_SIZE-2];
 
   int fd = serialOpen("/dev/serial0",921600);    
     
@@ -36,24 +36,23 @@ while(1){
  while(serialDataAvail(fd)>PACKET_SIZE){
 
 	
-		for(int i = 1; i< PACKET_SIZE - 1; i++){
+		for(int i = 0; i< PACKET_SIZE; i++){
 			Rxbuf[i]=serialGetchar(fd);;	
 		}
 		
 		uint8_t start_byte_idx = 0;
 
-		while ((Rxbuf[start_byte_idx] != 0xFE  && Rxbuf[start_byte_idx+1] != 0xFC )&& Rxbuf < sizeof(Rxbuf)) {
+		while ((Rxbuf[start_byte_idx] != 0xFE  && Rxbuf[start_byte_idx+1] != 0xFC ) && start_byte_idx < sizeof(Rxbuf)) {
 			start_byte_idx++;
 			}
 		if (start_byte_idx >= sizeof(Rxbuf)) {
 		for (uint8_t k = 0; k < (sizeof(Rxdata)); k++) {
 			Rxdata[k] = 0;
 		}
-		return;
 		//受信なしデータクリア
 		} else {
-		for (int i = 0; i < PACKET_SIZE - 1; i++) {
-			Rxdata[i] = Rxbuf[i + 1];
+		for (int i = 0; i < PACKET_SIZE - 2; i++) {
+			Rxdata[i] = Rxbuf[i + 2];
 		}
 		}
 
