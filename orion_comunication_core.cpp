@@ -48,6 +48,9 @@ int main()
 		}
 		std::cout << ss.str() << std::endl;
 		
+
+
+
 		senddata[0] = 254;
 		// contennt: 1~30 
 		for(int i = 1; i< PACKET_SIZE - 1; i++){
