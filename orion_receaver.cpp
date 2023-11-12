@@ -34,7 +34,6 @@ constexpr int PACKET_SIZE = 64;
 
 while(1){
  while(serialDataAvail(fd)>PACKET_SIZE){
-
 	
 		for(int i = 0; i< PACKET_SIZE; i++){
 			Rxbuf[i]=serialGetchar(fd);;	
@@ -51,16 +50,25 @@ while(1){
 		}
 		//受信なしデータクリア
 		} else {
-		for (int i = 0; i < PACKET_SIZE - 2; i++) {
-			Rxdata[i] = Rxbuf[i + 2];
-		}
+			for (uint8_t k = 0; k < sizeof(Rxbuf); k++) {
+						if ((start_byte_idx + k) >= sizeof(Rxbuf)) {
+							Rxdata[k] = Rxbuf[k - (sizeof(Rxbuf) - start_byte_idx)];
+						}
+
+						else {
+							Rxdata[k] = Rxbuf[start_byte_idx + k + 2];
+						}
+
+					}
+
 		}
 
 		count++;
 		
-		if(count>30){
+		if(count>100){
 			int yaw=Rxdata[0]+(Rxdata[1]<<8)-360;
 			
+			printf(" S_id=%d",start_byte_idx);
 			printf(" %d %d %d %d %d %d %d",Rxdata[0],Rxdata[1],Rxdata[2],Rxdata[3],Rxdata[4],Rxdata[5],Rxdata[6]);
 			printf(" yaw=%d Power_V=%d",yaw,Rxdata[6]);
 			printf("\n");

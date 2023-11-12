@@ -161,19 +161,10 @@ def show_camera():
             send_len = sock.sendto(bytearray(x), serv_address)
             	
             
-#            count += 1
-#            if count == 3:
-#                count = 0
-#                cv2.imshow('CSI Camera',mask)
-#            else:
             cv2.imshow('CSI Camera',img)
             cv2.imshow('process',mask)
 
-           #print(str((time_1 - time_0)*1000)+" "+str((time_2 - time_1)*1000)+" "+str((time_3 - time_2)*1000)+" "+str((time_4 - time_3)*1000)+" "+str((time_5 - time_4)*1000)+" "+str((time_6 - time_5)*1000)+" "+str((time_7 - time_6)*1000)+" "+str((time_7 - time_0)*1000))
 
-	    # This also acts as 
-            #img = cv2.resize(img, (160,120))
-            #cv2.imshow('CSI Camera',img)
             keyCode = cv2.waitKey(1) & 0xff
             # Stop the program on the ESC key
             if keyCode == 27:
