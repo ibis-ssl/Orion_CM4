@@ -52,7 +52,7 @@ while(1){
 		} else {
 			for (uint8_t k = 0; k < sizeof(Rxbuf); k++) {
 						if ((start_byte_idx + k) >= sizeof(Rxbuf)) {
-							Rxdata[k] = Rxbuf[k - (sizeof(Rxbuf) - start_byte_idx)];
+							Rxdata[k] = Rxbuf[k - (sizeof(Rxbuf) - start_byte_idx + 2)];
 						}
 
 						else {
@@ -65,12 +65,12 @@ while(1){
 
 		count++;
 		
-		if(count>100){
+		if(count>10){
 			int yaw=Rxdata[3]+(Rxdata[2]<<8)-360;
 			
 			printf(" S_id=%d",start_byte_idx);
 			printf(" %d %d %d %d %d %d %d",Rxdata[0],Rxdata[1],Rxdata[2],Rxdata[3],Rxdata[4],Rxdata[5],Rxdata[6]);
-			printf(" yaw=%d Power_V=%d",yaw,Rxdata[6]);
+			//printf(" yaw=%d Power_V=%d",yaw,Rxdata[6]);
 			printf("\n");
 			count=0;
 		}
