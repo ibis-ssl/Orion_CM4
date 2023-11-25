@@ -17,7 +17,7 @@ int main()
  int sock;
  struct sockaddr_in addr;
  int count=0;
-constexpr int PACKET_SIZE = 64;
+constexpr int PACKET_SIZE = 128;
 
  char Rxbuf[PACKET_SIZE];
  char Rxdata[PACKET_SIZE-2];
@@ -66,14 +66,14 @@ while(1){
 		count++;
 		
 		if(count>100){
-			int yaw=Rxdata[0]+(Rxdata[1]<<8)-360;
+			int yaw=Rxdata[3]+(Rxdata[2]<<8)-360;
 			
 			printf(" S_id=%d",start_byte_idx);
 			printf(" %d %d %d %d %d %d %d",Rxdata[0],Rxdata[1],Rxdata[2],Rxdata[3],Rxdata[4],Rxdata[5],Rxdata[6]);
 			printf(" yaw=%d Power_V=%d",yaw,Rxdata[6]);
 			printf("\n");
 			count=0;
-			
+		}
 			int sock;
 			struct sockaddr_in addr;
 			in_addr_t ipaddr;
@@ -81,10 +81,10 @@ while(1){
 			sock = socket(AF_INET, SOCK_DGRAM, 0);
 
 			addr.sin_family = AF_INET;
-			addr.sin_port = htons(50101);
-			addr.sin_addr.s_addr = inet_addr("239.192.1.2");
+			addr.sin_port = htons(50102);
+			addr.sin_addr.s_addr = inet_addr("224.5.20.102");
 
-			ipaddr = inet_addr("192.168.20.101");
+			ipaddr = inet_addr("192.168.20.102");
 			if (setsockopt(sock,
 					IPPROTO_IP,
 					IP_MULTICAST_IF,
@@ -93,14 +93,8 @@ while(1){
 				return 1;
 			 }
 
-			sendto(sock, Rxdata, 7, 0, (struct sockaddr *)&addr, sizeof(addr));
+			sendto(sock, Rxdata, PACKET_SIZE-2, 0, (struct sockaddr *)&addr, sizeof(addr));
 			 close(sock);
-					
-		
-		
-		
-		
-		}
     
     
     

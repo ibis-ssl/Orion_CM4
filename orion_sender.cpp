@@ -43,7 +43,7 @@ main()
 	struct sockaddr_in addr2;
 
 	char rx_buf_ball[7]= {};
-	constexpr int PACKET_SIZE = 32;
+	constexpr int PACKET_SIZE = 64;
 	char buf[PACKET_SIZE-2] = {};
 	char senddata[PACKET_SIZE] = {};
 	int val;
@@ -89,7 +89,7 @@ main()
 		n = recv(sock1, buf, sizeof(buf), 0);
 		n = recv(sock2, rx_buf_ball, sizeof(rx_buf_ball), 0);
 
-		if(cnt>100){
+		if(cnt>10){
 				
 			ai_cmd.local_target_speed[0] = two_to_float(&buf[1]) * 7.0;
 			ai_cmd.local_target_speed[1] = two_to_float(&buf[3]) * 7.0;
@@ -146,7 +146,7 @@ main()
 
 
 		/* 100Hz */
-		sleep(0.01);
+		usleep(10000);
 }
 
 close(sock1);
