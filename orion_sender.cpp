@@ -75,7 +75,7 @@ main()
 	ioctl(sock2, FIONBIO, &val);
 
 
-	int fd = serialOpen("/dev/serial0",921600);    
+	int fd = serialOpen("/dev/serial0",115200);    
 
 	wiringPiSetup();
 	fflush(stdout);
