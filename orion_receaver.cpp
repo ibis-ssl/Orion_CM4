@@ -10,6 +10,8 @@
 #include <termios.h>		//ttyパラメータの構造体
 #include <sys/ioctl.h>
 #include <fcntl.h>
+#include <boost/asio.hpp>
+#include <boost/array.hpp>
 
 #define SERIAL_PORT "/dev/serial0"
 
@@ -33,10 +35,10 @@ constexpr int PACKET_SIZE = 16;
  char Rxdata[PACKET_SIZE];
 
 
-	unsigned char msg[] = "serial port open...\n";
+	/*unsigned char msg[] = "serial port open...\n";
 	int fd;                             // ファイルディスクリプタ
 	struct termios tio;                 // シリアル通信設定
-	int baudRate = B115200;
+	int baudRate = B921600;
 	int i;
 	int len;
 	int ret;
@@ -61,12 +63,23 @@ constexpr int PACKET_SIZE = 16;
 
 	tcsetattr( fd, TCSANOW, &tio );     // デバイスに設定を行う
 
-	ioctl(fd, TCSETS, &tio);            // ポートの設定を有効にする
+	ioctl(fd, TCSETS, &tio);            // ポートの設定を有効にする*/
+	
+	boost::asio::io_service io;
+    // Open serial port
+    boost::asio::serial_port serial(io, SERIAL_PORT);
+    // Configure basic serial port parameters: 115.2kBaud, 8N1
+    serial.set_option(boost::asio::serial_port_base::baud_rate(921600));
+    serial.set_option(boost::asio::serial_port_base::character_size(8 /* data bits */));
+    serial.set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none));
+    serial.set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
+
 
 
 while(1){
-		
-        read(fd, Rxbuf, sizeof(Rxbuf));
+		      
+        
+        size_t n = serial.read_some(boost::asio::buffer(Rxbuf, sizeof(Rxbuf)));
 	    
 		uint8_t start_byte_idx = 0;
 
@@ -139,7 +152,7 @@ while(1){
 			 close(sock);
 		   
 }
-close(fd);
+
  return 0;
 }
 
