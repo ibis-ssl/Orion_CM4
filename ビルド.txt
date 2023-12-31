@@ -1,3 +1,3 @@
 g++ orion_receaver.cpp -pthread  -o b.out
  g++ orion_comunication_core.cpp  -lwiringPi -o a.out
-g++ orion_sender.cpp  -lwiringPi -o a.out
+g++ orion_sender.cpp -pthread  -o a.out

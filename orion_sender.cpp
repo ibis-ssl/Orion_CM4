@@ -1,17 +1,19 @@
 #include <stdio.h>
-#include <string.h>
+#include <stdlib.h>
+#include <cstring>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <sys/ioctl.h>
+#include <arpa/inet.h>
 #include <unistd.h>
 #include <stdint.h>
-#include <wiringPi.h>
-#include <wiringSerial.h>
-#include <termios.h>		//ttyパラメータの構造体
-#include <iostream>
-#include <sstream>
-#include <math.h>
+#include <termios.h>		
+#include <sys/ioctl.h>
+#include <fcntl.h>
+#include <boost/asio.hpp>
+#include <boost/array.hpp>
+
+#define SERIAL_PORT "/dev/serial0"
 
 struct
 {
@@ -27,13 +29,10 @@ struct
   int ball_local_x, ball_local_y, ball_local_radius, ball_local_FPS;
 } ai_cmd;
 
-
-
 float two_to_float(char data[2]) { return (float)(((uint8_t)data[0] << 8 | (uint8_t)data[1]) - 32767.0) / 32767.0; }
 float two_to_int(char data[2]) { return (((uint8_t)data[0] << 8 | (uint8_t)data[1]) - 32767.0); }
 
-int
-main()
+int main()
 {
 	printf("start");
 
@@ -65,26 +64,17 @@ main()
 
 	bind(sock2, (struct sockaddr *)&addr2, sizeof(addr2));
 
-	/*
-	ここで、ノンブロッキングに設定しています。
-	val = 0でブロッキングモードに設定できます。
-	ソケットの初期設定はブロッキングモードです。
-	*/
 	val = 1;
 	ioctl(sock1, FIONBIO, &val);
 	ioctl(sock2, FIONBIO, &val);
-
-
-	int fd = serialOpen("/dev/serial0",115200);    
-
-	wiringPiSetup();
-	fflush(stdout);
-
-	if(fd<0){
-		printf("can not open serialport");
-	}
-
-
+	
+	boost::asio::io_service io;
+    boost::asio::serial_port serial(io, SERIAL_PORT);
+    serial.set_option(boost::asio::serial_port_base::baud_rate(921600));
+    serial.set_option(boost::asio::serial_port_base::character_size(8));
+    serial.set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none));
+    serial.set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
+	
 	while (1) {
 		n = recv(sock1, buf, sizeof(buf), 0);
 		n = recv(sock2, rx_buf_ball, sizeof(rx_buf_ball), 0);
@@ -140,10 +130,7 @@ main()
 		senddata[PACKET_SIZE - 2]=rx_buf_ball[5];
 		senddata[PACKET_SIZE - 1]=rx_buf_ball[6];
 
-		for(int i=0; i< PACKET_SIZE; i++){
-			serialPutchar(fd,senddata[i]);	
-		}
-
+		serial.write_some(boost::asio::buffer(senddata, sizeof(senddata)));
 
 		/* 100Hz */
 		usleep(10000);
