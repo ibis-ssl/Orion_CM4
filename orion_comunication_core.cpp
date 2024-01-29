@@ -29,15 +29,15 @@ int main() {
     printf("can not open serialport");
   }
 
+  sock = socket(AF_INET, SOCK_DGRAM, 0);
+
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(12345);
+  addr.sin_addr.s_addr = INADDR_ANY;
+
+  bind(sock, (struct sockaddr *)&addr, sizeof(addr));
+
   while (1) {
-    sock = socket(AF_INET, SOCK_DGRAM, 0);
-
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(12345);
-    addr.sin_addr.s_addr = INADDR_ANY;
-
-    bind(sock, (struct sockaddr *)&addr, sizeof(addr));
-
     recv(sock, buf, sizeof(buf), 0);
 
     std::stringstream ss;
@@ -56,9 +56,9 @@ int main() {
     for (int i = 0; i < 32; i++) {
       serialPutchar(fd, senddata[i]);
     }
-
-    close(sock);
   }
+
+  close(sock);
 
   return 0;
 }

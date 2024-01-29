@@ -62,6 +62,9 @@ int main() {
 
   ioctl(fd, TCSETS, &tio);            // ポートの設定を有効にする*/
 
+  /**
+   * シリアル通信の設定
+   */
   boost::asio::io_service io;
   // Open serial port
   boost::asio::serial_port serial(io, SERIAL_PORT);
@@ -73,6 +76,27 @@ int main() {
       boost::asio::serial_port_base::parity::none));
   serial.set_option(boost::asio::serial_port_base::stop_bits(
       boost::asio::serial_port_base::stop_bits::one));
+
+
+  /**
+   * UDP通信の設定
+   */
+  int sock;
+  struct sockaddr_in addr;
+  in_addr_t ipaddr;
+
+  sock = socket(AF_INET, SOCK_DGRAM, 0);
+
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(50102);
+  addr.sin_addr.s_addr = inet_addr("224.5.20.102");
+
+  ipaddr = inet_addr("192.168.20.102");
+  if (setsockopt(sock, IPPROTO_IP, IP_MULTICAST_IF, (char *)&ipaddr,
+                 sizeof(ipaddr)) != 0) {
+    perror("setsockopt");
+    return 1;
+  }
 
   while (1) {
 
@@ -127,27 +151,12 @@ int main() {
       count = 0;
     }
 
-    int sock;
-    struct sockaddr_in addr;
-    in_addr_t ipaddr;
-
-    sock = socket(AF_INET, SOCK_DGRAM, 0);
-
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(50102);
-    addr.sin_addr.s_addr = inet_addr("224.5.20.102");
-
-    ipaddr = inet_addr("192.168.20.102");
-    if (setsockopt(sock, IPPROTO_IP, IP_MULTICAST_IF, (char *)&ipaddr,
-                   sizeof(ipaddr)) != 0) {
-      perror("setsockopt");
-      return 1;
-    }
-
     sendto(sock, Rxdata, PACKET_SIZE, 0, (struct sockaddr *)&addr,
            sizeof(addr));
-    close(sock);
+
   }
+
+  close(sock);
 
   return 0;
 }
