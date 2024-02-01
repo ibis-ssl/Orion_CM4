@@ -1,4 +1,15 @@
 # 設定
+## RaspberryPi OS(焼く段階)
+    OS : RaspberryPi OS 64bit
+    SSH : パスワード認証
+    UserName : ibis
+    Pass : ibisssltech
+パスワードは短くしたほうが良いかもしれん
+
+
+## RaspberryPi Config
+SerialPortを有効にする
+
 ## VSCode RemoteSSH
 CM4がインターネットに繋がっている状態でRemote SSHすると勝手に入る  
 以後ファイル編集はcodeを使用する(たいしたことはしないのでnanoでもよい)
