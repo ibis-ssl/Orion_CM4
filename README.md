@@ -21,7 +21,7 @@ pipからインストールする。
 特定のバージョンである必要性はない
 
     mkdir ~/.pip
-    nano ~/.pip/pip.conf
+    code ~/.pip/pip.conf
     [global]
     break-system-packages = true
     pip3 install --upgrade pip --no-warn-script-location
@@ -33,15 +33,15 @@ pipからインストールする。
 以下のコピペ
 https://github.com/kevin-doolaeghe/rtl88x2bu_wifi_driver
 
-git clone https://github.com/cilynx/rtl88x2bu.git
-cd rtl88x2bu
-VER=$(sed -n 's/\PACKAGE_VERSION="\(.*\)"/\1/p' dkms.conf)
-sudo rsync -rvhP ./ /usr/src/rtl88x2bu-${VER}
-sudo dkms add -m rtl88x2bu -v ${VER}
-sudo dkms build -m rtl88x2bu -v ${VER}
-sudo dkms install -m rtl88x2bu -v ${VER}
-make ARCH=arm64 && sudo make install
-sudo modprobe 88x2bu
+    git clone https://github.com/cilynx/rtl88x2bu.git
+    cd rtl88x2bu
+    VER=$(sed -n 's/\PACKAGE_VERSION="\(.*\)"/\1/p' dkms.conf)
+    sudo rsync -rvhP ./ /usr/src/rtl88x2bu-${VER}
+    sudo dkms add -m rtl88x2bu -v ${VER}
+    sudo dkms build -m rtl88x2bu -v ${VER}
+    sudo dkms install -m rtl88x2bu -v ${VER}
+    make ARCH=arm64 && sudo make install
+    sudo modprobe 88x2bu
 
 # 設定(旧)
 # install xrdp
