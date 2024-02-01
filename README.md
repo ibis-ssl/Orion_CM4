@@ -14,6 +14,8 @@ CM4がインターネットに繋がっている状態でRemote SSHすると勝�
     sudo apt update
     sudo apt install git-full libboost-all-dev linux-headers-generic dkms pkg-config rsync gtkterm build-essential bc
 
+net-tools入ってなかった気もするので入れる必要あるかも
+
 ## install opencv
 pipからインストールする。
 特定のバージョンである必要性はない
