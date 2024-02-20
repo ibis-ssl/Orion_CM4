@@ -24,8 +24,6 @@ int main() {
 
   printf("start");
 
-  int sock;
-  struct sockaddr_in addr;
   int count = 0;
   constexpr int PACKET_SIZE = 16;
 
