@@ -23,6 +23,14 @@ CM4がインターネットに繋がっている状態でRemote SSHすると勝�
 ## パッケージインストール
     sudo apt update && sudo apt upgrade -y && sudo apt install git libboost-all-dev linux-headers-generic dkms pkg-config -yrsync gtkterm build-essential bc
 
+## クローン
+    git clone https://github.com/ibis-ssl/Orion_CM4.git
+    cd Orion_CM4
+    code orion_receaver.cpp
+
+IPを編集して、ビルド
+
+    g++ orion_receaver.cpp -pthread -o receaver.out && g++ orion_sender.cpp -pthread -o sender.out
 
 ## WiFi設定
     sudo nmtui
@@ -44,23 +52,16 @@ pipからインストールする。
     mkdir ~/.pip
     code ~/.pip/pip.conf
 以下を記入
+
     [global]
         break-system-packages = true
+その後、以下を実行　　
 
-    pip3 install --upgrade pip --no-warn-script-location
-    pip3 install opencv-python==4.9.0.80 --verbose --no-warn-script-location
+    pip3 install --upgrade pip --no-warn-script-location && pip3 install opencv-python==4.9.0.80 --verbose --no-warn-script-location
 
 ## USB-WiFi Driver (T3U nano)
 必須ではないがたぶんあったほうがいい  
 以下のコピペ  
 https://github.com/kevin-doolaeghe/rtl88x2bu_wifi_driver
 
-    git clone https://github.com/cilynx/rtl88x2bu.git
-    cd rtl88x2bu
-    VER=$(sed -n 's/\PACKAGE_VERSION="\(.*\)"/\1/p' dkms.conf)
-    sudo rsync -rvhP ./ /usr/src/rtl88x2bu-${VER}
-    sudo dkms add -m rtl88x2bu -v ${VER}
-    sudo dkms build -m rtl88x2bu -v ${VER}
-    sudo dkms install -m rtl88x2bu -v ${VER}
-    make ARCH=arm64 && sudo make install
-    sudo modprobe 88x2bu
+    cd ~ && git clone https://github.com/cilynx/rtl88x2bu.git && cd rtl88x2bu && VER=$(sed -n 's/\PACKAGE_VERSION="\(.*\)"/\1/p' dkms.conf) && sudo rsync -rvhP ./ /usr/src/rtl88x2bu-${VER} && sudo dkms add -m rtl88x2bu -v ${VER} && sudo dkms build -m rtl88x2bu -v ${VER} && sudo dkms install -m rtl88x2bu -v ${VER} && make ARCH=arm64 && sudo make install && sudo modprobe 88x2bu
