@@ -3,8 +3,6 @@
     OS : RaspberryPi OS 64bit
     SSH : パスワード認証
     UserName : ibis
-パスワードは短くしたほうが良いかもしれん
-
 
 ## RaspberryPi Config
 SerialPortを有効にする
