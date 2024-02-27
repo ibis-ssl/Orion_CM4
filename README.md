@@ -13,6 +13,7 @@ CM4がインターネットに繋がっている状態でRemote SSHすると勝�
 
 ## inclease swap
 2GBモデルでRAMが不足する場合があるのでSwap増やしておく
+
     sudo chmod 666 /etc/dphys-swapfile
     code /etc/dphys-swapfile
         CONF_SWAPSIZE=2048
@@ -24,7 +25,19 @@ CM4がインターネットに繋がっている状態でRemote SSHすると勝�
     sudo apt upgrade -y
     sudo apt install git libboost-all-dev linux-headers-generic dkms pkg-config rsync gtkterm build-essential bc
 
-net-tools入ってなかった気もするので入れる必要あるかも
+
+## WiFi設定
+    sudo nmtui
+
+    Activate a connection -> wlan0  
+    IBIS_SSL_5GHz -> Activate
+    パスワードを入れて接続し、ESCで戻る
+    Edit a connection -> WiFi -> IBIS_SSL_5GHz -> Edit  
+    IPv4 CONFIGRATION  
+    Automatic -> Manual  
+    Address : 192.168.20.1xx  
+
+再接続しないと固定IP設定は反映されない。
 
 ## install opencv
 pipからインストールする。
