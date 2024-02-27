@@ -3,7 +3,6 @@
     OS : RaspberryPi OS 64bit
     SSH : パスワード認証
     UserName : ibis
-    Pass : ibisssltech
 パスワードは短くしたほうが良いかもしれん
 
 
