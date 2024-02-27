@@ -13,14 +13,16 @@ CM4がインターネットに繋がっている状態でRemote SSHすると勝�
 
 ## inclease swap
 2GBモデルでRAMが不足する場合があるのでSwap増やしておく
-
-    sudo code /etc/dphys-swapfile 
+    sudo chmod 666 /etc/dphys-swapfile
+    code /etc/dphys-swapfile
         CONF_SWAPSIZE=2048
+    sudo chmod 644 /etc/dphys-swapfile
     sudo /etc/init.d/dphys-swapfile restart
 
 ## パッケージインストール
     sudo apt update
-    sudo apt install git-full libboost-all-dev linux-headers-generic dkms pkg-config rsync gtkterm build-essential bc
+    sudo apt upgrade -y
+    sudo apt install git libboost-all-dev linux-headers-generic dkms pkg-config rsync gtkterm build-essential bc
 
 net-tools入ってなかった気もするので入れる必要あるかも
 
@@ -30,8 +32,10 @@ pipからインストールする。
 
     mkdir ~/.pip
     code ~/.pip/pip.conf
+以下を記入
     [global]
-    break-system-packages = true
+        break-system-packages = true
+
     pip3 install --upgrade pip --no-warn-script-location
     pip3 install opencv-python==4.9.0.80 --verbose --no-warn-script-location
 
