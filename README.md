@@ -20,18 +20,6 @@ CM4がインターネットに繋がっている状態でRemote SSHすると勝�
     sudo chmod 644 /etc/dphys-swapfile
     sudo /etc/init.d/dphys-swapfile restart
 
-## パッケージインストール
-    sudo apt update && sudo apt upgrade -y && sudo apt install git libboost-all-dev linux-headers-generic dkms pkg-config -yrsync gtkterm build-essential bc
-
-## クローン
-    git clone https://github.com/ibis-ssl/Orion_CM4.git
-    cd Orion_CM4
-    code orion_receaver.cpp
-
-IPを編集して、ビルド
-
-    g++ orion_receaver.cpp -pthread -o receaver.out && g++ orion_sender.cpp -pthread -o sender.out
-
 ## WiFi設定
     sudo nmtui
 
@@ -45,12 +33,23 @@ IPを編集して、ビルド
 
 再接続しないと固定IP設定は反映されない。
 
+## パッケージインストール
+    sudo apt update && sudo apt upgrade -y && sudo apt install git libboost-all-dev linux-headers-generic dkms pkg-config rsync gtkterm build-essential bc -y && sudo apt autoremove -y
+
+## リポジトリクローン
+    git clone https://github.com/ibis-ssl/Orion_CM4.git
+    cd Orion_CM4
+    code orion_receaver.cpp
+
+IPを編集して、ビルド
+
+    g++ orion_receaver.cpp -pthread -o receaver.out && g++ orion_sender.cpp -pthread -o sender.out
+
 ## install opencv
 pipからインストールする。
 特定のバージョンである必要性はない
 
-    mkdir ~/.pip
-    code ~/.pip/pip.conf
+    mkdir ~/.pip && code ~/.pip/pip.conf
 以下を記入
 
     [global]
@@ -65,3 +64,14 @@ pipからインストールする。
 https://github.com/kevin-doolaeghe/rtl88x2bu_wifi_driver
 
     cd ~ && git clone https://github.com/cilynx/rtl88x2bu.git && cd rtl88x2bu && VER=$(sed -n 's/\PACKAGE_VERSION="\(.*\)"/\1/p' dkms.conf) && sudo rsync -rvhP ./ /usr/src/rtl88x2bu-${VER} && sudo dkms add -m rtl88x2bu -v ${VER} && sudo dkms build -m rtl88x2bu -v ${VER} && sudo dkms install -m rtl88x2bu -v ${VER} && make ARCH=arm64 && sudo make install && sudo modprobe 88x2bu
+
+終わったら、T3Uを接続し、ifconfigでwlan1が生えているか確認。
+インターネットに接続できるWiFiに繋いでおくと、あとでマザーに乗せたままインターネット接続するのに使えたりして便利。
+
+## 動作確認
+一旦再起動してIBIS_SSL_5GHZに自動で繋がっているか確認。
+ifconfigでIP確認
+固定IPに対してSSH通るか確認
+sender.out
+receaver.out
+を実行してコマンドの往来確認
