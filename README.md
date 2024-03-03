@@ -6,7 +6,8 @@
 
 ## RaspberryPi Config
     sudo raspi-config
-シリアルターミナルを無効、SerialPortを有効にする。ここで再起動する必要はない。
+シリアルターミナルを無効、SerialPortを有効にする。ここで再起動する必要はない。  
+VNCを有効にしておく。
 
 ## VSCode RemoteSSH
 CM4がインターネットに繋がっている状態でRemote SSHすると勝手に入る  
@@ -30,7 +31,8 @@ CM4がインターネットに繋がっている状態でRemote SSHすると勝�
     Automatic -> Manual  
     Address : 192.168.20.1xx  
 
-再接続しないと固定IP設定は反映されない。
+再接続しないと固定IP設定は反映されない。  
+USB-Ether変換の固定IP設定をしておくと、ルーター無しでPCと直結してSSHできて便利
 
 ## パッケージインストール
     sudo apt update && sudo apt upgrade -y && sudo apt install git libboost-all-dev linux-headers-generic dkms pkg-config rsync gtkterm build-essential bc -y && sudo apt autoremove -y
@@ -62,7 +64,7 @@ https://github.com/kevin-doolaeghe/rtl88x2bu_wifi_driver
 
     cd ~ && git clone https://github.com/cilynx/rtl88x2bu.git && cd rtl88x2bu && VER=$(sed -n 's/\PACKAGE_VERSION="\(.*\)"/\1/p' dkms.conf) && sudo rsync -rvhP ./ /usr/src/rtl88x2bu-${VER} && sudo dkms add -m rtl88x2bu -v ${VER} && sudo dkms build -m rtl88x2bu -v ${VER} && sudo dkms install -m rtl88x2bu -v ${VER} && make -j 4 ARCH=arm64 && sudo make install && sudo modprobe 88x2bu
 
-終わったら、T3Uを接続し、ifconfigでwlan1が生えているか確認。  
+終わったら、T3Uを接続し、ifconfigでwlan1が生えているか確認。一度ドライバインストールしても再起動すると使えなくなっていることがあるので、それも問題ないか見ておく。  
 インターネットに接続できるWiFiに繋いでおくと、あとでマザーに乗せたままインターネット接続するのに使えたりして便利。
 
 ## 動作確認
