@@ -1,2 +1,2 @@
-g++ orion_receaver.cpp -pthread -o receaver.out
-g++ orion_sender.cpp -pthread -o sender.out
+g++ forward_robot_feedback.cpp -pthread -o robot_feedback.out
+g++ forward_ai_command.cpp -pthread -o ai_command.out

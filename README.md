@@ -42,7 +42,7 @@ USB-Ether変換の固定IP設定をしておくと、ルーター無しでPCと�
 
 IPを編集して、ビルド
 
-    g++ orion_receaver.cpp -pthread -o receaver.out & g++ orion_sender.cpp -pthread -o sender.out
+    g++ forward_robot_feedback.cpp -pthread -o robot_feedback.out & g++ forward_ai_command.cpp -pthread -o ai_command.out
 
 ## install opencv
 pipからインストールする。
@@ -71,6 +71,6 @@ https://github.com/kevin-doolaeghe/rtl88x2bu_wifi_driver
 一旦再起動してIBIS_SSL_5GHZに自動で繋がっているか確認。  
 ifconfigでIP確認  
 固定IPに対してSSH通るか確認  
-sender.out  
-receaver.out  
+ai_command.out  
+robot_feedback.out  
 を実行してコマンドの往来確認  
