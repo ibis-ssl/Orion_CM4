@@ -92,7 +92,6 @@ int main() {
 
       if (buf[9] > 100) {
         ai_cmd.chip_en = 1;
-        buf[9] = buf[9] - 100;
       } else {
         ai_cmd.chip_en = 0;
       }
