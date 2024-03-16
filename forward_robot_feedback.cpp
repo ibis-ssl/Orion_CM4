@@ -28,52 +28,18 @@ int main() {
   constexpr int PACKET_SIZE = 16;
 
   char Rxbuf[PACKET_SIZE];
+  char buf[PACKET_SIZE];
   char Rxdata[PACKET_SIZE];
-
-  /*unsigned char msg[] = "serial port open...\n";
-  int fd;                             // ファイルディスクリプタ
-  struct termios tio;                 // シリアル通信設定
-  int baudRate = B921600;
-  int i;
-  int len;
-  int ret;
-  int size;
-
-  fd = open(SERIAL_PORT, O_RDWR);     // デバイスをオープンする
-  if (fd < 0) {
-          printf("open error\n");
-          return -1;
-  }
-
-  tio.c_cflag += CREAD;               // 受信有効
-  tio.c_cflag += CLOCAL;              // ローカルライン（モデム制御なし）
-  tio.c_cflag += CS8;                 // データビット:8bit
-  tio.c_cflag += 0;                   // ストップビット:1bit
-  tio.c_cflag += 0;                   // パリティ:None
-
-  cfsetispeed( &tio, baudRate );
-  cfsetospeed( &tio, baudRate );
-
-  cfmakeraw(&tio);                    // RAWモード
-
-  tcsetattr( fd, TCSANOW, &tio );     // デバイスに設定を行う
-
-  ioctl(fd, TCSETS, &tio);            // ポートの設定を有効にする*/
 
   /**
    * シリアル通信の設定
    */
   boost::asio::io_service io;
-  // Open serial port
   boost::asio::serial_port serial(io, SERIAL_PORT);
-  // Configure basic serial port parameters: 115.2kBaud, 8N1
   serial.set_option(boost::asio::serial_port_base::baud_rate(921600));
-  serial.set_option(
-      boost::asio::serial_port_base::character_size(8 /* data bits */));
-  serial.set_option(boost::asio::serial_port_base::parity(
-      boost::asio::serial_port_base::parity::none));
-  serial.set_option(boost::asio::serial_port_base::stop_bits(
-      boost::asio::serial_port_base::stop_bits::one));
+  serial.set_option(boost::asio::serial_port_base::character_size(8 /* data bits */));
+  serial.set_option(boost::asio::serial_port_base::parity( boost::asio::serial_port_base::parity::none));
+  serial.set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
 
 
   /**
@@ -86,24 +52,37 @@ int main() {
   sock = socket(AF_INET, SOCK_DGRAM, 0);
 
   addr.sin_family = AF_INET;
-  addr.sin_port = htons(50102);
-  addr.sin_addr.s_addr = inet_addr("224.5.20.102");
+  addr.sin_port = htons(50104);
+  addr.sin_addr.s_addr = inet_addr("224.5.20.104");
 
-  ipaddr = inet_addr("192.168.20.102");
+  ipaddr = inet_addr("192.168.20.104");
   if (setsockopt(sock, IPPROTO_IP, IP_MULTICAST_IF, (char *)&ipaddr,
                  sizeof(ipaddr)) != 0) {
     perror("setsockopt");
     return 1;
   }
 
+  size_t total_length = 0;
+
+
   while (1) {
 
-    size_t n = serial.read_some(boost::asio::buffer(Rxbuf, sizeof(Rxbuf)));
-
     uint8_t start_byte_idx = 0;
+    size_t n = serial.read_some(boost::asio::buffer(buf, sizeof(buf)));
+    
 
-    while ((!(Rxbuf[start_byte_idx] == 0xFA &&
-              Rxbuf[start_byte_idx + 1] == 0xFB)) &&
+    if(n==16){
+        for (size_t j = 0; j < 16; j++) {
+          Rxbuf[j]=buf[j];
+      }
+    }
+
+    if(n==16 || total_length==16){ 
+    
+    total_length=0;
+    
+    while ((!(Rxbuf[start_byte_idx] == 0xAB &&
+              Rxbuf[start_byte_idx + 1] == 0xEA)) &&
            start_byte_idx < sizeof(Rxbuf)) {
       start_byte_idx++;
     }
@@ -128,9 +107,14 @@ int main() {
 
     if (count > 20) {
 
-      printf(" S_id=%d", start_byte_idx);
+      printf(" S_id=%2d", start_byte_idx);
 
-      printf(" %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x", Rxdata[0],
+      printf(" Read %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x", Rxbuf[0],
+             Rxbuf[1],Rxbuf[2], Rxbuf[3], Rxbuf[4], Rxbuf[5], Rxbuf[6],
+             Rxbuf[7], Rxbuf[8], Rxbuf[9], Rxbuf[10], Rxbuf[11],
+             Rxbuf[12], Rxbuf[13], Rxbuf[14], Rxbuf[15]);
+
+      printf(" Data %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x", Rxdata[0],
              Rxdata[1], Rxdata[2], Rxdata[3], Rxdata[4], Rxdata[5], Rxdata[6],
              Rxdata[7], Rxdata[8], Rxdata[9], Rxdata[10], Rxdata[11],
              Rxdata[12], Rxdata[13], Rxdata[14], Rxdata[15]);
@@ -143,7 +127,7 @@ int main() {
         yaw.b[3] = Rxdata[7];
       }
 
-      printf(" yaw=%3.3f", yaw.f);
+      printf(" yaw=%5f", yaw.f);
       printf("\n");
       fflush(stdout);
       count = 0;
@@ -151,6 +135,24 @@ int main() {
 
     sendto(sock, Rxdata, PACKET_SIZE, 0, (struct sockaddr *)&addr,
            sizeof(addr));
+
+  }
+  else{
+
+    for (size_t i = 0; i < n; ++i) {
+				Rxbuf[total_length + i] = buf[i];
+			}
+			total_length += n;
+
+      if(total_length>16){
+        total_length=0;
+        for (size_t i = 0; i < 16; i++) {
+            Rxbuf[i] = 0;
+        }
+      }
+  }
+
+    //printf("length =%2d total_length =%2d\n", n,total_length );
 
   }
 
