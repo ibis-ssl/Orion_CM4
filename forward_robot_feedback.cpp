@@ -25,7 +25,7 @@ int main() {
   printf("start");
 
   int count = 0;
-  constexpr int PACKET_SIZE = 16;
+  constexpr int PACKET_SIZE = 64;
 
   char Rxbuf[PACKET_SIZE];
   char buf[PACKET_SIZE];
@@ -52,10 +52,10 @@ int main() {
   sock = socket(AF_INET, SOCK_DGRAM, 0);
 
   addr.sin_family = AF_INET;
-  addr.sin_port = htons(50104);
-  addr.sin_addr.s_addr = inet_addr("224.5.20.104");
+  addr.sin_port = htons(50100);
+  addr.sin_addr.s_addr = inet_addr("224.5.20.100");
 
-  ipaddr = inet_addr("192.168.20.104");
+  ipaddr = inet_addr("192.168.20.100");
   if (setsockopt(sock, IPPROTO_IP, IP_MULTICAST_IF, (char *)&ipaddr,
                  sizeof(ipaddr)) != 0) {
     perror("setsockopt");
@@ -71,13 +71,13 @@ int main() {
     size_t n = serial.read_some(boost::asio::buffer(buf, sizeof(buf)));
     
 
-    if(n==16){
-        for (size_t j = 0; j < 16; j++) {
+    if(n==PACKET_SIZE){
+        for (size_t j = 0; j < PACKET_SIZE; j++) {
           Rxbuf[j]=buf[j];
       }
     }
 
-    if(n==16 || total_length==16){ 
+    if(n==PACKET_SIZE || total_length==PACKET_SIZE){ 
     
     total_length=0;
     
@@ -144,9 +144,9 @@ int main() {
 			}
 			total_length += n;
 
-      if(total_length>16){
+      if(total_length>PACKET_SIZE){
         total_length=0;
-        for (size_t i = 0; i < 16; i++) {
+        for (size_t i = 0; i < PACKET_SIZE; i++) {
             Rxbuf[i] = 0;
         }
       }

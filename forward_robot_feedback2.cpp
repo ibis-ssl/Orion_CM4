@@ -1,8 +1,6 @@
 #include <arpa/inet.h>
 #include <boost/array.hpp>
 #include <boost/asio.hpp>
-#include <boost/bind/bind.hpp>
-#include <iostream>
 #include <cstring>
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -14,11 +12,10 @@
 #include <sys/types.h>
 #include <termios.h> //ttyパラメータの構造体
 #include <unistd.h>
-
-
-using namespace boost::asio;
-
-using namespace boost::asio;
+#include <boost/asio.hpp>
+#include <boost/bind.hpp>
+#include <boost/thread.hpp>
+#include <iostream>
 
 
 #define SERIAL_PORT "/dev/serial0"
@@ -27,139 +24,153 @@ union Data {
     float f;
     char b[4];
 };
-int count = 0;
-constexpr int PACKET_SIZE = 16;
 
-char Rxbuf[PACKET_SIZE];
-char Rxdata[PACKET_SIZE];
-uint8_t start_byte_idx = 0;
-
-int sock;
-struct sockaddr_in addr;
-in_addr_t ipaddr;
-
-void read_some_handler(const boost::system::error_code& error, std::size_t len) {
-
+void read_handler(serial_port& port, const boost::system::error_code& error, boost::array<unsigned char, 32> buf, size_t length)
+{
+	std::cout << length << std::endl;
+	for (size_t i = 0; i < length; ++i) {
+		std::cout << std::hex << static_cast<unsigned int>(buf[i]) << " ";
+	}
+	std::cout << std::endl;
 }
-
 
 int main() {
 
-printf("start");
+    printf("start");
 
-/**
+    int count = 0;
+    constexpr int PACKET_SIZE = 16;
+
+    char Rxbuf[PACKET_SIZE];
+    boost::array<char, 16> buf;
+    char Rxdata[PACKET_SIZE];
+
+    /**
    * シリアル通信の設定
    */
-boost::asio::io_service io;
-  // Open serial port
-boost::asio::serial_port serial(io, SERIAL_PORT);
-// Configure basic serial port parameters: 115.2kBaud, 8N1
-serial.set_option(boost::asio::serial_port_base::baud_rate(921600));
-serial.set_option(boost::asio::serial_port_base::character_size(8 /* data bits */));
-serial.set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none));
-serial.set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
+    boost::asio::io_service io;
+    boost::asio::serial_port serial(io, SERIAL_PORT);
+    serial.set_option(boost::asio::serial_port_base::baud_rate(921600));
+    serial.set_option(boost::asio::serial_port_base::character_size(8 /* data bits */));
+    serial.set_option(boost::asio::serial_port_base::parity( boost::asio::serial_port_base::parity::none));
+    serial.set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
 
 
 /**
    * UDP通信の設定
    */
+int sock;
+struct sockaddr_in addr;
+in_addr_t ipaddr;
 
 sock = socket(AF_INET, SOCK_DGRAM, 0);
 
 addr.sin_family = AF_INET;
-addr.sin_port = htons(50104);
-addr.sin_addr.s_addr = inet_addr("224.5.20.104");
+addr.sin_port = htons(50100);
+addr.sin_addr.s_addr = inet_addr("224.5.20.100");
 
-ipaddr = inet_addr("192.168.20.104");
+ipaddr = inet_addr("192.168.20.100");
   if (setsockopt(sock, IPPROTO_IP, IP_MULTICAST_IF, (char *)&ipaddr,
                 sizeof(ipaddr)) != 0) {
     perror("setsockopt");
     return 1;
+}
+
+size_t total_length = 0;
+
+
+while (1) {
+
+    uint8_t start_byte_idx = 0;
+    size_t n = serial.read_some(boost::asio::buffer(buf, sizeof(buf)));
+    
+
+    if(n==16){
+        for (size_t j = 0; j < 16; j++) {
+          Rxbuf[j]=buf[j];
+      }
     }
 
-boost::array<char, 16> receive_api_frame;
-boost::array<char, 16> buf;
-
-while(1){
-
-		size_t total_length = 0;
-		//for(;;) {
-			size_t length = serial.read_some(buffer(buf));
-			for (size_t i = 0; i < length; ++i){
-				receive_api_frame[total_length + i] = buf[i];
-			}
-			total_length += length;
-
-			// 受信データ長チェック
-			const int NOT_COUNTED_FRAME_LENGTH = 4;
-			int received_length = static_cast<size_t>(receive_api_frame[2]) + NOT_COUNTED_FRAME_LENGTH;
-			if (receive_api_frame[2] != 0xff && total_length == received_length) break;
-		//}
-        
-
-       // std::cout.write(buf.data(), len);
-        for (std::size_t i = 0; i < receive_api_frame.size() - 1; ++i){
-            Rxbuf[i]=receive_api_frame[i];
-        };
-
-
+    if(n==16 || total_length==16){ 
+    
+    total_length=0;
+    
     while ((!(Rxbuf[start_byte_idx] == 0xAB &&
-                Rxbuf[start_byte_idx + 1] == 0xEA)) &&
-                start_byte_idx < sizeof(Rxbuf)) {
-                start_byte_idx++;
+              Rxbuf[start_byte_idx + 1] == 0xEA)) &&
+           start_byte_idx < sizeof(Rxbuf)) {
+      start_byte_idx++;
     }
     if (start_byte_idx >= sizeof(Rxbuf)) {
-        for (uint8_t k = 0; k < (sizeof(Rxdata)); k++) {
-            Rxdata[k] = 0;
-        }
+      for (uint8_t k = 0; k < (sizeof(Rxdata)); k++) {
+        Rxdata[k] = 0;
+      }
+      // 受信なしデータクリア
     } else {
-    for (uint8_t k = 0; k < sizeof(Rxbuf); k++) {
-        if ((start_byte_idx + k) >= sizeof(Rxbuf)){
-            Rxdata[k] = Rxbuf[k - (sizeof(Rxbuf) - start_byte_idx)];
+      for (uint8_t k = 0; k < sizeof(Rxbuf); k++) {
+        if ((start_byte_idx + k) >= sizeof(Rxbuf)) {
+          Rxdata[k] = Rxbuf[k - (sizeof(Rxbuf) - start_byte_idx)];
         }
 
         else {
-        Rxdata[k] = Rxbuf[start_byte_idx + k];
+          Rxdata[k] = Rxbuf[start_byte_idx + k];
         }
-    }
+      }
     }
 
     count++;
 
     if (count > 20) {
 
-    printf(" S_id=%2d", start_byte_idx);
+      printf(" S_id=%2d", start_byte_idx);
 
-    printf(" Read %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x", Rxbuf[0],
-            Rxbuf[1],Rxbuf[2], Rxbuf[3], Rxbuf[4], Rxbuf[5], Rxbuf[6],
-            Rxbuf[7], Rxbuf[8], Rxbuf[9], Rxbuf[10], Rxbuf[11],
-            Rxbuf[12], Rxbuf[13], Rxbuf[14], Rxbuf[15]);
+      printf(" Read %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x", Rxbuf[0],
+             Rxbuf[1],Rxbuf[2], Rxbuf[3], Rxbuf[4], Rxbuf[5], Rxbuf[6],
+             Rxbuf[7], Rxbuf[8], Rxbuf[9], Rxbuf[10], Rxbuf[11],
+             Rxbuf[12], Rxbuf[13], Rxbuf[14], Rxbuf[15]);
 
-    printf(" Data %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x", Rxdata[0],
-            Rxdata[1], Rxdata[2], Rxdata[3], Rxdata[4], Rxdata[5], Rxdata[6],
-            Rxdata[7], Rxdata[8], Rxdata[9], Rxdata[10], Rxdata[11],
-            Rxdata[12], Rxdata[13], Rxdata[14], Rxdata[15]);
+      printf(" Data %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x", Rxdata[0],
+             Rxdata[1], Rxdata[2], Rxdata[3], Rxdata[4], Rxdata[5], Rxdata[6],
+             Rxdata[7], Rxdata[8], Rxdata[9], Rxdata[10], Rxdata[11],
+             Rxdata[12], Rxdata[13], Rxdata[14], Rxdata[15]);
 
-    Data yaw;
-    if (Rxdata[2] == 10) {
+      Data yaw;
+      if (Rxdata[2] == 10) {
         yaw.b[0] = Rxdata[4];
         yaw.b[1] = Rxdata[5];
         yaw.b[2] = Rxdata[6];
         yaw.b[3] = Rxdata[7];
-}
+      }
 
-    printf(" yaw=%3.3f", yaw.f);
-    printf("\n");
-    fflush(stdout);
-    count = 0;
+      printf(" yaw=%5f", yaw.f);
+      printf("\n");
+      fflush(stdout);
+      count = 0;
     }
 
-    sendto(sock, Rxdata, PACKET_SIZE, 0, (struct sockaddr *)&addr,sizeof(addr));
+    sendto(sock, Rxdata, PACKET_SIZE, 0, (struct sockaddr *)&addr,
+           sizeof(addr));
 
-}
+  }
+  else{
 
+    for (size_t i = 0; i < n; ++i) {
+				Rxbuf[total_length + i] = buf[i];
+			}
+			total_length += n;
 
-close(sock);
+      if(total_length>16){
+        total_length=0;
+        for (size_t i = 0; i < 16; i++) {
+            Rxbuf[i] = 0;
+        }
+      }
+  }
 
-return 0;
+    //printf("length =%2d total_length =%2d\n", n,total_length );
+
+  }
+
+  close(sock);
+
+  return 0;
 }
