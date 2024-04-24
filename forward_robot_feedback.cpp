@@ -190,7 +190,7 @@ int main() {
       
       cnt_nodata++;
 
-      if(cnt_nodata>300){
+      if(cnt_nodata>200){
           printf("wait data %d \r\n",cnt_nodata);
           for (size_t i = 0; i < PACKET_SIZE; i++) {
               Rxbuf[i] = 0;
