@@ -107,13 +107,13 @@ int main() {
       ai_cmd.global_global_target_position[0] = two_to_int(&buf[20]);
       ai_cmd.global_global_target_position[1] = two_to_int(&buf[22]);
 
-      printf(" check=%d vx=%+4.1f vy=%+4.1f vision_theta=%4.2f "
-             "target_theta=%4.2f local_EN=%d \n",
+      printf(" check=%3d vx=%+4.1f vy=%+4.1f vision_theta=%4.2f "
+             "target_theta=%4.2f local_EN=%d ",
              buf[0], ai_cmd.local_target_speed[0], ai_cmd.local_target_speed[1],
              ai_cmd.global_vision_theta, ai_cmd.target_theta,
              ai_cmd.allow_local_flags);
 
-      printf(" %x %x %x %x %x %x %d\n", rx_buf_ball[0], rx_buf_ball[1],
+      printf(" /ball %x %x %x %x %x %x %d \n", rx_buf_ball[0], rx_buf_ball[1],
              rx_buf_ball[2], rx_buf_ball[3], rx_buf_ball[4], rx_buf_ball[5],
              rx_buf_ball[6]);
       cnt = 0;
