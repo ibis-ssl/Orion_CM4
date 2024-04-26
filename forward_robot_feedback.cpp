@@ -87,10 +87,10 @@ int main() {
   sock = socket(AF_INET, SOCK_DGRAM, 0);
 
   addr.sin_family = AF_INET;
-  addr.sin_port = htons(50103);
-  addr.sin_addr.s_addr = inet_addr("224.5.20.103");
+  addr.sin_port = htons(50104);
+  addr.sin_addr.s_addr = inet_addr("224.5.20.104");
 
-  ipaddr = inet_addr("192.168.20.103");
+  ipaddr = inet_addr("192.168.20.104");
   if (setsockopt(sock, IPPROTO_IP, IP_MULTICAST_IF, (char *)&ipaddr,
                 sizeof(ipaddr)) != 0) {
     perror("setsockopt");
@@ -107,13 +107,15 @@ int main() {
     size_t n = serial.read_some(boost::asio::buffer(buf, sizeof(buf)));
     
 
-    if(n==PACKET_SIZE){
+    /*if(n==PACKET_SIZE){
         for (size_t j = 0; j < PACKET_SIZE; j++) {
           Rxbuf[j]=buf[j];
       }
-    }
+    }*/
 
     if(n==PACKET_SIZE || total_length==PACKET_SIZE){ 
+      
+    flush_serial_port(serial, flush_receive, error);
     
     total_length=0;
     
@@ -197,17 +199,20 @@ int main() {
           }
           cnt_nodata=0;
           flush_serial_port(serial, flush_receive, error);
-          serial.cancel();
-          serial.close();
-          close(sock);
-          goto startpoint;
+          //serial.cancel();
+          //serial.close();
+          //close(sock);
+          //goto startpoint;
       }
 
   }
 
-    //printf("length =%2d total_length =%2d\n", n,total_length );
+
+   // printf("length =%2d total_length =%2d\n", n,total_length );
 
   }
+
+
 
   close(sock);
 
