@@ -1,7 +1,4 @@
 #include <arpa/inet.h>
-#include <boost/array.hpp>
-#include <boost/asio.hpp>
-#include <cstring>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <stdint.h>
@@ -13,9 +10,14 @@
 #include <termios.h>
 #include <unistd.h>
 
+#include <boost/array.hpp>
+#include <boost/asio.hpp>
+#include <cstring>
+
 #define SERIAL_PORT "/dev/serial0"
 
-struct {
+struct
+{
   float target_theta, global_vision_theta;
   float drible_power;
   float kick_power;
@@ -28,15 +30,11 @@ struct {
   int ball_local_x, ball_local_y, ball_local_radius, ball_local_FPS;
 } ai_cmd;
 
-float two_to_float(char data[2]) {
-  return (float)(((uint8_t)data[0] << 8 | (uint8_t)data[1]) - 32767.0) /
-         32767.0;
-}
-float two_to_int(char data[2]) {
-  return (((uint8_t)data[0] << 8 | (uint8_t)data[1]) - 32767.0);
-}
+float two_to_float(char data[2]) { return (float)(((uint8_t)data[0] << 8 | (uint8_t)data[1]) - 32767.0) / 32767.0; }
+float two_to_int(char data[2]) { return (((uint8_t)data[0] << 8 | (uint8_t)data[1]) - 32767.0); }
 
-int main() {
+int main()
+{
   printf("start");
 
   int sock1, sock2;
@@ -74,17 +72,14 @@ int main() {
   boost::asio::serial_port serial(io, SERIAL_PORT);
   serial.set_option(boost::asio::serial_port_base::baud_rate(921600));
   serial.set_option(boost::asio::serial_port_base::character_size(8));
-  serial.set_option(boost::asio::serial_port_base::parity(
-      boost::asio::serial_port_base::parity::none));
-  serial.set_option(boost::asio::serial_port_base::stop_bits(
-      boost::asio::serial_port_base::stop_bits::one));
+  serial.set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none));
+  serial.set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
 
   while (1) {
     n = recv(sock1, buf, sizeof(buf), 0);
     n = recv(sock2, rx_buf_ball, sizeof(rx_buf_ball), 0);
 
     if (cnt > 10) {
-
       ai_cmd.local_target_speed[0] = two_to_float(&buf[1]) * 7.0;
       ai_cmd.local_target_speed[1] = two_to_float(&buf[3]) * 7.0;
       ai_cmd.global_vision_theta = two_to_float(&buf[5]) * M_PI;
@@ -107,15 +102,12 @@ int main() {
       ai_cmd.global_global_target_position[0] = two_to_int(&buf[20]);
       ai_cmd.global_global_target_position[1] = two_to_int(&buf[22]);
 
-      printf(" check=%3d vx=%+4.1f vy=%+4.1f vision_theta=%4.2f "
-             "target_theta=%4.2f local_EN=%d ",
-             buf[0], ai_cmd.local_target_speed[0], ai_cmd.local_target_speed[1],
-             ai_cmd.global_vision_theta, ai_cmd.target_theta,
-             ai_cmd.allow_local_flags);
+      printf(
+        " check=%3d vx=%+4.1f vy=%+4.1f vision_theta=%4.2f "
+        "target_theta=%4.2f local_EN=%d ",
+        buf[0], ai_cmd.local_target_speed[0], ai_cmd.local_target_speed[1], ai_cmd.global_vision_theta, ai_cmd.target_theta, ai_cmd.allow_local_flags);
 
-      printf(" /ball %x %x %x %x %x %x %d \n", rx_buf_ball[0], rx_buf_ball[1],
-             rx_buf_ball[2], rx_buf_ball[3], rx_buf_ball[4], rx_buf_ball[5],
-             rx_buf_ball[6]);
+      printf(" /ball %x %x %x %x %x %x %d \n", rx_buf_ball[0], rx_buf_ball[1], rx_buf_ball[2], rx_buf_ball[3], rx_buf_ball[4], rx_buf_ball[5], rx_buf_ball[6]);
       cnt = 0;
     }
     cnt++;

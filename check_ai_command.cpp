@@ -1,16 +1,18 @@
-#include <iostream>
 #include <netinet/in.h>
-#include <sstream>
 #include <stdint.h>
 #include <stdio.h>
 #include <sys/socket.h>
 #include <sys/types.h>
-#include <termios.h> //ttyパラメータの構造体
+#include <termios.h>  //ttyパラメータの構造体
 #include <unistd.h>
 #include <wiringPi.h>
 #include <wiringSerial.h>
 
-int main() {
+#include <iostream>
+#include <sstream>
+
+int main()
+{
   printf("start");
 
   int sock;
