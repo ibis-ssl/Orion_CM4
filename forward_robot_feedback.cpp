@@ -106,7 +106,7 @@ startpoint:
           buf_idx = 0;
           cycle_div++;
         }
-        if (cycle_div > 10) {
+        if (cycle_div >= 2) {
           cycle_div = 0;
           for (int pi = 0; pi < PACKET_SIZE; pi++) {
             printf("0x%02x ", uart_rx_buf[pi]);
