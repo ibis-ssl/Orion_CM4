@@ -67,6 +67,10 @@ https://github.com/kevin-doolaeghe/rtl88x2bu_wifi_driver
 終わったら、T3Uを接続し、ifconfigでwlan1が生えているか確認。一度ドライバインストールしても再起動すると使えなくなっていることがあるので、それも問題ないか見ておく。  
 インターネットに接続できるWiFiに繋いでおくと、あとでマザーに乗せたままインターネット接続するのに使えたりして便利。
 
+## USB-WiFi (WiFi6) TP-Link TX20U Nano
+ドライバ
+https://github.com/morrownr/rtl8852bu
+
 ## 動作確認
 一旦再起動してIBIS_SSL_5GHZに自動で繋がっているか確認。  
 ifconfigでIP確認  
