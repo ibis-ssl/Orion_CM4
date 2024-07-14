@@ -20,36 +20,6 @@ constexpr int AI_CMD_V2_SIZE = 64;
 constexpr int CAM_BUF_SIZE = 7;
 constexpr int UART_PACKET_SIZE = AI_CMD_V2_SIZE + CAM_BUF_SIZE + 1;  // local cam + header
 
-typedef union {
-  char cmd_buf[AI_CMD_V2_SIZE];
-  //
-  struct
-  {
-    int16_t tar_pos[2];
-    int16_t speed_limit[2];
-    // 16 x4 = 64bit
-
-    int16_t tar_theta;
-    int16_t omega_limit;
-    int16_t dribble_power;
-    int16_t kick_power;
-    // 16 x4 = 64bit
-
-    int16_t vision_robot_pos[2];
-    int16_t vision_ball_pos[2];
-    // 16 x4 = 64bit
-
-    float mode_args[8];  // 自由蘭
-    // 32 x8 = 64 x4
-
-    uint16_t latency_time_ms;
-    int16_t vision_robot_theta;
-    uint8_t flags;
-    uint8_t control_mode;  // 制御モード
-    // 16 x2 + 8 x2 < 64bit
-  } cmd;
-} ai_cmd_v2_t;
-
 float two_to_float(char data[2]) { return (float)(((uint8_t)data[0] << 8 | (uint8_t)data[1]) - 32767.0) / 32767.0; }
 float two_to_int(char data[2]) { return (((uint8_t)data[0] << 8 | (uint8_t)data[1]) - 32767.0); }
 
@@ -139,11 +109,10 @@ int main(int argc, char * argv[])
     n = recv(local_cam_sock, ai_cmd_buf, sizeof(ai_cmd_buf), 0);
     n = recv(ai_cmd_sock, local_cam_buf, sizeof(local_cam_buf), 0);
 
-    uart_tx_buf[0] = 254;  //パケットヘッダ
     for (int i = 0; i < sizeof(ai_cmd_buf); i++) {
-      uart_tx_buf[i + 1] = ai_cmd_buf[i];
-      // ヘッダ1byteぶんずらす
+      uart_tx_buf[i] = ai_cmd_buf[i];
     }
+    uart_tx_buf[0] = 254;  //パケットヘッダ
 
     for (int i = 0; i < CAM_BUF_SIZE; i++) {
       uart_tx_buf[UART_PACKET_SIZE - CAM_BUF_SIZE - 1 + i] = local_cam_buf[i];
