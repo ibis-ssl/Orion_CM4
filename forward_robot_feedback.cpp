@@ -39,7 +39,7 @@ int main()
   printf("UART baud : 2000000 bps");
 
   int count = 0;
-  constexpr int PACKET_SIZE = 64;
+  constexpr int PACKET_SIZE = 128;
 
   char Rxbuf[PACKET_SIZE];
   char buf[PACKET_SIZE];
@@ -72,10 +72,10 @@ startpoint:
   sock = socket(AF_INET, SOCK_DGRAM, 0);
 
   addr.sin_family = AF_INET;
-  addr.sin_port = htons(50104);
-  addr.sin_addr.s_addr = inet_addr("224.5.20.104");
+  addr.sin_port = htons(50101);
+  addr.sin_addr.s_addr = inet_addr("224.5.20.101");
 
-  ipaddr = inet_addr("192.168.20.104");
+  ipaddr = inet_addr("192.168.20.101");
   if (setsockopt(sock, IPPROTO_IP, IP_MULTICAST_IF, (char *)&ipaddr, sizeof(ipaddr)) != 0) {
     perror("setsockopt");
     return 1;
