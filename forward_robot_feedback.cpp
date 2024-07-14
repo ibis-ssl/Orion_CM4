@@ -36,6 +36,7 @@ void flush_serial_port(boost::asio::serial_port & serial, flush_type what, boost
 int main()
 {
   printf("start");
+  printf("UART baud : 2000000 bps");
 
   int count = 0;
   constexpr int PACKET_SIZE = 64;
@@ -52,7 +53,7 @@ startpoint:
 
   boost::asio::io_service io;
   boost::asio::serial_port serial(io, SERIAL_PORT);
-  serial.set_option(boost::asio::serial_port_base::baud_rate(921600));
+  serial.set_option(boost::asio::serial_port_base::baud_rate(2000000));
   serial.set_option(boost::asio::serial_port_base::character_size(8 /* data bits */));
   serial.set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none));
   serial.set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
