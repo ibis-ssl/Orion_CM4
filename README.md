@@ -24,9 +24,9 @@ CM4がインターネットに繋がっている状態でRemote SSHすると勝�
     sudo nmtui
 
     Activate a connection -> wlan0  
-    IBIS_SSL_5GHz -> Activate
+    SSL_ibis -> Activate
     パスワードを入れて接続し、ESCで戻る
-    Edit a connection -> WiFi -> IBIS_SSL_5GHz -> Edit  
+    Edit a connection -> WiFi -> SSL_ibis -> Edit  
     IPv4 CONFIGRATION  
     Automatic -> Manual  
     Address : 192.168.20.1xx  
@@ -38,11 +38,11 @@ USB-Ether変換の固定IP設定をしておくと、ルーター無しでPCと�
     sudo apt update && sudo apt upgrade -y && sudo apt install git libboost-all-dev linux-headers-generic dkms pkg-config rsync gtkterm build-essential bc -y && sudo apt autoremove -y
 
 ## リポジトリクローン
-    git clone https://github.com/ibis-ssl/Orion_CM4.git && cd Orion_CM4 && code orion_receaver.cpp
+    git clone https://github.com/ibis-ssl/Orion_CM4.git && cd Orion_CM4 && code forward_robot_feedback.cpp
 
 IPを編集して、ビルド
 
-    g++ forward_robot_feedback.cpp -pthread -o robot_feedback.out & g++ forward_ai_command.cpp -pthread -o ai_command.out
+    g++ forward_robot_feedback.cpp -pthread -o robot_feedback.out & g++ forward_ai_cmd_v2.cpp -pthread -o ai_cmd_v2.out
 
 ## install opencv
 pipからインストールする。
@@ -72,7 +72,7 @@ https://github.com/kevin-doolaeghe/rtl88x2bu_wifi_driver
 https://github.com/morrownr/rtl8852bu
 
 ## 動作確認
-一旦再起動してIBIS_SSL_5GHZに自動で繋がっているか確認。  
+一旦再起動してSSL_ibisに自動で繋がっているか確認。  
 ifconfigでIP確認  
 固定IPに対してSSH通るか確認  
 ai_command.out  
