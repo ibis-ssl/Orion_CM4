@@ -25,7 +25,7 @@ float two_to_int(char data[2]) { return (((uint8_t)data[0] << 8 | (uint8_t)data[
 
 int getUartBaudrate(int argc, char * argv[])
 {
-  int speed = 921600;
+  int speed = 2000000;
 
   // Parse command line arguments
   for (int i = 1; i < argc; ++i) {
