@@ -105,15 +105,13 @@ startpoint:
         buf_idx++;
         if (buf_idx >= PACKET_SIZE) {
           buf_idx = 0;
-          cycle_div++;
-        }
-        if (cycle_div >= 2) {
-          cycle_div = 0;
+
+          sendto(sock, uart_rx_buf, PACKET_SIZE, 0, (struct sockaddr *)&addr, sizeof(addr));
+
           for (int pi = 0; pi < PACKET_SIZE; pi++) {
             printf("0x%02x ", uart_rx_buf[pi]);
           }
           printf("\n");
-          sendto(sock, uart_rx_buf, PACKET_SIZE, 0, (struct sockaddr *)&addr, sizeof(addr));
         }
       }
     }
