@@ -36,9 +36,10 @@ void flush_serial_port(boost::asio::serial_port & serial, flush_type what, boost
 int main()
 {
   printf("start");
+  printf("UART baud : 2000000 bps");
 
   int count = 0;
-  constexpr int PACKET_SIZE = 64;
+  constexpr int PACKET_SIZE = 128;
 
   char Rxbuf[PACKET_SIZE];
   char buf[PACKET_SIZE];
@@ -52,7 +53,7 @@ startpoint:
 
   boost::asio::io_service io;
   boost::asio::serial_port serial(io, SERIAL_PORT);
-  serial.set_option(boost::asio::serial_port_base::baud_rate(921600));
+  serial.set_option(boost::asio::serial_port_base::baud_rate(2000000));
   serial.set_option(boost::asio::serial_port_base::character_size(8 /* data bits */));
   serial.set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none));
   serial.set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
@@ -71,10 +72,10 @@ startpoint:
   sock = socket(AF_INET, SOCK_DGRAM, 0);
 
   addr.sin_family = AF_INET;
-  addr.sin_port = htons(50104);
-  addr.sin_addr.s_addr = inet_addr("224.5.20.104");
+  addr.sin_port = htons(50101);
+  addr.sin_addr.s_addr = inet_addr("224.5.20.101");
 
-  ipaddr = inet_addr("192.168.20.104");
+  ipaddr = inet_addr("192.168.20.101");
   if (setsockopt(sock, IPPROTO_IP, IP_MULTICAST_IF, (char *)&ipaddr, sizeof(ipaddr)) != 0) {
     perror("setsockopt");
     return 1;
@@ -104,15 +105,13 @@ startpoint:
         buf_idx++;
         if (buf_idx >= PACKET_SIZE) {
           buf_idx = 0;
-          cycle_div++;
-        }
-        if (cycle_div >= 2) {
-          cycle_div = 0;
+
+          sendto(sock, uart_rx_buf, PACKET_SIZE, 0, (struct sockaddr *)&addr, sizeof(addr));
+
           for (int pi = 0; pi < PACKET_SIZE; pi++) {
             printf("0x%02x ", uart_rx_buf[pi]);
           }
           printf("\n");
-          sendto(sock, uart_rx_buf, PACKET_SIZE, 0, (struct sockaddr *)&addr, sizeof(addr));
         }
       }
     }
