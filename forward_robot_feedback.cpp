@@ -8,8 +8,9 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <termios.h>  //ttyパラメータの構造体
+#include <termios.h>
 #include <unistd.h>
-
+#include <stdio.h>
 #include <boost/array.hpp>
 #include <boost/asio.hpp>
 #include <cstring>
@@ -33,10 +34,37 @@ void flush_serial_port(boost::asio::serial_port & serial, flush_type what, boost
   }
 }
 
-int main()
+int getMachineNumber(int argc, char * argv[])
+{
+  int number = 100;
+
+  // Parse command line arguments
+  for (int i = 1; i < argc; ++i) {
+    if (strcmp(argv[i], "-n") == 0) {
+      if (i + 1 < argc) {
+        number = std::stoi(argv[++i]);
+      } else {
+        printf("Error: -n option requires an integer argument.");
+      }
+    }
+  }
+  return number;
+}
+
+int main(int argc, char * argv[])
 {
   printf("start");
   printf("UART baud : 2000000 bps");
+
+  int machine_number = getMachineNumber(argc, argv);
+
+  char multicast_ip[100];
+  sprintf(multicast_ip, "224.5.20.%d", machine_number);
+  char machine_ip[100];
+  sprintf(machine_ip, "192.168.20.%d", machine_number);
+
+  printf("target_ip : %s", multicast_ip);
+  printf("machine_ip : %s", machine_ip);
 
   int count = 0;
   constexpr int PACKET_SIZE = 128;
@@ -72,10 +100,10 @@ startpoint:
   sock = socket(AF_INET, SOCK_DGRAM, 0);
 
   addr.sin_family = AF_INET;
-  addr.sin_port = htons(50101);
-  addr.sin_addr.s_addr = inet_addr("224.5.20.101");
+  addr.sin_port = htons(50000 + machine_number);
+  addr.sin_addr.s_addr = inet_addr(multicast_ip);
 
-  ipaddr = inet_addr("192.168.20.101");
+  ipaddr = inet_addr(machine_ip);
   if (setsockopt(sock, IPPROTO_IP, IP_MULTICAST_IF, (char *)&ipaddr, sizeof(ipaddr)) != 0) {
     perror("setsockopt");
     return 1;

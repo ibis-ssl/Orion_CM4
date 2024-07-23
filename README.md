@@ -4,6 +4,10 @@
     SSH : パスワード認証
     UserName : ibis
 
+ロケール設定も忘れずに｡
+あとから設定するにはこちら
+https://note.com/hitoshiarakawa/n/n72af666cdb9b
+
 ## RaspberryPi Config
     sudo raspi-config
 シリアルターミナルを無効、SerialPortを有効にする。ここで再起動する必要はない。  
