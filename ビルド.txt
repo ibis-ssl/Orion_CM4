@@ -1,6 +1,9 @@
 g++ forward_robot_feedback.cpp -pthread -o robot_feedback.out
 g++ forward_ai_cmd_v2.cpp -pthread -o ai_cmd_v2.out
 
---debug オプションで出力先がuartからprintfになる
--s オプションでボーレートを変更できる
+--debug バイナリ表示になる。マイコン側には送信されない。
+-s オプションでボーレートを変更できる。デフォルト2Mbps
  ./ai_cmd_v2.out --debug
+
+ -n でIP指定(例:101)
+ ./robot_feedback.out -n 101

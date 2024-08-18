@@ -14,6 +14,8 @@
 #include <boost/asio.hpp>
 #include <cstring>
 
+#include "robot_packet.h"
+
 #define SERIAL_PORT "/dev/serial0"
 
 constexpr int AI_CMD_V2_SIZE = 64;
@@ -57,6 +59,49 @@ void sendToTerminal(char buf[])
   for (int i = 0; i < UART_PACKET_SIZE; i++) {
     printf("0x%02x ", buf[i]);
   }
+  printf("\n");
+}
+
+void printParcedData(char buf[])
+{
+  RobotCommandSerializedV2 cmd_buf;
+  memcpy(cmd_buf.data, buf, sizeof(cmd_buf));
+  RobotCommandV2 cmd_v2 = RobotCommandSerializedV2_deserialize(&cmd_buf);
+  if (cmd_v2.stop_emergency) {
+    printf("STOP ");
+  } else {
+    printf("MOVE ");
+  }
+
+  printf("check %3d vision %d time %5d ", cmd_v2.check_counter, cmd_v2.is_vision_available, cmd_v2.elapsed_time_ms_since_last_vision);
+
+  printf("VisionX %+6.2f Y %+6.2f ", cmd_v2.vision_global_pos[0], cmd_v2.vision_global_pos[1]);
+  printf("theta %+6.1f ", cmd_v2.vision_global_theta * 180 / M_PI);
+  printf("elt %4d ", cmd_v2.elapsed_time_ms_since_last_vision);
+  printf("Ltcy %3d ", cmd_v2.latency_time_ms);
+
+  printf("TarTheta %+6.2f ", cmd_v2.target_global_theta);
+  printf("SpdLmt %4.2f OmgLmt %4.1f ", cmd_v2.speed_limit, cmd_v2.omega_limit);
+
+  printf("dri %+4.2f ", cmd_v2.dribble_power);
+  if (cmd_v2.lift_dribbler) {
+    printf("UP ");
+  } else {
+    printf("DN ");
+  }
+  if (cmd_v2.enable_chip) {
+    printf("chip %3.2f ", cmd_v2.kick_power);
+  } else {
+    printf("stlt %3.2f ", cmd_v2.kick_power);
+  }
+
+  if (cmd_v2.prioritize_accurate_acceleration) {
+    printf("Pri-Acur ");
+  }
+  if (cmd_v2.prioritize_move) {
+    printf("Pri-Move ");
+  }
+
   printf("\n");
 }
 
@@ -104,6 +149,8 @@ int main(int argc, char * argv[])
   serial.set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none));
   serial.set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
 
+  char pre_check_cnt = 0;
+
   while (1) {
     int n;
     n = recv(local_cam_sock, ai_cmd_buf, sizeof(ai_cmd_buf), 0);
@@ -120,10 +167,11 @@ int main(int argc, char * argv[])
 
     if (debug_mode_enabled) {
       sendToTerminal(uart_tx_buf);
-    } else {
+    } else if (pre_check_cnt != ai_cmd_buf[1]) {
       serial.write_some(boost::asio::buffer(uart_tx_buf, sizeof(uart_tx_buf)));
+      printParcedData(ai_cmd_buf);
     }
-
+    pre_check_cnt = ai_cmd_buf[1];
     /* 100Hz */
     usleep(10000);
   }
