@@ -54,7 +54,7 @@ bool isDebugMode(int argc, char * argv[])
   return debug;
 }
 
-void sendToTerminal(char buf[])
+void pritBinData(char buf[])
 {
   for (int i = 0; i < UART_PACKET_SIZE; i++) {
     printf("0x%02x ", buf[i]);
@@ -166,7 +166,7 @@ int main(int argc, char * argv[])
     }
 
     if (debug_mode_enabled) {
-      sendToTerminal(uart_tx_buf);
+      pritBinData(uart_tx_buf);
     } else if (pre_check_cnt != ai_cmd_buf[1]) {
       serial.write_some(boost::asio::buffer(uart_tx_buf, sizeof(uart_tx_buf)));
       printParcedData(ai_cmd_buf);
