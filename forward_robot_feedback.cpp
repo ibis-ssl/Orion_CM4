@@ -10,7 +10,7 @@
 #include <termios.h>  //ttyパラメータの構造体
 #include <termios.h>
 #include <unistd.h>
-#include <stdio.h>
+
 #include <boost/array.hpp>
 #include <boost/asio.hpp>
 #include <cstring>
@@ -112,7 +112,7 @@ startpoint:
   size_t total_length = 0;
 
   char uart_rx_buf[PACKET_SIZE];
-  uint32_t buf_idx = 0, cycle_div = 0;
+  uint32_t buf_idx = 0;
 
   while (1) {
     size_t n = serial.read_some(boost::asio::buffer(buf, sizeof(buf)));
@@ -133,8 +133,8 @@ startpoint:
         buf_idx++;
         if (buf_idx >= PACKET_SIZE) {
           buf_idx = 0;
-
           sendto(sock, uart_rx_buf, PACKET_SIZE, 0, (struct sockaddr *)&addr, sizeof(addr));
+          printf("ck : %3d / ", uart_rx_buf[3]);
 
           for (int pi = 0; pi < PACKET_SIZE; pi++) {
             printf("0x%02x ", uart_rx_buf[pi]);
