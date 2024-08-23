@@ -19,8 +19,14 @@
 #define SERIAL_PORT "/dev/serial0"
 
 constexpr int AI_CMD_V2_SIZE = 64;
-constexpr int EXT_BUF_SIZE = 8;                                  // camera 7 + ck1
-constexpr int UART_PACKET_SIZE = AI_CMD_V2_SIZE + EXT_BUF_SIZE;  // local cam + header
+constexpr int CAM_BUF_SIZE = 7;                                      // camera 7 + ck1
+constexpr int UART_PACKET_SIZE = AI_CMD_V2_SIZE + CAM_BUF_SIZE + 1;  // local cam + ck
+
+typedef struct
+{
+  int16_t pos_xy[2], radius;
+  uint8_t fps;
+} camera_t;
 
 float two_to_float(char data[2]) { return (float)(((uint8_t)data[0] << 8 | (uint8_t)data[1]) - 32767.0) / 32767.0; }
 float two_to_int(char data[2]) { return (((uint8_t)data[0] << 8 | (uint8_t)data[1]) - 32767.0); }
@@ -118,7 +124,7 @@ int main(int argc, char * argv[])
   struct sockaddr_in local_cam_addr;
   struct sockaddr_in ai_cmd_addr;
 
-  char ext_cmd_buf[EXT_BUF_SIZE] = {};
+  char local_cam_buf[CAM_BUF_SIZE] = {};
   char ai_cmd_buf[AI_CMD_V2_SIZE] = {};
 
   char uart_tx_buf[UART_PACKET_SIZE] = {};
@@ -150,19 +156,20 @@ int main(int argc, char * argv[])
   serial.set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
 
   char pre_check_cnt = 0;
+  camera_t camera;
 
   while (1) {
     int n;
     n = recv(ai_cmd_sock, ai_cmd_buf, sizeof(ai_cmd_buf), 0);
-    n = recv(local_cam_sock, ext_cmd_buf, sizeof(7), 0);
+    n = recv(local_cam_sock, local_cam_buf, sizeof(local_cam_buf), 0);
 
     for (int i = 0; i < sizeof(ai_cmd_buf); i++) {
       uart_tx_buf[i] = ai_cmd_buf[i];
     }
     uart_tx_buf[0] = 254;  //パケットヘッダ
 
-    for (int i = 0; i < EXT_BUF_SIZE; i++) {
-      uart_tx_buf[UART_PACKET_SIZE - EXT_BUF_SIZE - 1 + i] = ext_cmd_buf[i];
+    for (int i = 0; i < CAM_BUF_SIZE; i++) {
+      uart_tx_buf[UART_PACKET_SIZE - CAM_BUF_SIZE - 1 + i] = local_cam_buf[i];
     }
 
     uint32_t data_ck = 0;
@@ -171,10 +178,15 @@ int main(int argc, char * argv[])
     }
     uart_tx_buf[UART_PACKET_SIZE - 1] = data_ck;
 
+    camera.pos_xy[0] = (local_cam_buf[0] << 8) + local_cam_buf[1];
+    camera.pos_xy[1] = (local_cam_buf[2] << 8) + local_cam_buf[3];
+    camera.radius = (local_cam_buf[4] << 8) + local_cam_buf[5];
+    camera.fps = local_cam_buf[6];
     if (debug_mode_enabled) {
       pritBinData(uart_tx_buf);
     } else if (pre_check_cnt != ai_cmd_buf[1]) {
-      printf("ck : %3d", data_ck & 0xFF);
+      printf("cam %+4d %+4d %+4d %3d / ", camera.pos_xy[0], camera.pos_xy[1], camera.radius, camera.fps);
+      printf("ck : %3d / ", data_ck & 0xFF);
       serial.write_some(boost::asio::buffer(uart_tx_buf, sizeof(uart_tx_buf)));
       printParcedData(ai_cmd_buf);
     }
