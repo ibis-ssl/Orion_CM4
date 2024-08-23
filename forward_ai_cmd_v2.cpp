@@ -19,8 +19,8 @@
 #define SERIAL_PORT "/dev/serial0"
 
 constexpr int AI_CMD_V2_SIZE = 64;
-constexpr int CAM_BUF_SIZE = 7;
-constexpr int UART_PACKET_SIZE = AI_CMD_V2_SIZE + CAM_BUF_SIZE + 1;  // local cam + header
+constexpr int EXT_BUF_SIZE = 8;                                  // camera 7 + ck1
+constexpr int UART_PACKET_SIZE = AI_CMD_V2_SIZE + EXT_BUF_SIZE;  // local cam + header
 
 float two_to_float(char data[2]) { return (float)(((uint8_t)data[0] << 8 | (uint8_t)data[1]) - 32767.0) / 32767.0; }
 float two_to_int(char data[2]) { return (((uint8_t)data[0] << 8 | (uint8_t)data[1]) - 32767.0); }
@@ -118,7 +118,7 @@ int main(int argc, char * argv[])
   struct sockaddr_in local_cam_addr;
   struct sockaddr_in ai_cmd_addr;
 
-  char local_cam_buf[CAM_BUF_SIZE] = {};
+  char ext_cmd_buf[EXT_BUF_SIZE] = {};
   char ai_cmd_buf[AI_CMD_V2_SIZE] = {};
 
   char uart_tx_buf[UART_PACKET_SIZE] = {};
@@ -127,13 +127,13 @@ int main(int argc, char * argv[])
   ai_cmd_sock = socket(AF_INET, SOCK_DGRAM, 0);
 
   local_cam_addr.sin_family = AF_INET;
-  local_cam_addr.sin_port = htons(12345);
+  local_cam_addr.sin_port = htons(8890);
   local_cam_addr.sin_addr.s_addr = INADDR_ANY;
 
   bind(local_cam_sock, (struct sockaddr *)&local_cam_addr, sizeof(local_cam_addr));
 
   ai_cmd_addr.sin_family = AF_INET;
-  ai_cmd_addr.sin_port = htons(8890);
+  ai_cmd_addr.sin_port = htons(12345);
   ai_cmd_addr.sin_addr.s_addr = INADDR_ANY;
 
   bind(ai_cmd_sock, (struct sockaddr *)&ai_cmd_addr, sizeof(ai_cmd_addr));
@@ -153,21 +153,28 @@ int main(int argc, char * argv[])
 
   while (1) {
     int n;
-    n = recv(local_cam_sock, ai_cmd_buf, sizeof(ai_cmd_buf), 0);
-    n = recv(ai_cmd_sock, local_cam_buf, sizeof(local_cam_buf), 0);
+    n = recv(ai_cmd_sock, ai_cmd_buf, sizeof(ai_cmd_buf), 0);
+    n = recv(local_cam_sock, ext_cmd_buf, sizeof(7), 0);
 
     for (int i = 0; i < sizeof(ai_cmd_buf); i++) {
       uart_tx_buf[i] = ai_cmd_buf[i];
     }
     uart_tx_buf[0] = 254;  //パケットヘッダ
 
-    for (int i = 0; i < CAM_BUF_SIZE; i++) {
-      uart_tx_buf[UART_PACKET_SIZE - CAM_BUF_SIZE - 1 + i] = local_cam_buf[i];
+    for (int i = 0; i < EXT_BUF_SIZE; i++) {
+      uart_tx_buf[UART_PACKET_SIZE - EXT_BUF_SIZE - 1 + i] = ext_cmd_buf[i];
     }
+
+    uint32_t data_ck = 0;
+    for (int i = 0; i < UART_PACKET_SIZE - 1; i++) {
+      data_ck += uart_tx_buf[i];
+    }
+    uart_tx_buf[UART_PACKET_SIZE - 1] = data_ck;
 
     if (debug_mode_enabled) {
       pritBinData(uart_tx_buf);
     } else if (pre_check_cnt != ai_cmd_buf[1]) {
+      printf("ck : %3d", data_ck & 0xFF);
       serial.write_some(boost::asio::buffer(uart_tx_buf, sizeof(uart_tx_buf)));
       printParcedData(ai_cmd_buf);
     }
