@@ -82,3 +82,12 @@ ifconfigでIP確認
 ai_command.out  
 robot_feedback.out  
 を実行してコマンドの往来確認  
+
+
+# Web Server
+
+ローカルネット上のデバイスのブラウザからセンサの値を確認できるようにする。
+
+1. AIコマンド・ロボットフィードバックのプログラムが動いていること
+2. `python3 server.py`
+3. ブラウザで`http://192.168.20.1xx:5000`にアクセス
