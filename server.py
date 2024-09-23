@@ -3,6 +3,7 @@ import threading
 from flask import Flask, jsonify, render_template
 import time
 import struct
+import sys
 
 class RobotFeedback:
     def __init__(self):
@@ -97,16 +98,14 @@ latest_record = dict()
 lock = threading.Lock()
 
 # UDPでロボットのデータを受信する関数
-def udp_listener():
+def udp_listener(udp_ip, udp_port, local_ip):
     global latest_record
-    udp_ip = "224.5.20.104"  # すべてのインターフェースから受信
-    udp_port = 50104     # forward_robot_feedback.cpp の送信先ポートに合わせる
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(('', udp_port))  # 空文字で全インターフェースから受信
     
     # マルチキャスト設定（ローカルのインターフェースを指定する）
-    mreq = socket.inet_aton(udp_ip) + socket.inet_aton('192.168.20.104')  # 実際のローカルIPアドレスに置き換える
+    mreq = socket.inet_aton(udp_ip) + socket.inet_aton(local_ip)  # 実際のローカルIPアドレスに置き換える
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
 
     while True:
@@ -134,8 +133,16 @@ def get_status():
         return jsonify({"error": str(e)}), 500  # 500エラーとともにエラー内容を返す
 
 if __name__ == '__main__':
+    if len(sys.argv) != 2:
+        print("Usage: python script.py <ID e.g. 104>")
+        sys.exit(1)
+
+    multicast_ip = '224.5.20.' + sys.argv[1]
+    port = 50000 + int(sys.argv[1])
+    local_ip = '192.168.20.' + sys.argv[1]
+    
     # UDPリスナーを別スレッドで実行
-    listener_thread = threading.Thread(target=udp_listener)
+    listener_thread = threading.Thread(target=udp_listener, args=(multicast_ip, port, local_ip))
     listener_thread.daemon = True
     listener_thread.start()
     
