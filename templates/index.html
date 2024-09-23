@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robot Status</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    <style>
+        #status {
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Latest Robot Status</h1>
+    
+    <div id="status">
+        <div>Counter: <span id="counter"></span></div>
+        <div>Kick State: <span id="kick_state"></span></div>
+        <div>Temperature: <span id="temperature"></span></div>
+        <div>Error ID: <span id="error_id"></span></div>
+        <div>Error Info: <span id="error_info"></span></div>
+        <div>Error Value: <span id="error_value"></span></div>
+        <div>Motor Current: <span id="motor_current"></span></div>
+        <div>Ball Detection: <span id="ball_detection"></span></div>
+        <div>Yaw Angle: <span id="yaw_angle"></span></div>
+        <div>Diff Angle: <span id="diff_angle"></span></div>
+        <div>Odom: <span id="odom"></span></div>
+        <div>Odom Speed: <span id="odom_speed"></span></div>
+        <div>Mouse Odom: <span id="mouse_odom"></span></div>
+        <div>Mouse Velocity: <span id="mouse_vel"></span></div>
+        <div>Voltage: <span id="voltage"></span></div>
+        <div>Check Version: <span id="check_ver"></span></div>
+        <div>Ball Sensor: <span id="ball_sensor"></span></div>
+        <div>Values: <span id="values"></span></div>
+        <div>Time: <span id="time"></span></div>
+    </div>
+    
+    <!-- <button onclick="showGraph()">Show Graph</button> -->
+    <!-- <canvas id="myChart" width="400" height="200"></canvas> -->
+
+    <script>
+        <!-- const ctx = document.getElementById('myChart').getContext('2d'); -->
+        let chart = null;
+        let statusHistory = []; // データを蓄積する配列
+
+        // 最新データを取得して表示する関数
+        async function fetchLatestStatus() {
+            try {
+                const response = await fetch('/status');
+                const data = await response.json();
+        
+                // 新しいデータを配列に追加
+                statusHistory.push(data);
+        
+                // HTMLに最新のデータを表示
+                const status = data.status; // statusオブジェクトにアクセス
+        
+                document.getElementById('counter').textContent = status.counter;
+                document.getElementById('kick_state').textContent = status.kick_state;
+                document.getElementById('temperature').textContent = status.temperature.join(', ');
+                document.getElementById('error_id').textContent = status.error_id;
+                document.getElementById('error_info').textContent = status.error_info;
+                document.getElementById('error_value').textContent = status.error_value;
+                document.getElementById('motor_current').textContent = status.motor_current.join(', ');
+                document.getElementById('ball_detection').textContent = status.ball_detection.join(', ');
+                document.getElementById('yaw_angle').textContent = status.yaw_angle;
+                document.getElementById('diff_angle').textContent = status.diff_angle;
+                document.getElementById('odom').textContent = status.odom.join(', ');
+                document.getElementById('odom_speed').textContent = status.odom_speed.join(', ');
+                document.getElementById('mouse_odom').textContent = status.mouse_odom.join(', ');
+                document.getElementById('mouse_vel').textContent = status.mouse_vel.join(', ');
+                document.getElementById('voltage').textContent = status.voltage.join(', ');
+                document.getElementById('check_ver').textContent = status.check_ver;
+                document.getElementById('ball_sensor').textContent = status.ball_sensor ? 'True' : 'False';
+                document.getElementById('values').textContent = status.values.join(', ');
+                document.getElementById('time').textContent = data.time;
+                
+            } catch (error) {
+                console.error('Error fetching latest status:', error);
+            }
+        }
+
+        // ページ読み込み時に定期的にデータを取得して表示を更新する
+        window.onload = function() {
+            // 1秒ごとに最新データを取得して更新
+            setInterval(fetchLatestStatus, 100);  // 1000ミリ秒（1秒）ごとに更新
+        };
+
+
+        // グラフを描画する関数
+        // 時系列データを元にグラフを表示する関数
+        function showGraph() {
+            const ctx = document.getElementById('myChart').getContext('2d');
+
+            // 時系列データの準備（例：kick_stateと時間）
+            const labels = statusHistory.map(item => new Date(item.time * 1000).toLocaleTimeString()); // 時刻
+            const kickStateData = statusHistory.map(item => item.status.kick_state); // kick_state
+
+            // 既存のチャートがあれば破棄
+            if (window.myChart) {
+                window.myChart.destroy();
+            }
+
+            // 新しいグラフを描画
+            window.myChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Kick State Over Time',
+                        data: kickStateData,
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        fill: false
+                    }]
+                },
+                options: {
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: {
+                                unit: 'second'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // ページ読み込み時に最新のデータを表示
+        fetchLatestStatus();
+
+        // ボタンがクリックされたらグラフを表示
+        <!-- document.getElementById('show-graph').addEventListener('click', showGraph); -->
+    </script>
+</body>
+</html>
