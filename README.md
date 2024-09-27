@@ -8,10 +8,24 @@
 あとから設定するにはこちら
 https://note.com/hitoshiarakawa/n/n72af666cdb9b
 
+## ssh設定(RasPi)
+authorized_keysを~/.sshに配置
+
+## SSH設定(ホストPC)
+scrapboxのETHに認証キー書いてあるので、~/.sshに配置する(ファイル権限に注意)
+
+ssh configを設定しておく。
+例
+
+    Host CM4_1xx
+        HostName 192.168.20.1xx
+        User ibis
+        ServerAliveInterval 10
+        StrictHostKeyChecking no
+
 ## RaspberryPi Config
     sudo raspi-config
-シリアルターミナルを無効、SerialPortを有効にする。ここで再起動する必要はない。  
-VNCを有効にしておく。
+シリアルターミナルを無効、SerialPort、VNCを有効にする。ここで再起動する必要はない。
 
 ## VSCode RemoteSSH
 CM4がインターネットに繋がっている状態でRemote SSHすると勝手に入る  
@@ -36,7 +50,8 @@ CM4がインターネットに繋がっている状態でRemote SSHすると勝�
     Address : 192.168.20.1xx  
 
 再接続しないと固定IP設定は反映されない。  
-USB-Ether変換の固定IP設定をしておくと、ルーター無しでPCと直結してSSHできて便利
+USB-Ether変換の固定IP設定をしておくと、ルーター無しでPCと直結してSSHできて便利。  
+ただし、USB-Ethの個体ごとに設定が必要なので注意。
 
 ## パッケージインストール
     sudo apt update && sudo apt upgrade -y && sudo apt install git libboost-all-dev linux-headers-generic dkms pkg-config rsync gtkterm build-essential bc -y && sudo apt autoremove -y
