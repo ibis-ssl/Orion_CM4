@@ -22,6 +22,7 @@ ssh configを設定しておく。
         User ibis
         ServerAliveInterval 10
         StrictHostKeyChecking no
+        identityfile ~/.ssh/cm4_rsa
 
 ## RaspberryPi Config
     sudo raspi-config
