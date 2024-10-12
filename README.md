@@ -57,12 +57,9 @@ USB-Ether変換の固定IP設定をしておくと、ルーター無しでPCと�
 ## パッケージインストール
     sudo apt update && sudo apt upgrade -y && sudo apt install git libboost-all-dev linux-headers-generic dkms pkg-config rsync gtkterm build-essential bc -y && sudo apt autoremove -y
 
-## リポジトリクローン
-    git clone https://github.com/ibis-ssl/Orion_CM4.git && cd Orion_CM4 && code forward_robot_feedback.cpp
-
-IPを編集して、ビルド
-
-    g++ forward_robot_feedback.cpp -pthread -o robot_feedback.out & g++ forward_ai_cmd_v2.cpp -pthread -o ai_cmd_v2.out
+## リポジトリクローン & ビルド
+    git clone https://github.com/ibis-ssl/Orion_CM4.git && g++ forward_robot_feedback.cpp -pthread -o robot_feedback.out & g++ forward_ai_cmd_v2.cpp -pthread -o ai_cmd_v2.out
+開発でArm64のバイナリ作るのが面倒なので毎回RasPi側でビルドしている
 
 ## install opencv
 pipからインストールする。
