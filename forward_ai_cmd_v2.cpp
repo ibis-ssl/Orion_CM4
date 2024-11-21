@@ -8,6 +8,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <boost/array.hpp>
@@ -111,6 +112,22 @@ void printParcedData(char buf[])
   printf("\n");
 }
 
+long long get_current_time_ms()
+{
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);                // 現在の時刻を取得
+  return ts.tv_sec * 1000LL + ts.tv_nsec / 1000000;  // 秒をミリ秒に変換し、ナノ秒をミリ秒に変換して加算
+}
+
+uint32_t calc_check_sum(char * buf, int buf_size)
+{
+  uint32_t data_ck = 0;
+  for (int i = 0; i < buf_size - 1; i++) {
+    data_ck += buf[i];
+  }
+  return data_ck;
+}
+
 int main(int argc, char * argv[])
 {
   printf("start!! foward ai cmd V2 %d\n", argc);
@@ -158,41 +175,50 @@ int main(int argc, char * argv[])
   char pre_check_cnt = 0;
   camera_t camera;
 
-  while (1) {
-    int n;
-    n = recv(ai_cmd_sock, ai_cmd_buf, sizeof(ai_cmd_buf), 0);
-    n = recv(local_cam_sock, local_cam_buf, sizeof(local_cam_buf), 0);
+  long long pre_time, diff_time = 0;
 
-    for (int i = 0; i < sizeof(ai_cmd_buf); i++) {
-      uart_tx_buf[i] = ai_cmd_buf[i];
-    }
+  while (1) {
+    int cmd_n, cam_n;
+    cmd_n = recv(ai_cmd_sock, ai_cmd_buf, sizeof(ai_cmd_buf), 0);
+    cam_n = recv(local_cam_sock, local_cam_buf, sizeof(local_cam_buf), 0);
+
+    memcpy(uart_tx_buf, ai_cmd_buf, sizeof(ai_cmd_buf));
+
     uart_tx_buf[0] = 254;  //パケットヘッダ
 
-    for (int i = 0; i < CAM_BUF_SIZE; i++) {
-      uart_tx_buf[UART_PACKET_SIZE - CAM_BUF_SIZE - 1 + i] = local_cam_buf[i];
+    // camera.* はデバッグprint用のパース
+    if (cam_n != -1) {
+      camera.pos_xy[0] = (local_cam_buf[0] << 8) + local_cam_buf[1];
+      camera.pos_xy[1] = (local_cam_buf[2] << 8) + local_cam_buf[3];
+      camera.radius = (local_cam_buf[4] << 8) + local_cam_buf[5];
+      camera.fps = local_cam_buf[6];
+
+      memcpy(&uart_tx_buf[UART_PACKET_SIZE - CAM_BUF_SIZE - 1], local_cam_buf, CAM_BUF_SIZE);
+      diff_time = get_current_time_ms() - pre_time;
+      pre_time = get_current_time_ms();
+    } else {
+      camera.fps = 0;
+
+      memset(&uart_tx_buf[UART_PACKET_SIZE - CAM_BUF_SIZE - 1], 0, CAM_BUF_SIZE);
     }
 
-    uint32_t data_ck = 0;
-    for (int i = 0; i < UART_PACKET_SIZE - 1; i++) {
-      data_ck += uart_tx_buf[i];
-    }
-    uart_tx_buf[UART_PACKET_SIZE - 1] = data_ck;
+    // cksum計算
+    uart_tx_buf[UART_PACKET_SIZE - 1] = calc_check_sum(uart_tx_buf, UART_PACKET_SIZE);
 
-    camera.pos_xy[0] = (local_cam_buf[0] << 8) + local_cam_buf[1];
-    camera.pos_xy[1] = (local_cam_buf[2] << 8) + local_cam_buf[3];
-    camera.radius = (local_cam_buf[4] << 8) + local_cam_buf[5];
-    camera.fps = local_cam_buf[6];
     if (debug_mode_enabled) {
       pritBinData(uart_tx_buf);
     } else if (pre_check_cnt != ai_cmd_buf[1]) {
-      printf("cam %+4d %+4d %+4d %3d / ", camera.pos_xy[0], camera.pos_xy[1], camera.radius, camera.fps);
-      printf("ck : %3d / ", data_ck & 0xFF);
       serial.write_some(boost::asio::buffer(uart_tx_buf, sizeof(uart_tx_buf)));
+      // printより先にserial送信
+
+      printf("cam %+4d %+4d %2d fps(rx)%2d / %3d / ", camera.pos_xy[0], camera.pos_xy[1], camera.radius, camera.fps, diff_time);
+      printf("ck : %3d / ", uart_tx_buf[UART_PACKET_SIZE - 1]);
       printParcedData(ai_cmd_buf);
     }
     pre_check_cnt = ai_cmd_buf[1];
-    /* 100Hz */
-    usleep(10000);
+
+    /* 1kHz */
+    usleep(1000);
   }
 
   close(local_cam_sock);
