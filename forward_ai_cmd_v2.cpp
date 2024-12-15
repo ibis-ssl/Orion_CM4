@@ -134,8 +134,8 @@ int main(int argc, char * argv[])
 
   int uart_baudrate = getUartBaudrate(argc, argv);
   bool debug_mode_enabled = isDebugMode(argc, argv);
-  printf("speed : %d\n", uart_baudrate);
-  printf("debug : %d\n", debug_mode_enabled);
+  printf("debug mode : %d\n", debug_mode_enabled);
+  printf("UART %d bps\n", uart_baudrate);
 
   int local_cam_sock, ai_cmd_sock;
   struct sockaddr_in local_cam_addr;

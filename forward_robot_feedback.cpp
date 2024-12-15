@@ -57,6 +57,7 @@ int main(int argc, char * argv[])
   printf("UART baud : 2000000 bps");
 
   int machine_number = getMachineNumber(argc, argv);
+  int uart_baudrate = getUartBaudrate(argc, argv);
 
   char multicast_ip[100];
   sprintf(multicast_ip, "224.5.20.%d", machine_number);
@@ -65,6 +66,8 @@ int main(int argc, char * argv[])
 
   printf("target_ip : %s", multicast_ip);
   printf("machine_ip : %s", machine_ip);
+
+  printf("UART %d bps\n", uart_baudrate);
 
   int count = 0;
   constexpr int PACKET_SIZE = 128;
@@ -81,7 +84,7 @@ startpoint:
 
   boost::asio::io_service io;
   boost::asio::serial_port serial(io, SERIAL_PORT);
-  serial.set_option(boost::asio::serial_port_base::baud_rate(2000000));
+  serial.set_option(boost::asio::serial_port_base::baud_rate(uart_baudrate));
   serial.set_option(boost::asio::serial_port_base::character_size(8 /* data bits */));
   serial.set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none));
   serial.set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
