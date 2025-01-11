@@ -51,6 +51,23 @@ int getMachineNumber(int argc, char * argv[])
   return number;
 }
 
+int getUartBaudrate(int argc, char * argv[])
+{
+  int speed = 2000000;
+
+  // Parse command line arguments
+  for (int i = 1; i < argc; ++i) {
+    if (strcmp(argv[i], "-s") == 0) {
+      if (i + 1 < argc) {
+        speed = std::stoi(argv[++i]);
+      } else {
+        printf("Error: -s option requires an integer argument.");
+      }
+    }
+  }
+  return speed;
+}
+
 int main(int argc, char * argv[])
 {
   printf("start");
