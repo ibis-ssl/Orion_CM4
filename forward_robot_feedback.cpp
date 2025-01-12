@@ -77,12 +77,12 @@ int main(int argc, char * argv[])
   int uart_baudrate = getUartBaudrate(argc, argv);
 
   char multicast_ip[100];
-  sprintf(multicast_ip, "224.5.20.100");
+  sprintf(multicast_ip, "224.5.20.%d", machine_number);
   char machine_ip[100];
   sprintf(machine_ip, "192.168.20.%d", machine_number);
-  const int target_port = 50000 + machine_number;
+  const int target_port = 50100;
 
-  printf("target_ip : %s : %d", multicast_ip, target_port);
+  printf("target_ip : %s:%d", multicast_ip, target_port);
   printf("machine_ip : %s", machine_ip);
 
   printf("UART %d bps\n", uart_baudrate);
