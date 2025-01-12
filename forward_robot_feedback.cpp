@@ -80,9 +80,8 @@ int main(int argc, char * argv[])
   sprintf(multicast_ip, "224.5.20.%d", machine_number);
   char machine_ip[100];
   sprintf(machine_ip, "192.168.20.%d", machine_number);
-  const int target_port = 50100;
 
-  printf("target_ip : %s:%d", multicast_ip, target_port);
+  printf("target_ip : %s", multicast_ip);
   printf("machine_ip : %s", machine_ip);
 
   printf("UART %d bps\n", uart_baudrate);
@@ -121,7 +120,7 @@ startpoint:
   sock = socket(AF_INET, SOCK_DGRAM, 0);
 
   addr.sin_family = AF_INET;
-  addr.sin_port = htons(target_port);
+  addr.sin_port = htons(50000 + machine_number);
   addr.sin_addr.s_addr = inet_addr(multicast_ip);
 
   ipaddr = inet_addr(machine_ip);
