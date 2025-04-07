@@ -74,6 +74,11 @@ pipからインストールする。
 
     pip3 install --upgrade pip --no-warn-script-location && pip3 install opencv-python==4.9.0.80 --verbose --no-warn-script-location
 
+
+## systemdの設定
+setup.shを実行すればよい
+
+
 ## USB-WiFi Driver (T3U nano)
 必須ではないがたぶんあったほうがいい  
 以下のコピペ  
