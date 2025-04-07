@@ -1,0 +1,13 @@
+[Unit]
+Description=FastAPI Launcher for Hardware Control
+After=network.target
+
+[Service]
+User=ibis
+WorkingDirectory=/home/ibis/Orion_CM4
+ExecStart=/usr/bin/python3 /home/ibis/Orion_CM4/lancher.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
