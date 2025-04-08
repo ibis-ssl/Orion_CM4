@@ -1,4 +1,6 @@
 #!/bin/bash
+echo "install python packages"
+sudo apt install python3-fastapi python3-uvicorn
 
 set -e
 
