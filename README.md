@@ -61,6 +61,11 @@ USB-Ether変換の固定IP設定をしておくと、ルーター無しでPCと�
     git clone git@github.com:ibis-ssl/Orion_CM4.git && g++ forward_robot_feedback.cpp -pthread -o robot_feedback.out & g++ forward_ai_cmd_v2.cpp -pthread -o ai_cmd_v2.out
 開発でArm64のバイナリ作るのが面倒なので毎回RasPi側でビルドしている
 
+## SSHエージェント用の設定
+git remote set-url origin git@github.com:ibis-ssl/Orion_CM4.git
+で変更
+SSHだとネットワークが不安定なときに失敗しがちなのでhttpsがちと思われる
+
 ## install opencv
 pipからインストールする。
 特定のバージョンである必要性はない
