@@ -15,7 +15,7 @@
 #include <boost/asio.hpp>
 #include <cstring>
 
-#define SERIAL_PORT "/dev/serial0"
+#define SERIAL_PORT "/dev/ttyS0"
 
 union Data {
   float f;

@@ -17,7 +17,7 @@
 
 #include "robot_packet.h"
 
-#define SERIAL_PORT "/dev/serial0"
+#define SERIAL_PORT "/dev/ttyS0"
 
 constexpr int AI_CMD_V2_SIZE = 64;
 constexpr int CAM_BUF_SIZE = 7;                                      // camera 7 + ck1
