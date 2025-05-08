@@ -66,7 +66,6 @@ def detect_loop():
             (x, y), _ = cv2.minEnclosingCircle(c)
             msg = f"{int(x)},{int(y)}".encode()
             sock.sendto(msg, (MCAST_GRP, MCAST_PORT))
-            print(msg)
 
 
 @app.on_event("startup")
