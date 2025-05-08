@@ -5,7 +5,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-PI_IP_LIST = [f"192.168.20.{i}" for i in range(100, 111)]
+PI_IP_LIST = [f"192.168.20.{i}" for i in range(100, 113)]
 PORT = 8000
 TIMEOUT = 0.5  # タイムアウトを短く
 
