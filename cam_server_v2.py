@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import tkinter as tk
 from tkinter import ttk
+import time
 from PIL import Image, ImageTk, ImageDraw
 
 # --- 設定 ---
@@ -33,9 +34,10 @@ app.add_middleware(
 # グローバルリソース
 cap = None
 latest_frame = None
-hsv_min = np.array([5, 100, 100])
-hsv_max = np.array([15, 255, 255])
+hsv_min = np.array([0, 150, 150])
+hsv_max = np.array([20, 255, 255])
 frame_lock = threading.Lock()
+fps_cache = 0
 
 # 検出結果保持
 last_x = 0
@@ -52,12 +54,15 @@ def capture_loop():
     global cap, latest_frame
     while True:
         if not cap.grab():
+            time.sleep(0.001)
             continue
         ret, frame = cap.retrieve()
         if not ret:
+            time.sleep(0.001)
             continue
         with frame_lock:
             latest_frame = frame
+            time.sleep(0.001) # 60fps : 16.6ms -> 10ms
 
 # 検出ループ
 def detect_loop():
@@ -65,22 +70,24 @@ def detect_loop():
     while True:
         with frame_lock:
             frame = latest_frame.copy() if latest_frame is not None else None
+            latest_frame = None
         if frame is None:
             continue
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv, hsv_min, hsv_max)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
         cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        detect_count += 1
         if cnts:
             c = max(cnts, key=cv2.contourArea)
             (x, y), _ = cv2.minEnclosingCircle(c)
             area = cv2.contourArea(c)
             # 更新
             last_x, last_y, last_area = int(x), int(y), area
-            detect_count += 1
             # マルチキャスト送信
             msg = f"{last_x},{last_y},{int(last_area)}".encode()
             sock.sendto(msg, (MCAST_GRP, MCAST_PORT))
+        time.sleep(0.001) # 60fps : 16.6ms -> 10ms
 
 # API: フレーム配信 (JPEG品質落として高速化)
 @app.get('/frame')
@@ -194,7 +201,7 @@ class PiGUI:
 
 # ヘッドレスモード時に定期出力
 def headless_report():
-    global detect_count, last_x, last_y, last_area
+    global detect_count, last_x, last_y, last_area,fps_cache
     prev_count = 0
     while True:
         time.sleep(1)
@@ -202,6 +209,7 @@ def headless_report():
         fps = detect_count - prev_count
         prev_count = detect_count
         print(f"x={last_x}, y={last_y}, area={last_area:.0f}, fps={fps}")
+        fps_cache = fps
 
 if __name__ == '__main__':
     p = argparse.ArgumentParser()
