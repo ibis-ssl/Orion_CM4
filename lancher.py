@@ -35,12 +35,16 @@ def start_control():
     executable_path = os.path.join(base_dir, "robot_feedback.out")
     subprocess.Popen([executable_path,"-s","1000000","-n",ip_last])
 
+    executable_path = os.path.join(base_dir, "./dist/cam_server_v3")
+    subprocess.Popen([executable_path,"-n",ip_last])
+
     return {"status": "started"}
 
 @app.post("/stop")
 def stop_control():
     subprocess.run(["pkill", "-f", "ai_cmd_v2.out"])
     subprocess.run(["pkill", "-f", "robot_feedback.out"])
+    subprocess.run(["pkill", "-f", "cam_server_v3"])
     return {"status": "stopped"}
 
 @app.get("/status")
