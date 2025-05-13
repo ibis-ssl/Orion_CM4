@@ -6,10 +6,11 @@ import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageTk, ImageDraw
 import io
+from tkinter import font
 
 # 設定
-MCAST_GRP = '224.5.20.1'
-MCAST_PORT = 5005
+MCAST_GRP = '239.255.0.112'
+MCAST_PORT = 5112
 PI_SERVER = 'http://192.168.20.112:8001'  # Raspberry Pi の API サーバ
 FRAME_SIZE = (320, 240)  # GUI 表示用にリサイズするサイズ
 
@@ -30,18 +31,19 @@ def udp_listener(coord_var):
             data, addr = sock.recvfrom(1024)
             text = data.decode()
             coord_var.set(text)
+            print(text)
         except Exception as e:
             print(f"UDP listener error: {e}")
 
 # 画像更新＋クロスライン描画
-def update_frame(label, coord_var):
+def update_frame(label, coord_var,img_name):
     try:
-        resp = requests.get(f"{PI_SERVER}/frame", timeout=1)
+        resp = requests.get(f"{PI_SERVER}/frame/" + img_name, timeout=1)
         img = Image.open(io.BytesIO(resp.content))
         img = img.resize(FRAME_SIZE)
         # クロスライン描画
         coords = coord_var.get().split(',')
-        if len(coords) == 2 and coords[0].isdigit() and coords[1].isdigit():
+        if len(coords) == 4 and coords[0].isdigit() and coords[1].isdigit():
             x, y = int(coords[0]), int(coords[1])
             # 座標がリサイズ後の範囲内かチェック
             if 0 <= x < FRAME_SIZE[0] and 0 <= y < FRAME_SIZE[1]:
@@ -54,7 +56,7 @@ def update_frame(label, coord_var):
         label.config(image=label.imgtk)
     except Exception:
         pass
-    label.after(50, update_frame, label, coord_var)
+    label.after(100, update_frame, label, coord_var,img_name)
 
 # パラメータ適用
 def apply_params():
@@ -73,25 +75,31 @@ def build_gui():
     root = tk.Tk()
     root.title('Ball Tracker')
 
+
     # 取得座標用 StringVar
-    latest_coords = tk.StringVar(root, value='-1,-1')
+    latest_coords = tk.StringVar(value="000,000,000,000")
+
 
     # 映像表示ラベル
-    frame_label = ttk.Label(root)
-    frame_label.grid(row=0, column=0, rowspan=6)
-    frame_label.after(100, update_frame, frame_label, latest_coords)
+    frame_label_raw = ttk.Label(root)
+    frame_label_raw.grid(row=0, column=0, rowspan=6)
+    frame_label_raw.after(100, update_frame, frame_label_raw, latest_coords,"raw")
+    
+    frame_label_mask = ttk.Label(root)
+    frame_label_mask.grid(row=0, column=1, rowspan=6)
+    frame_label_mask.after(100, update_frame, frame_label_mask, latest_coords,"mask")
 
     # HSV スライダー生成
-    defaults = {'h_min':5,'h_max':15,'s_min':100,'s_max':255,'v_min':100,'v_max':255}
+    defaults = {'h_min':0,'h_max':15,'s_min':100,'s_max':255,'v_min':100,'v_max':255}
     limits = {'h_min':180,'h_max':180,'s_min':255,'s_max':255,'v_min':255,'v_max':255}
     for idx, key in enumerate(['h_min','h_max','s_min','s_max','v_min','v_max']):
         lbl = key.replace('_',' ').upper()
         var = tk.IntVar(root, value=defaults[key])
         h_vars[key] = var
-        ttk.Label(root, text=lbl).grid(row=idx, column=1, sticky='w')
-        ttk.Scale(root, from_=0, to=limits[key], variable=var, orient='horizontal').grid(row=idx, column=2)
+        ttk.Label(root, text=lbl).grid(row=7+idx, column=0, sticky='w')
+        ttk.Scale(root, from_=0, to=limits[key], variable=var, orient='horizontal').grid(row=7+idx, column=1)
 
-    ttk.Button(root, text='Apply', command=apply_params).grid(row=6, column=2, sticky='e')
+    ttk.Button(root, text='Apply', command=apply_params).grid(row=13, column=1, sticky='e')
 
     # 座標表示ラベル
     ttk.Label(root, text='Coords:').grid(row=6, column=0, sticky='w')
