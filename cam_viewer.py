@@ -9,9 +9,9 @@ import io
 from tkinter import font
 
 # 設定
-MCAST_GRP = '239.255.0.112'
-MCAST_PORT = 5112
-PI_SERVER = 'http://192.168.20.112:8001'  # Raspberry Pi の API サーバ
+MCAST_GRP = '224.5.10.106'
+MCAST_PORT = 5106
+PI_SERVER = 'http://192.168.20.106:8001'  # Raspberry Pi の API サーバ
 FRAME_SIZE = (320, 240)  # GUI 表示用にリサイズするサイズ
 
 # GUI 変数

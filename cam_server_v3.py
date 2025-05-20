@@ -228,7 +228,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     n = args.n % 256
-    mcast_grp = f"239.255.0.{n}"
+    mcast_grp = f"224.5.10.{n}"
     mcast_port = 5000 + (n % 1000)
 
     # スレッド開始
