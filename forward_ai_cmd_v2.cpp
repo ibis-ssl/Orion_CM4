@@ -20,6 +20,7 @@
 #define SERIAL_PORT "/dev/ttyS0"
 
 constexpr int AI_CMD_V2_SIZE = 64;
+constexpr int AI_CMD_V2_ROBOT_NUM = 11;
 constexpr int CAM_BUF_SIZE = 7;                                      // camera 7 + ck1
 constexpr int UART_PACKET_SIZE = AI_CMD_V2_SIZE + CAM_BUF_SIZE + 1;  // local cam + ck
 
@@ -130,7 +131,7 @@ uint32_t calc_check_sum(char * buf, int buf_size)
 
 int main(int argc, char * argv[])
 {
-  printf("start!! foward ai cmd V2 %d\n", argc);
+  printf("start!! foward ai cmd V2 (multi cast packet), arg : %d\n", argc);
 
   int uart_baudrate = getUartBaudrate(argc, argv);
   bool debug_mode_enabled = isDebugMode(argc, argv);
@@ -142,7 +143,7 @@ int main(int argc, char * argv[])
   struct sockaddr_in ai_cmd_addr;
 
   char local_cam_buf[CAM_BUF_SIZE] = {};
-  char ai_cmd_buf[AI_CMD_V2_SIZE] = {};
+  char ai_cmd_buf[(AI_CMD_V2_SIZE+1)*AI_CMD_V2_ROBOT_NUM] = {};
 
   char uart_tx_buf[UART_PACKET_SIZE] = {};
 
@@ -152,6 +153,7 @@ int main(int argc, char * argv[])
   local_cam_addr.sin_family = AF_INET;
   local_cam_addr.sin_port = htons(8890);
   local_cam_addr.sin_addr.s_addr = INADDR_ANY;
+  printf("IP : 0x%08x\n",AF_INET);
 
   bind(local_cam_sock, (struct sockaddr *)&local_cam_addr, sizeof(local_cam_addr));
 
@@ -182,7 +184,16 @@ int main(int argc, char * argv[])
     cmd_n = recv(ai_cmd_sock, ai_cmd_buf, sizeof(ai_cmd_buf), 0);
     cam_n = recv(local_cam_sock, local_cam_buf, sizeof(local_cam_buf), 0);
 
-    memcpy(uart_tx_buf, ai_cmd_buf, sizeof(ai_cmd_buf));
+    for(int i = 0; i < AI_CMD_V2_ROBOT_NUM; i++){
+      int offset = i*((AI_CMD_V2_SIZE+1));
+      //printf("%02d ",ai_cmd_buf[offset]);
+      if(ai_cmd_buf[offset] == AF_INET){
+        // indexぶん +1する
+        memcpy(uart_tx_buf, &(ai_cmd_buf[offset+1]), sizeof(uart_tx_buf));
+        //break;
+      }
+    }
+    //printf("\n");
 
     uart_tx_buf[0] = 254;  //パケットヘッダ
 
@@ -207,15 +218,15 @@ int main(int argc, char * argv[])
 
     if (debug_mode_enabled) {
       pritBinData(uart_tx_buf);
-    } else if (pre_check_cnt != ai_cmd_buf[1]) {
+    } else if (pre_check_cnt != uart_tx_buf[1]) {
       serial.write_some(boost::asio::buffer(uart_tx_buf, sizeof(uart_tx_buf)));
       // printより先にserial送信
 
       printf("cam %+4d %+4d %2d fps(rx)%2d / %3d / ", camera.pos_xy[0], camera.pos_xy[1], camera.radius, camera.fps, diff_time);
       printf("ck : %3d / ", uart_tx_buf[UART_PACKET_SIZE - 1]);
-      printParcedData(ai_cmd_buf);
+      printParcedData(uart_tx_buf);
     }
-    pre_check_cnt = ai_cmd_buf[1];
+    pre_check_cnt = uart_tx_buf[1];
 
     /* 1kHz */
     usleep(1000);
