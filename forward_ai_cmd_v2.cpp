@@ -1,5 +1,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -10,8 +12,6 @@
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
-#include <ifaddrs.h>
-#include <net/if.h>
 
 #include <boost/array.hpp>
 #include <boost/asio.hpp>
@@ -35,40 +35,41 @@ typedef struct
 float two_to_float(char data[2]) { return (float)(((uint8_t)data[0] << 8 | (uint8_t)data[1]) - 32767.0) / 32767.0; }
 float two_to_int(char data[2]) { return (((uint8_t)data[0] << 8 | (uint8_t)data[1]) - 32767.0); }
 
+int get_machine_id()
+{
+  ifaddrs * ifaddr = nullptr;
+  if (getifaddrs(&ifaddr) == -1) {
+    return -1;  // エラー
+  }
 
-int get_machine_id() {
-    ifaddrs *ifaddr = nullptr;
-    if (getifaddrs(&ifaddr) == -1) {
-        return -1; // エラー
-    }
+  int y_value = -1;
 
-    int y_value = -1;
+  for (auto * ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+    if (!ifa || !ifa->ifa_addr) continue;
+    if (std::strcmp(ifa->ifa_name, "wlan0") != 0) continue;
+    if (ifa->ifa_addr->sa_family != AF_INET) continue;
 
-    for (auto *ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
-        if (!ifa || !ifa->ifa_addr) continue;
-        if (std::strcmp(ifa->ifa_name, "wlan0") != 0) continue;
-        if (ifa->ifa_addr->sa_family != AF_INET) continue;
+    auto * sa = reinterpret_cast<sockaddr_in *>(ifa->ifa_addr);
+    auto * nm = reinterpret_cast<sockaddr_in *>(ifa->ifa_netmask);
 
-        auto *sa = reinterpret_cast<sockaddr_in*>(ifa->ifa_addr);
-        auto *nm = reinterpret_cast<sockaddr_in*>(ifa->ifa_netmask);
+    uint32_t ip = ntohl(sa->sin_addr.s_addr);
+    uint32_t mask = ntohl(nm->sin_addr.s_addr);
 
-        uint32_t ip   = ntohl(sa->sin_addr.s_addr);
-        uint32_t mask = ntohl(nm->sin_addr.s_addr);
+    // /24想定なら最後のオクテット
+    y_value = ip & 0xFF;
 
-        // /24想定なら最後のオクテット
-        y_value = ip & 0xFF;
+    // 任意マスク対応（ホスト部）
+    // y_value = ip & (~mask);
 
-        // 任意マスク対応（ホスト部）
-        // y_value = ip & (~mask);
+    break;
+  }
 
-        break;
-    }
-
-    freeifaddrs(ifaddr);
-    if(y_value >100){
-      y_value = 0;
-    }
-    return y_value;
+  freeifaddrs(ifaddr);
+  if (y_value > 100) {
+    return y_value - 100;
+  } else {
+    return 0;
+  }
 }
 
 int getUartBaudrate(int argc, char * argv[])
@@ -176,14 +177,14 @@ int main(int argc, char * argv[])
   int machine_id = get_machine_id();
   printf("debug mode : %d\n", debug_mode_enabled);
   printf("UART %d bps\n", uart_baudrate);
-  printf("ID %d",machine_id);
+  printf("ID %d\n", machine_id);
 
   int local_cam_sock, ai_cmd_sock;
   struct sockaddr_in local_cam_addr;
   struct sockaddr_in ai_cmd_addr;
 
   char local_cam_buf[CAM_BUF_SIZE] = {};
-  char ai_cmd_buf[(AI_CMD_V2_SIZE+1)*AI_CMD_V2_ROBOT_NUM] = {};
+  char ai_cmd_buf[(AI_CMD_V2_SIZE + 1) * AI_CMD_V2_ROBOT_NUM] = {};
 
   char uart_tx_buf[UART_PACKET_SIZE] = {};
 
@@ -193,7 +194,7 @@ int main(int argc, char * argv[])
   local_cam_addr.sin_family = AF_INET;
   local_cam_addr.sin_port = htons(8890);
   local_cam_addr.sin_addr.s_addr = INADDR_ANY;
-  printf("IP : 0x%08x\n",AF_INET);
+  printf("IP : 0x%08x\n", AF_INET);
 
   bind(local_cam_sock, (struct sockaddr *)&local_cam_addr, sizeof(local_cam_addr));
 
@@ -224,12 +225,12 @@ int main(int argc, char * argv[])
     cmd_n = recv(ai_cmd_sock, ai_cmd_buf, sizeof(ai_cmd_buf), 0);
     cam_n = recv(local_cam_sock, local_cam_buf, sizeof(local_cam_buf), 0);
 
-    for(int i = 0; i < AI_CMD_V2_ROBOT_NUM; i++){
-      int offset = i*((AI_CMD_V2_SIZE+1));
+    for (int i = 0; i < AI_CMD_V2_ROBOT_NUM; i++) {
+      int offset = i * ((AI_CMD_V2_SIZE + 1));
       //printf("%02d ",ai_cmd_buf[offset]);
-      if(ai_cmd_buf[offset] == machine_id){
+      if (ai_cmd_buf[offset] == machine_id) {
         // indexぶん +1する
-        memcpy(uart_tx_buf, &(ai_cmd_buf[offset+1]), sizeof(uart_tx_buf));
+        memcpy(uart_tx_buf, &(ai_cmd_buf[offset + 1]), sizeof(uart_tx_buf));
         //break;
       }
     }
