@@ -10,6 +10,7 @@
 #include <termios.h>  //ttyパラメータの構造体
 #include <termios.h>
 #include <unistd.h>
+#include <time.h>
 
 #include <boost/array.hpp>
 #include <boost/asio.hpp>
@@ -25,6 +26,16 @@ union Data {
 /// @brief Different ways a serial port may be flushed.
 enum flush_type { flush_receive = TCIFLUSH, flush_send = TCOFLUSH, flush_both = TCIOFLUSH };
 
+constexpr int PACKET_SIZE = 128;
+constexpr uint32_t TIMESTAMP_MAGIC = 0x54533634;  // "TS64"
+
+typedef struct
+{
+  uint32_t magic;
+  uint32_t sequence;
+  uint64_t unix_time_us;
+} udp_timestamp_trailer_t;
+
 void flush_serial_port(boost::asio::serial_port & serial, flush_type what, boost::system::error_code & error)
 {
   if (0 == ::tcflush(serial.lowest_layer().native_handle(), what)) {
@@ -32,6 +43,30 @@ void flush_serial_port(boost::asio::serial_port & serial, flush_type what, boost
   } else {
     error = boost::system::error_code(errno, boost::asio::error::get_system_category());
   }
+}
+
+bool isTimestampEnabled(int argc, char * argv[])
+{
+  for (int i = 1; i < argc; ++i) {
+    if (strcmp(argv[i], "--timestamp") == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+uint64_t get_unix_time_us()
+{
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  return static_cast<uint64_t>(ts.tv_sec) * 1000000ULL + static_cast<uint64_t>(ts.tv_nsec / 1000);
+}
+
+uint64_t host_to_network_u64(uint64_t value)
+{
+  uint32_t high = htonl(static_cast<uint32_t>(value >> 32));
+  uint32_t low = htonl(static_cast<uint32_t>(value & 0xFFFFFFFFULL));
+  return (static_cast<uint64_t>(low) << 32) | high;
 }
 
 int getMachineNumber(int argc, char * argv[])
@@ -75,6 +110,7 @@ int main(int argc, char * argv[])
 
   int machine_number = getMachineNumber(argc, argv);
   int uart_baudrate = getUartBaudrate(argc, argv);
+  bool timestamp_enabled = isTimestampEnabled(argc, argv);
 
   char multicast_ip[100];
   sprintf(multicast_ip, "224.5.20.%d", machine_number);
@@ -85,9 +121,9 @@ int main(int argc, char * argv[])
   printf("machine_ip : %s", machine_ip);
 
   printf("UART %d bps\n", uart_baudrate);
+  printf("timestamp trailer : %s\n", timestamp_enabled ? "enabled" : "disabled");
 
   int count = 0;
-  constexpr int PACKET_SIZE = 128;
 
   char Rxbuf[PACKET_SIZE];
   char buf[PACKET_SIZE];
@@ -132,7 +168,9 @@ startpoint:
   size_t total_length = 0;
 
   char uart_rx_buf[PACKET_SIZE];
+  char udp_tx_buf[PACKET_SIZE + sizeof(udp_timestamp_trailer_t)];
   uint32_t buf_idx = 0;
+  uint32_t sequence = 0;
 
   while (1) {
     size_t n = serial.read_some(boost::asio::buffer(buf, sizeof(buf)));
@@ -153,7 +191,23 @@ startpoint:
         buf_idx++;
         if (buf_idx >= PACKET_SIZE) {
           buf_idx = 0;
-          sendto(sock, uart_rx_buf, PACKET_SIZE, 0, (struct sockaddr *)&addr, sizeof(addr));
+
+          size_t udp_tx_size = PACKET_SIZE;
+          const char * udp_payload = uart_rx_buf;
+          if (timestamp_enabled) {
+            memcpy(udp_tx_buf, uart_rx_buf, PACKET_SIZE);
+
+            udp_timestamp_trailer_t trailer;
+            trailer.magic = htonl(TIMESTAMP_MAGIC);
+            trailer.sequence = htonl(sequence++);
+            trailer.unix_time_us = host_to_network_u64(get_unix_time_us());
+            memcpy(udp_tx_buf + PACKET_SIZE, &trailer, sizeof(trailer));
+
+            udp_payload = udp_tx_buf;
+            udp_tx_size = sizeof(udp_tx_buf);
+          }
+
+          sendto(sock, udp_payload, udp_tx_size, 0, (struct sockaddr *)&addr, sizeof(addr));
           printf("ck : %3d / ", uart_rx_buf[3]);
 
           for (int pi = 0; pi < PACKET_SIZE; pi++) {
