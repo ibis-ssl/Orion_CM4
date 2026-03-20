@@ -214,6 +214,7 @@ int main(int argc, char * argv[])
   serial.set_option(boost::asio::serial_port_base::character_size(8));
   serial.set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none));
   serial.set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
+  serial.set_option(boost::asio::serial_port_base::flow_control(boost::asio::serial_port_base::flow_control::none));
 
   char pre_check_cnt = 0;
   camera_t camera;
@@ -258,6 +259,7 @@ int main(int argc, char * argv[])
     uart_tx_buf[UART_PACKET_SIZE - 1] = calc_check_sum(uart_tx_buf, UART_PACKET_SIZE);
 
     if (debug_mode_enabled) {
+      printf("ts_ms %lld ", get_current_time_ms());
       pritBinData(uart_tx_buf);
     } else if (pre_check_cnt != uart_tx_buf[1]) {
       serial.write_some(boost::asio::buffer(uart_tx_buf, sizeof(uart_tx_buf)));
