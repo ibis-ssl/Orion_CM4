@@ -28,7 +28,6 @@ union Data {
 enum flush_type { flush_receive = TCIFLUSH, flush_send = TCOFLUSH, flush_both = TCIOFLUSH };
 
 constexpr int PACKET_SIZE = 128;
-constexpr int STREAM_BUF_SIZE = PACKET_SIZE * 8;
 constexpr unsigned char PACKET_HEADER_0 = 0xAB;
 constexpr unsigned char PACKET_HEADER_1 = 0xEA;
 
@@ -58,14 +57,9 @@ uint64_t get_unix_time_us()
   return static_cast<uint64_t>(ts.tv_sec) * 1000000ULL + static_cast<uint64_t>(ts.tv_nsec / 1000);
 }
 
-int find_packet_header(const unsigned char * buf, int length)
+uint64_t get_unix_time_ms()
 {
-  for (int i = 0; i + 1 < length; ++i) {
-    if (buf[i] == PACKET_HEADER_0 && buf[i + 1] == PACKET_HEADER_1) {
-      return i;
-    }
-  }
-  return -1;
+  return get_unix_time_us() / 1000ULL;
 }
 
 int getMachineNumber(int argc, char * argv[])
@@ -160,90 +154,69 @@ startpoint:
     return 1;
   }
 
-  unsigned char stream_buf[STREAM_BUF_SIZE] = {};
-  int stream_size = 0;
+  unsigned char packet_buf[PACKET_SIZE] = {};
+  int packet_size = 0;
   uint32_t sequence = 0;
   uint64_t stat_window_start_us = get_unix_time_us();
   uint64_t stat_read_calls = 0;
   uint64_t stat_rx_bytes = 0;
   uint64_t stat_tx_packets = 0;
-  uint64_t stat_resyncs = 0;
-  uint64_t stat_dropped_bytes = 0;
+  uint64_t stat_good_packets = 0;
+  uint64_t stat_header_errors = 0;
 
   while (1) {
     size_t n = serial.read_some(boost::asio::buffer(buf, sizeof(buf)));
     stat_read_calls++;
     stat_rx_bytes += n;
 
-    if (stream_size + static_cast<int>(n) > STREAM_BUF_SIZE) {
-      int overflow = stream_size + static_cast<int>(n) - STREAM_BUF_SIZE;
-      if (overflow > stream_size) {
-        overflow = stream_size;
-      }
-      if (overflow > 0) {
-        memmove(stream_buf, stream_buf + overflow, stream_size - overflow);
-        stream_size -= overflow;
-        stat_dropped_bytes += overflow;
-      }
-    }
+    int src_offset = 0;
+    while (src_offset < static_cast<int>(n)) {
+      int copy_size = std::min(PACKET_SIZE - packet_size, static_cast<int>(n) - src_offset);
+      memcpy(packet_buf + packet_size, buf + src_offset, copy_size);
+      packet_size += copy_size;
+      src_offset += copy_size;
 
-    memcpy(stream_buf + stream_size, buf, n);
-    stream_size += static_cast<int>(n);
+      if (packet_size < PACKET_SIZE) {
+        continue;
+      }
 
-    while (stream_size >= 2) {
-      int header_pos = find_packet_header(stream_buf, stream_size);
-      if (header_pos < 0) {
-        if (stream_size > 1) {
-          stat_dropped_bytes += static_cast<uint64_t>(stream_size - 1);
-          stream_buf[0] = stream_buf[stream_size - 1];
-          stream_size = 1;
+      if (packet_buf[0] == PACKET_HEADER_0 && packet_buf[1] == PACKET_HEADER_1) {
+        uint64_t tx_time_ms = get_unix_time_ms();
+        uint32_t current_sequence = sequence++;
+        sendto(sock, packet_buf, PACKET_SIZE, 0, (struct sockaddr *)&addr, sizeof(addr));
+        stat_tx_packets++;
+        stat_good_packets++;
+
+        if (timestamp_enabled) {
+          printf("seq:%10u tx_ms:%llu ck:%3u\n",
+            current_sequence,
+            static_cast<unsigned long long>(tx_time_ms),
+            static_cast<unsigned int>(packet_buf[3]));
         }
-        break;
+      } else {
+        stat_header_errors++;
       }
 
-      if (header_pos > 0) {
-        memmove(stream_buf, stream_buf + header_pos, stream_size - header_pos);
-        stream_size -= header_pos;
-        stat_resyncs++;
-      }
-
-      if (stream_size < PACKET_SIZE) {
-        break;
-      }
-
-      uint64_t tx_time_us = get_unix_time_us();
-      uint32_t current_sequence = sequence++;
-      sendto(sock, stream_buf, PACKET_SIZE, 0, (struct sockaddr *)&addr, sizeof(addr));
-      stat_tx_packets++;
-
-      if (timestamp_enabled) {
-        printf("seq:%10u tx_us:%llu ck:%3u\n",
-          current_sequence,
-          static_cast<unsigned long long>(tx_time_us),
-          static_cast<unsigned int>(stream_buf[3]));
-      }
-
-      memmove(stream_buf, stream_buf + PACKET_SIZE, stream_size - PACKET_SIZE);
-      stream_size -= PACKET_SIZE;
+      packet_size = 0;
     }
 
     uint64_t now_us = get_unix_time_us();
     if (now_us - stat_window_start_us >= 1000000ULL) {
       printf(
-        "uart 1s read_calls:%llu rx_bytes:%llu tx_packets:%llu resyncs:%llu dropped:%llu buffered:%d\n",
+        "uart 1s read_calls:%llu rx_bytes:%llu tx_packets:%llu good:%llu header_errors:%llu buffered:%d\n",
         static_cast<unsigned long long>(stat_read_calls),
         static_cast<unsigned long long>(stat_rx_bytes),
         static_cast<unsigned long long>(stat_tx_packets),
-        static_cast<unsigned long long>(stat_resyncs),
-        static_cast<unsigned long long>(stat_dropped_bytes),
-        stream_size);
+        static_cast<unsigned long long>(stat_good_packets),
+        static_cast<unsigned long long>(stat_header_errors),
+        packet_size);
 
       stat_window_start_us = now_us;
       stat_read_calls = 0;
       stat_rx_bytes = 0;
       stat_tx_packets = 0;
-      stat_resyncs = 0;
-      stat_dropped_bytes = 0;
+      stat_good_packets = 0;
+      stat_header_errors = 0;
     }
   }
 
