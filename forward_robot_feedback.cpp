@@ -14,9 +14,10 @@
 
 #include <boost/array.hpp>
 #include <boost/asio.hpp>
+#include <algorithm>
 #include <cstring>
 
-#define SERIAL_PORT "/dev/ttyS0"
+#define SERIAL_PORT "/dev/ttyAMA0"
 
 union Data {
   float f;
@@ -27,14 +28,9 @@ union Data {
 enum flush_type { flush_receive = TCIFLUSH, flush_send = TCOFLUSH, flush_both = TCIOFLUSH };
 
 constexpr int PACKET_SIZE = 128;
-constexpr uint32_t TIMESTAMP_MAGIC = 0x54533634;  // "TS64"
-
-typedef struct
-{
-  uint32_t magic;
-  uint32_t sequence;
-  uint64_t unix_time_us;
-} udp_timestamp_trailer_t;
+constexpr int STREAM_BUF_SIZE = PACKET_SIZE * 8;
+constexpr unsigned char PACKET_HEADER_0 = 0xAB;
+constexpr unsigned char PACKET_HEADER_1 = 0xEA;
 
 void flush_serial_port(boost::asio::serial_port & serial, flush_type what, boost::system::error_code & error)
 {
@@ -62,11 +58,14 @@ uint64_t get_unix_time_us()
   return static_cast<uint64_t>(ts.tv_sec) * 1000000ULL + static_cast<uint64_t>(ts.tv_nsec / 1000);
 }
 
-uint64_t host_to_network_u64(uint64_t value)
+int find_packet_header(const unsigned char * buf, int length)
 {
-  uint32_t high = htonl(static_cast<uint32_t>(value >> 32));
-  uint32_t low = htonl(static_cast<uint32_t>(value & 0xFFFFFFFFULL));
-  return (static_cast<uint64_t>(low) << 32) | high;
+  for (int i = 0; i + 1 < length; ++i) {
+    if (buf[i] == PACKET_HEADER_0 && buf[i + 1] == PACKET_HEADER_1) {
+      return i;
+    }
+  }
+  return -1;
 }
 
 int getMachineNumber(int argc, char * argv[])
@@ -88,7 +87,7 @@ int getMachineNumber(int argc, char * argv[])
 
 int getUartBaudrate(int argc, char * argv[])
 {
-  int speed = 2000000;
+  int speed = 1000000;
 
   // Parse command line arguments
   for (int i = 1; i < argc; ++i) {
@@ -106,7 +105,7 @@ int getUartBaudrate(int argc, char * argv[])
 int main(int argc, char * argv[])
 {
   printf("start");
-  printf("UART baud : 2000000 bps");
+  printf("UART baud : 1000000 bps");
 
   int machine_number = getMachineNumber(argc, argv);
   int uart_baudrate = getUartBaudrate(argc, argv);
@@ -121,13 +120,9 @@ int main(int argc, char * argv[])
   printf("machine_ip : %s", machine_ip);
 
   printf("UART %d bps\n", uart_baudrate);
-  printf("timestamp trailer : %s\n", timestamp_enabled ? "enabled" : "disabled");
+  printf("timestamp print : %s\n", timestamp_enabled ? "enabled" : "disabled");
 
-  int count = 0;
-
-  char Rxbuf[PACKET_SIZE];
   char buf[PACKET_SIZE];
-  char Rxdata[PACKET_SIZE];
 
   /**
    * シリアル通信の設定
@@ -165,57 +160,90 @@ startpoint:
     return 1;
   }
 
-  size_t total_length = 0;
-
-  char uart_rx_buf[PACKET_SIZE];
-  char udp_tx_buf[PACKET_SIZE + sizeof(udp_timestamp_trailer_t)];
-  uint32_t buf_idx = 0;
+  unsigned char stream_buf[STREAM_BUF_SIZE] = {};
+  int stream_size = 0;
   uint32_t sequence = 0;
+  uint64_t stat_window_start_us = get_unix_time_us();
+  uint64_t stat_read_calls = 0;
+  uint64_t stat_rx_bytes = 0;
+  uint64_t stat_tx_packets = 0;
+  uint64_t stat_resyncs = 0;
+  uint64_t stat_dropped_bytes = 0;
 
   while (1) {
     size_t n = serial.read_some(boost::asio::buffer(buf, sizeof(buf)));
-    for (int i = 0; i < n; i++) {
-      /*if(buf[i] == '\n'){
-        printf("n = %3d ",n);
+    stat_read_calls++;
+    stat_rx_bytes += n;
+
+    if (stream_size + static_cast<int>(n) > STREAM_BUF_SIZE) {
+      int overflow = stream_size + static_cast<int>(n) - STREAM_BUF_SIZE;
+      if (overflow > stream_size) {
+        overflow = stream_size;
       }
-      printf("%c",buf[i]);*/
+      if (overflow > 0) {
+        memmove(stream_buf, stream_buf + overflow, stream_size - overflow);
+        stream_size -= overflow;
+        stat_dropped_bytes += overflow;
+      }
+    }
 
-      if (buf[i] == 0xAB && buf_idx == 0) {
-        uart_rx_buf[buf_idx] = buf[i];
-        buf_idx = 1;
-      } else if (buf[i] == 0xEA && buf_idx == 1) {
-        uart_rx_buf[buf_idx] = buf[i];
-        buf_idx = 2;
-      } else if (buf_idx >= 2) {
-        uart_rx_buf[buf_idx] = buf[i];
-        buf_idx++;
-        if (buf_idx >= PACKET_SIZE) {
-          buf_idx = 0;
+    memcpy(stream_buf + stream_size, buf, n);
+    stream_size += static_cast<int>(n);
 
-          size_t udp_tx_size = PACKET_SIZE;
-          const char * udp_payload = uart_rx_buf;
-          if (timestamp_enabled) {
-            memcpy(udp_tx_buf, uart_rx_buf, PACKET_SIZE);
-
-            udp_timestamp_trailer_t trailer;
-            trailer.magic = htonl(TIMESTAMP_MAGIC);
-            trailer.sequence = htonl(sequence++);
-            trailer.unix_time_us = host_to_network_u64(get_unix_time_us());
-            memcpy(udp_tx_buf + PACKET_SIZE, &trailer, sizeof(trailer));
-
-            udp_payload = udp_tx_buf;
-            udp_tx_size = sizeof(udp_tx_buf);
-          }
-
-          sendto(sock, udp_payload, udp_tx_size, 0, (struct sockaddr *)&addr, sizeof(addr));
-          printf("ck : %3d / ", uart_rx_buf[3]);
-
-          for (int pi = 0; pi < PACKET_SIZE; pi++) {
-            printf("0x%02x ", uart_rx_buf[pi]);
-          }
-          printf("\n");
+    while (stream_size >= 2) {
+      int header_pos = find_packet_header(stream_buf, stream_size);
+      if (header_pos < 0) {
+        if (stream_size > 1) {
+          stat_dropped_bytes += static_cast<uint64_t>(stream_size - 1);
+          stream_buf[0] = stream_buf[stream_size - 1];
+          stream_size = 1;
         }
+        break;
       }
+
+      if (header_pos > 0) {
+        memmove(stream_buf, stream_buf + header_pos, stream_size - header_pos);
+        stream_size -= header_pos;
+        stat_resyncs++;
+      }
+
+      if (stream_size < PACKET_SIZE) {
+        break;
+      }
+
+      uint64_t tx_time_us = get_unix_time_us();
+      uint32_t current_sequence = sequence++;
+      sendto(sock, stream_buf, PACKET_SIZE, 0, (struct sockaddr *)&addr, sizeof(addr));
+      stat_tx_packets++;
+
+      if (timestamp_enabled) {
+        printf("seq:%10u tx_us:%llu ck:%3u\n",
+          current_sequence,
+          static_cast<unsigned long long>(tx_time_us),
+          static_cast<unsigned int>(stream_buf[3]));
+      }
+
+      memmove(stream_buf, stream_buf + PACKET_SIZE, stream_size - PACKET_SIZE);
+      stream_size -= PACKET_SIZE;
+    }
+
+    uint64_t now_us = get_unix_time_us();
+    if (now_us - stat_window_start_us >= 1000000ULL) {
+      printf(
+        "uart 1s read_calls:%llu rx_bytes:%llu tx_packets:%llu resyncs:%llu dropped:%llu buffered:%d\n",
+        static_cast<unsigned long long>(stat_read_calls),
+        static_cast<unsigned long long>(stat_rx_bytes),
+        static_cast<unsigned long long>(stat_tx_packets),
+        static_cast<unsigned long long>(stat_resyncs),
+        static_cast<unsigned long long>(stat_dropped_bytes),
+        stream_size);
+
+      stat_window_start_us = now_us;
+      stat_read_calls = 0;
+      stat_rx_bytes = 0;
+      stat_tx_packets = 0;
+      stat_resyncs = 0;
+      stat_dropped_bytes = 0;
     }
   }
 
