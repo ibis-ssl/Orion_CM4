@@ -1,5 +1,6 @@
 g++ forward_robot_feedback.cpp -pthread -o robot_feedback.out
 g++ forward_ai_cmd_v2.cpp -pthread -o ai_cmd_v2.out
+g++ uart_raw_dump.cpp -pthread -o uart_raw_dump.out
 
 --debug バイナリ表示になる。マイコン側には送信されない。
 -s オプションでボーレートを変更できる。デフォルト2Mbps
@@ -7,3 +8,4 @@ g++ forward_ai_cmd_v2.cpp -pthread -o ai_cmd_v2.out
 
  -n でIP指定(例:101)
  ./robot_feedback.out -n 101
+ ./uart_raw_dump.out --lines 64
