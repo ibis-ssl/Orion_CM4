@@ -110,6 +110,7 @@
 - `raw` / `mask` 画像の取得
 - HSV パラメータ送信
 - multicast 座標受信
+- ROI 矩形からの HSV 自動推定
 
 ### 接続先規則
 
@@ -128,6 +129,8 @@
   - `python cm4_camera.py params --machine-no 3 --hsv-min 0 100 100 --hsv-max 15 255 255`
 - 座標受信
   - `python cm4_camera.py coords --machine-no 3 --timeout 1.0`
+- ROI 推定
+  - `python cm4_camera.py roi-calibrate --machine-no 3 --left 90 --top 180 --width 40 --height 40`
 
 ## cam_viewer.py
 
@@ -139,12 +142,14 @@
 - 座標の表示と十字線描画
 - 機体番号切り替え
 - HSV パラメータ調整
+- raw 画像上の ROI ドラッグから HSV 推定
 
 ### 実装方針
 
 - 通信処理は `cm4_camera.py` に持たせます。
 - GUI は Qt による表示と入力だけを担当します。
 - 画像取得、HSV 送信、座標受信はバックグラウンドスレッドで処理し、GUI をブロックしません。
+- raw 画像上をドラッグすると、その矩形の色分布から HSV を推定してスライダーへ反映し、同時に CM4 側へ適用します。
 
 ## 補足
 

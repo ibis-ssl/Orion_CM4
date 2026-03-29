@@ -1,5 +1,5 @@
 # このファイルはCM4カメラ GUI の Qt エントリポイントを担当し、
-# 共通通信処理 cm4_camera.py を利用して画像表示、座標表示、HSV 調整を行う。
+# 共通通信処理 cm4_camera.py を利用して画像表示、座標表示、HSV 調整、ROI からの自動推定を行う。
 import io
 import sys
 import threading
@@ -7,15 +7,22 @@ import time
 
 from PIL import Image
 
-from cm4_camera import DEFAULT_MACHINE_NO, apply_hsv_params, build_connection_config, create_coord_socket, fetch_frame
+from cm4_camera import (
+    DEFAULT_MACHINE_NO,
+    apply_hsv_params,
+    build_connection_config,
+    create_coord_socket,
+    estimate_hsv_params_from_frame_bytes,
+    fetch_frame,
+    fetch_hsv_params,
+)
 
 try:
-    from PySide6.QtCore import QObject, Qt, Signal
-    from PySide6.QtGui import QImage, QPainter, QPen, QPixmap
+    from PySide6.QtCore import QObject, QRect, Qt, Signal
+    from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
         QFormLayout,
-        QGridLayout,
         QGroupBox,
         QHBoxLayout,
         QLabel,
@@ -29,10 +36,76 @@ except ImportError as exc:
     raise SystemExit(f"PySide6 is required for cam_viewer.py: {exc}")
 
 
-FRAME_SIZE = (320, 240)
+SOURCE_FRAME_SIZE = (320, 240)
+DISPLAY_FRAME_SIZE = (480, 360)
 FRAME_FETCH_INTERVAL = 0.1
 HSV_DEFAULTS = {"h_min": 0, "h_max": 15, "s_min": 100, "s_max": 255, "v_min": 100, "v_max": 255}
 HSV_LIMITS = {"h_min": 180, "h_max": 180, "s_min": 255, "s_max": 255, "v_min": 255, "v_max": 255}
+
+
+class FrameLabel(QLabel):
+    roi_selected = Signal(tuple)
+
+    def __init__(self):
+        super().__init__()
+        self.setFixedSize(*DISPLAY_FRAME_SIZE)
+        self.setAlignment(Qt.AlignCenter)
+        self._pixmap = None
+        self._selection_start = None
+        self._selection_end = None
+
+    def set_frame_pixmap(self, pixmap):
+        self._pixmap = pixmap
+        self.update()
+
+    def clear_selection(self):
+        self._selection_start = None
+        self._selection_end = None
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._selection_start = event.position().toPoint()
+            self._selection_end = self._selection_start
+            self.update()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._selection_start is not None:
+            self._selection_end = event.position().toPoint()
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self._selection_start is not None:
+            self._selection_end = event.position().toPoint()
+            rect = QRect(self._selection_start, self._selection_end).normalized()
+            rect = rect.intersected(self.rect())
+            if rect.width() > 3 and rect.height() > 3:
+                scale_x = SOURCE_FRAME_SIZE[0] / DISPLAY_FRAME_SIZE[0]
+                scale_y = SOURCE_FRAME_SIZE[1] / DISPLAY_FRAME_SIZE[1]
+                roi = (
+                    int(rect.x() * scale_x),
+                    int(rect.y() * scale_y),
+                    max(1, int(rect.width() * scale_x)),
+                    max(1, int(rect.height() * scale_y)),
+                )
+                self.roi_selected.emit(roi)
+            self.update()
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        if self._pixmap is not None:
+            painter.drawPixmap(0, 0, self._pixmap)
+        else:
+            painter.fillRect(self.rect(), QColor("#202020"))
+
+        if self._selection_start is not None and self._selection_end is not None:
+            rect = QRect(self._selection_start, self._selection_end).normalized()
+            painter.setPen(QPen(QColor("#00ff88"), 2))
+            painter.drawRect(rect)
+        painter.end()
 
 
 class ViewerSignals(QObject):
@@ -40,6 +113,8 @@ class ViewerSignals(QObject):
     coords_ready = Signal(str)
     connection_ready = Signal(str)
     message_ready = Signal(str)
+    params_ready = Signal(dict)
+    roi_estimated = Signal(dict)
 
 
 class CameraWindow(QWidget):
@@ -50,12 +125,15 @@ class CameraWindow(QWidget):
         self.running = True
         self.signals = ViewerSignals()
         self.slider_map = {}
+        self.last_raw_frame_bytes = None
 
         self._setup_ui()
         self.signals.frame_ready.connect(self.update_frame)
         self.signals.coords_ready.connect(self.update_coords)
         self.signals.connection_ready.connect(self.update_connection_label)
         self.signals.message_ready.connect(self.set_message)
+        self.signals.params_ready.connect(self.apply_server_params)
+        self.signals.roi_estimated.connect(self.apply_estimated_params)
 
         self.apply_connection(self.machine_no)
         threading.Thread(target=self.frame_loop, args=("raw",), daemon=True).start()
@@ -64,7 +142,7 @@ class CameraWindow(QWidget):
 
     def _setup_ui(self):
         self.setWindowTitle("Ball Tracker")
-        self.resize(900, 720)
+        self.resize(920, 760)
 
         root_layout = QVBoxLayout(self)
 
@@ -89,17 +167,17 @@ class CameraWindow(QWidget):
         root_layout.addWidget(self.message_label)
 
         image_layout = QHBoxLayout()
-        self.raw_label = QLabel()
-        self.raw_label.setFixedSize(*FRAME_SIZE)
-        self.raw_label.setAlignment(Qt.AlignCenter)
+        self.raw_label = FrameLabel()
+        self.raw_label.roi_selected.connect(self.on_roi_selected)
         image_layout.addWidget(self.raw_label)
 
         self.mask_label = QLabel()
-        self.mask_label.setFixedSize(*FRAME_SIZE)
+        self.mask_label.setFixedSize(*DISPLAY_FRAME_SIZE)
         self.mask_label.setAlignment(Qt.AlignCenter)
         image_layout.addWidget(self.mask_label)
         root_layout.addLayout(image_layout)
 
+        root_layout.addWidget(QLabel("raw 画像をドラッグすると ROI から HSV を推定します。"))
         self.coords_label = QLabel(f"Coords: {self.coords_text}")
         root_layout.addWidget(self.coords_label)
 
@@ -113,9 +191,18 @@ class CameraWindow(QWidget):
             hsv_layout.addRow(key.upper(), slider)
         root_layout.addWidget(hsv_group)
 
+        button_layout = QHBoxLayout()
+        estimate_button = QPushButton("ROI 推定値を再適用")
+        estimate_button.clicked.connect(self.on_reapply_last_roi)
+        button_layout.addWidget(estimate_button)
+
         apply_button = QPushButton("Apply")
         apply_button.clicked.connect(self.on_apply_hsv)
-        root_layout.addWidget(apply_button)
+        button_layout.addWidget(apply_button)
+        button_layout.addStretch()
+        root_layout.addLayout(button_layout)
+
+        self.last_estimated_params = None
 
     def closeEvent(self, event):
         self.running = False
@@ -128,16 +215,42 @@ class CameraWindow(QWidget):
         self.machine_no = machine_no
         config = build_connection_config(machine_no)
         self.coords_text = "000,000,000,000"
+        self.last_raw_frame_bytes = None
+        self.last_estimated_params = None
+        self.raw_label.clear_selection()
         self.signals.connection_ready.emit(
             f"機体{machine_no}: {config['api_server']} / {config['mcast_group']}:{config['mcast_port']}"
         )
         self.signals.coords_ready.emit(self.coords_text)
+
+        def worker():
+            try:
+                params = fetch_hsv_params(machine_no)
+                self.signals.params_ready.emit(params)
+                self.signals.message_ready.emit(f"機体{machine_no} の現在パラメータを取得しました")
+            except Exception as exc:
+                self.signals.message_ready.emit(f"パラメータ取得失敗: {exc}")
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def update_connection_label(self, text):
         self.connection_label.setText(text)
 
     def set_message(self, text):
         self.message_label.setText(text)
+
+    def apply_server_params(self, params):
+        hsv_min = params.get("hsv_min", [])
+        hsv_max = params.get("hsv_max", [])
+        if len(hsv_min) != 3 or len(hsv_max) != 3:
+            return
+
+        self.slider_map["h_min"].setValue(int(hsv_min[0]))
+        self.slider_map["h_max"].setValue(int(hsv_max[0]))
+        self.slider_map["s_min"].setValue(int(hsv_min[1]))
+        self.slider_map["s_max"].setValue(int(hsv_max[1]))
+        self.slider_map["v_min"].setValue(int(hsv_min[2]))
+        self.slider_map["v_max"].setValue(int(hsv_max[2]))
 
     def on_apply_hsv(self):
         hsv_min = [self.slider_map["h_min"].value(), self.slider_map["s_min"].value(), self.slider_map["v_min"].value()]
@@ -147,9 +260,58 @@ class CameraWindow(QWidget):
         def worker():
             try:
                 apply_hsv_params(machine_no, hsv_min, hsv_max)
-                self.signals.message_ready.emit(f"機体{machine_no}へ HSV を送信しました")
+                self.signals.message_ready.emit(f"機体{machine_no} へ HSV を送信しました")
             except Exception as exc:
                 self.signals.message_ready.emit(f"HSV 送信失敗: {exc}")
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_roi_selected(self, roi):
+        if self.last_raw_frame_bytes is None:
+            self.set_message("raw 画像が未取得のため ROI 推定できません")
+            return
+
+        frame_bytes = self.last_raw_frame_bytes
+        machine_no = self.machine_no
+
+        def worker():
+            try:
+                estimated = estimate_hsv_params_from_frame_bytes(frame_bytes, roi)
+                self.signals.roi_estimated.emit(estimated)
+                apply_hsv_params(machine_no, estimated["hsv_min"], estimated["hsv_max"])
+                self.signals.message_ready.emit(
+                    f"ROI 推定を適用: H={estimated['hsv_min'][0]}..{estimated['hsv_max'][0]} "
+                    f"S={estimated['hsv_min'][1]}..{estimated['hsv_max'][1]} "
+                    f"V={estimated['hsv_min'][2]}..{estimated['hsv_max'][2]}"
+                )
+            except Exception as exc:
+                self.signals.message_ready.emit(f"ROI 推定失敗: {exc}")
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def apply_estimated_params(self, estimated):
+        self.last_estimated_params = estimated
+        self.slider_map["h_min"].setValue(int(estimated["hsv_min"][0]))
+        self.slider_map["h_max"].setValue(int(estimated["hsv_max"][0]))
+        self.slider_map["s_min"].setValue(int(estimated["hsv_min"][1]))
+        self.slider_map["s_max"].setValue(int(estimated["hsv_max"][1]))
+        self.slider_map["v_min"].setValue(int(estimated["hsv_min"][2]))
+        self.slider_map["v_max"].setValue(int(estimated["hsv_max"][2]))
+
+    def on_reapply_last_roi(self):
+        if self.last_estimated_params is None:
+            self.set_message("再適用できる ROI 推定値がありません")
+            return
+
+        estimated = self.last_estimated_params
+        machine_no = self.machine_no
+
+        def worker():
+            try:
+                apply_hsv_params(machine_no, estimated["hsv_min"], estimated["hsv_max"])
+                self.signals.message_ready.emit(f"ROI 推定値を機体{machine_no}へ再適用しました")
+            except Exception as exc:
+                self.signals.message_ready.emit(f"ROI 推定値の再適用失敗: {exc}")
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -196,24 +358,31 @@ class CameraWindow(QWidget):
 
     def update_frame(self, image_name, image_bytes):
         try:
-            image = Image.open(io.BytesIO(image_bytes)).convert("RGB").resize(FRAME_SIZE)
+            image = Image.open(io.BytesIO(image_bytes)).convert("RGB").resize(DISPLAY_FRAME_SIZE)
             image_data = image.tobytes("raw", "RGB")
-            qimage = QImage(image_data, FRAME_SIZE[0], FRAME_SIZE[1], FRAME_SIZE[0] * 3, QImage.Format_RGB888).copy()
+            qimage = QImage(
+                image_data,
+                DISPLAY_FRAME_SIZE[0],
+                DISPLAY_FRAME_SIZE[1],
+                DISPLAY_FRAME_SIZE[0] * 3,
+                QImage.Format_RGB888,
+            ).copy()
             pixmap = QPixmap.fromImage(qimage)
 
             coords = self.coords_text.split(",")
             if len(coords) >= 2 and coords[0].isdigit() and coords[1].isdigit():
-                x = int(coords[0])
-                y = int(coords[1])
-                if 0 <= x < FRAME_SIZE[0] and 0 <= y < FRAME_SIZE[1]:
+                x = int(int(coords[0]) * DISPLAY_FRAME_SIZE[0] / SOURCE_FRAME_SIZE[0])
+                y = int(int(coords[1]) * DISPLAY_FRAME_SIZE[1] / SOURCE_FRAME_SIZE[1])
+                if 0 <= x < DISPLAY_FRAME_SIZE[0] and 0 <= y < DISPLAY_FRAME_SIZE[1]:
                     painter = QPainter(pixmap)
                     painter.setPen(QPen(Qt.red, 1))
-                    painter.drawLine(x, 0, x, FRAME_SIZE[1] - 1)
-                    painter.drawLine(0, y, FRAME_SIZE[0] - 1, y)
+                    painter.drawLine(x, 0, x, DISPLAY_FRAME_SIZE[1] - 1)
+                    painter.drawLine(0, y, DISPLAY_FRAME_SIZE[0] - 1, y)
                     painter.end()
 
             if image_name == "raw":
-                self.raw_label.setPixmap(pixmap)
+                self.last_raw_frame_bytes = image_bytes
+                self.raw_label.set_frame_pixmap(pixmap)
             else:
                 self.mask_label.setPixmap(pixmap)
         except Exception as exc:

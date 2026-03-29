@@ -24,6 +24,7 @@ Orion 用の CM4 制御、カメラ配信、ホスト監視ツール一式です
   - カメラ API / multicast 用の共通 CLI / ライブラリ
 - `cam_viewer.py`
   - `cm4_camera.py` を使うホスト側 Qt GUI
+  - raw 画像の ROI ドラッグによる HSV 自動推定に対応
 
 ## CM4 側セットアップ
 
@@ -196,6 +197,12 @@ python -m uv run cm4-camera params --machine-no 3 --hsv-min 0 100 100 --hsv-max 
 python -m uv run cm4-camera coords --machine-no 3 --timeout 1.0
 ```
 
+ROI 推定:
+
+```powershell
+python -m uv run cm4-camera roi-calibrate --machine-no 3 --left 90 --top 180 --width 40 --height 40
+```
+
 ## GUI 起動
 
 ### ホスト制御 GUI
@@ -209,6 +216,8 @@ python -m uv run host-launcher
 ```powershell
 python -m uv run cam-viewer
 ```
+
+`cam-viewer` では raw 画像上をドラッグすると、その ROI の色分布から HSV を推定し、スライダーへ反映して CM4 側へ適用します。
 
 ## 機体番号と接続先規則
 
