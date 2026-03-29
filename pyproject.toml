@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orion-cm4"
+version = "0.1.0"
+description = "Host and CM4 control utilities for Orion_CM4"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "flask",
+    "numpy",
+    "opencv-python",
+    "pillow",
+    "pyside6",
+    "requests",
+    "uvicorn",
+]
+
+[project.scripts]
+cm4-control = "cm4_control:main"
+cm4-camera = "cm4_camera:main"
+host-launcher = "host_lancher:main"
+cam-viewer = "cam_viewer:main"
+
+[tool.setuptools]
+py-modules = [
+    "cam_server_v1",
+    "cam_server_v2",
+    "cam_server_v3",
+    "cam_viewer",
+    "cm4_camera",
+    "cm4_control",
+    "host_lancher",
+    "lancher",
+]

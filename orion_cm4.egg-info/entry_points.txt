@@ -1,0 +1,5 @@
+[console_scripts]
+cam-viewer = cam_viewer:main
+cm4-camera = cm4_camera:main
+cm4-control = cm4_control:main
+host-launcher = host_lancher:main

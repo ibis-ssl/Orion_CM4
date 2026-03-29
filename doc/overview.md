@@ -1,5 +1,40 @@
 # overview
 
+## 全体方針
+
+- ホスト側 GUI は `tkinter` ではなく Qt を使います。
+- GUI は表示と操作に限定し、通信や処理本体は独立した Python モジュールへ分離します。
+- 各機能は CLI だけで動作確認できる構成にします。
+- GUI からも CLI からも同じ共通モジュールを利用し、処理の二重実装を避けます。
+
+## uv
+
+このリポジトリの Python 依存管理には `uv` を使います。
+
+### 管理ファイル
+
+- `pyproject.toml`
+- `uv.lock`
+- `.venv`
+
+### 主なコマンド
+
+- 仮想環境と依存を作成
+  - `python -m uv sync`
+- 制御 CLI の実行
+  - `python -m uv run cm4-control scan`
+- カメラ CLI の実行
+  - `python -m uv run cm4-camera config --machine-no 3`
+- ホスト GUI の実行
+  - `python -m uv run host-launcher`
+- カメラ GUI の実行
+  - `python -m uv run cam-viewer`
+
+### 補足
+
+- Qt GUI の起動には `PySide6` を依存として含めています。
+- `project.scripts` を使えるよう、`pyproject.toml` には `setuptools` ベースのビルド設定を入れています。
+
 ## control_server.service
 
 `control_server.service` は、CM4 起動後にハードウェア制御用の FastAPI サーバーを自動起動するための `systemd` ユニットファイルです。
@@ -11,25 +46,9 @@
 - `lancher.py` を `/usr/bin/python3` で起動します。
 - 異常終了時は 5 秒待って自動再起動します。
 
-### 主な設定
-
-- `Description=FastAPI Launcher for Hardware Control`
-- `After=network.target`
-- `User=ibis`
-- `WorkingDirectory=/home/ibis/Orion_CM4`
-- `ExecStart=/usr/bin/python3 /home/ibis/Orion_CM4/lancher.py`
-- `Restart=always`
-- `RestartSec=5`
-- `WantedBy=multi-user.target`
-
-### 補足
-
-- CM4 の通常起動で自動的に有効化して使う構成を想定しています。
-- 実行対象のファイル名は `launcher.py` ではなく `lancher.py` です。サービス定義と実ファイル名を合わせて管理してください。
-
 ## lancher.py
 
-`lancher.py` は、各 CM4 上で動作する制御用 Web API サーバーです。FastAPI と Uvicorn を使い、外部からの開始、停止、状態確認の要求を受け付けます。
+`lancher.py` は、各 CM4 上で動作する制御用 Web API サーバーです。
 
 ### 役割
 
@@ -44,75 +63,90 @@
 - `robot_feedback.out`
 - `dist/cam_server_v3`
 
-### 実装上のポイント
+## cm4_control.py
 
-- 二重起動防止のため、`/start` 実行前に `ai_cmd_v2.out` の稼働有無を確認します。
-- `robot_feedback.out` と `cam_server_v3` には、自機 IP アドレスの最終オクテットを `-n` オプションとして渡します。
-- 停止処理は `pkill -f` を使って対象プロセス名で終了させます。
-- 状態確認は `pgrep -f ai_cmd_v2.out` の戻り値で判定しています。
+`cm4_control.py` は、CM4 制御サーバー向けの共通クライアントです。GUI と CLI の両方から使います。
 
-### 補足
+### 役割
 
-- 本ファイルは `control_server.service` から起動される前提です。
-- バインド先インターフェースは `wlan0` 固定です。ネットワーク構成を変更する場合は `get_ip_address()` の対象も合わせて見直してください。
+- 制御サーバーの状態取得
+- `start` / `stop` コマンド送信
+- 複数 IP の並列スキャン
+
+### CLI 例
+
+- 単体状態確認
+  - `python cm4_control.py status --ip 192.168.20.103`
+- 複数台状態確認
+  - `python cm4_control.py scan`
+- 起動
+  - `python cm4_control.py start --ip 192.168.20.103`
+- 停止
+  - `python cm4_control.py stop --ip 192.168.20.103`
 
 ## host_lancher.py
 
-`host_lancher.py` は、ホスト PC 側から複数の CM4 を一括監視、操作するための GUI ツールです。`tkinter` で画面を構成し、各 CM4 上の `lancher.py` に HTTP リクエストを送ります。
+`host_lancher.py` は、`cm4_control.py` を利用する Qt ベースのホスト GUI です。
 
 ### 役割
 
-- `192.168.20.100` から `192.168.20.112` までの CM4 を監視対象にします。
-- 各ノードに対して `Run` と `Stop` ボタンを提供します。
-- 定期的に `/status` を問い合わせ、稼働状態を画面表示します。
+- `192.168.20.100` から `192.168.20.112` までの CM4 を監視します。
+- 各ノードに `Run` と `Stop` の操作ボタンを表示します。
+- 定期的に状態を更新します。
 
-### 通信仕様
+### 実装方針
 
-- 接続先ポートは `8000` 固定です。
-- 開始操作は `POST /start` を送信します。
-- 停止操作は `POST /stop` を送信します。
-- 状態確認は `GET /status` を送信します。
-- 通信タイムアウトは `0.5` 秒です。
+- 通信処理は `cm4_control.py` に持たせます。
+- GUI は Qt の画面更新とイベント処理のみを担当します。
+- 状態取得とコマンド送信はバックグラウンドスレッドで処理し、GUI をブロックしません。
 
-### 実装上のポイント
+## cm4_camera.py
 
-- 監視更新は別スレッドで動かし、1 秒周期で各ノードの状態を再取得します。
-- 複数ノードへの状態確認は `ThreadPoolExecutor` で並列化しています。
-- 取得した状態は GUI スレッドに戻してラベルへ反映します。
-- 表示上の状態は `Running`、`Stopped`、`Offline`、`Error` の 4 種類です。
+`cm4_camera.py` は、CM4 カメラサーバー向けの共通クライアントです。GUI と CLI の両方から使います。
 
-### 補足
+### 役割
 
-- `host_lancher.py` は Windows/Linux の両方で使う想定ですが、接続先 API の仕様は `lancher.py` に依存します。
-- 監視対象 IP 範囲を変更する場合は `PI_IP_LIST` を修正してください。
+- 機体番号から接続先設定を計算
+- `raw` / `mask` 画像の取得
+- HSV パラメータ送信
+- multicast 座標受信
+
+### 接続先規則
+
+- 機体番号を `N` とすると HTTP 接続先 IP は `192.168.20.(100 + N)` です。
+- API ポートは `8001` です。
+- multicast グループは `224.5.10.(100 + N)` です。
+- multicast ポートは `5100 + N` です。
+
+### CLI 例
+
+- 接続先確認
+  - `python cm4_camera.py config --machine-no 3`
+- 画像取得
+  - `python cm4_camera.py frame --machine-no 3 --image-name raw --output raw.jpg`
+- HSV 更新
+  - `python cm4_camera.py params --machine-no 3 --hsv-min 0 100 100 --hsv-max 15 255 255`
+- 座標受信
+  - `python cm4_camera.py coords --machine-no 3 --timeout 1.0`
 
 ## cam_viewer.py
 
-`cam_viewer.py` は、カメラ画像と検出座標をホスト PC 上で確認し、色抽出パラメータを調整するための GUI ツールです。`tkinter` を使って表示画面を構成し、HTTP と UDP multicast の 2 系統で CM4 側と通信します。
+`cam_viewer.py` は、`cm4_camera.py` を利用する Qt ベースのカメラ GUI です。
 
 ### 役割
 
-- CM4 側から取得した `raw` と `mask` の 2 種類の画像を表示します。
-- UDP で受信した座標情報をもとに、画像上へ十字線を重ねて表示します。
-- HSV のしきい値を GUI から変更し、CM4 側へ反映します。
+- `raw` と `mask` の 2 画面表示
+- 座標の表示と十字線描画
+- 機体番号切り替え
+- HSV パラメータ調整
 
-### 通信仕様
+### 実装方針
 
-- 画像取得先は `http://192.168.20.106:8001` 固定です。
-- 画像は `GET /frame/raw` と `GET /frame/mask` で取得します。
-- HSV パラメータは `POST /params` に JSON で送信します。
-- 座標情報は multicast `224.5.10.106:5106` で受信します。
+- 通信処理は `cm4_camera.py` に持たせます。
+- GUI は Qt による表示と入力だけを担当します。
+- 画像取得、HSV 送信、座標受信はバックグラウンドスレッドで処理し、GUI をブロックしません。
 
-### 実装上のポイント
+## 補足
 
-- 画像更新は `after(100, ...)` を使い、約 100 ms 周期で再取得します。
-- 表示サイズは `320x240` に固定してリサイズします。
-- 受信した座標文字列を分解し、範囲内であれば縦線と横線を描画します。
-- UDP 受信は別スレッドで常時実行し、最新座標を `StringVar` に反映します。
-- HSV パラメータは `h_min`、`h_max`、`s_min`、`s_max`、`v_min`、`v_max` の 6 項目です。
-
-### 補足
-
-- `cam_viewer.py` は Windows/Linux の両方で使う想定です。
-- 接続先 CM4 を変更する場合は `PI_SERVER` を修正してください。
-- multicast のアドレスやポートを変更する場合は、送信側と `MCAST_GRP`、`MCAST_PORT` を合わせて更新してください。
+- `host_lancher.py` と `cam_viewer.py` の実行には `PySide6` が必要です。
+- CLI モジュールは Qt 非依存なので、Qt 未導入環境でも単体動作確認できます。
