@@ -159,14 +159,16 @@ long long get_current_time_ms()
   return ts.tv_sec * 1000LL + ts.tv_nsec / 1000000;  // 秒をミリ秒に変換し、ナノ秒をミリ秒に変換して加算
 }
 
-uint32_t calc_check_sum(char * buf, int buf_size)
+uint8_t calc_check_sum(const char * buf, int buf_size)
 {
   uint32_t data_ck = 0;
   for (int i = 0; i < buf_size - 1; i++) {
-    data_ck += buf[i];
+    data_ck += (uint8_t)buf[i];
   }
-  return data_ck;
+  return data_ck & 0xFF;
 }
+
+bool is_check_sum_valid(const char * buf, int buf_size) { return calc_check_sum(buf, buf_size) == (uint8_t)buf[buf_size - 1]; }
 
 int main(int argc, char * argv[])
 {
@@ -260,11 +262,18 @@ int main(int argc, char * argv[])
     if (debug_mode_enabled) {
       pritBinData(uart_tx_buf);
     } else if (pre_check_cnt != uart_tx_buf[1]) {
+      if (!is_check_sum_valid(uart_tx_buf, UART_PACKET_SIZE)) {
+        printf("discard packet: checksum mismatch expected=%3d actual=%3d\n",
+          calc_check_sum(uart_tx_buf, UART_PACKET_SIZE),
+          (uint8_t)uart_tx_buf[UART_PACKET_SIZE - 1]);
+        continue;
+      }
+
       serial.write_some(boost::asio::buffer(uart_tx_buf, sizeof(uart_tx_buf)));
       // printより先にserial送信
 
       printf("cam %+4d %+4d %2d fps(rx)%2d / %3d / ", camera.pos_xy[0], camera.pos_xy[1], camera.radius, camera.fps, diff_time);
-      printf("ck : %3d / ", uart_tx_buf[UART_PACKET_SIZE - 1]);
+      printf("ck : %3d / ", (uint8_t)uart_tx_buf[UART_PACKET_SIZE - 1]);
       printParcedData(uart_tx_buf);
     }
     pre_check_cnt = uart_tx_buf[1];
