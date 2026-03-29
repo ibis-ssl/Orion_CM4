@@ -88,6 +88,36 @@
 - 浮動小数点は STM32 側 `float_to_uchar4()` の生バイト列をそのまま送っているため、little-endian IEEE754 `float` 前提で解釈します。
 - 送信元の実装定義は `C:\Users\hiroyuki\STM32CubeIDE\workspace_1.17.0\G474_Orion_main\Core\Src\ai_comm.c` の `sendRobotInfo()` にあります。
 
+## robot_feedback_packet.py
+
+`robot_feedback_packet.py` は、`forward_robot_feedback.cpp` が送る 128 バイトパケットを Python でデコードする共通モジュールです。
+
+### 役割
+
+- 同期バイト、チェックサム、固定長レイアウトの解釈
+- little-endian IEEE754 `float` の復元
+- `tx_value_array[14]` のラベル付け
+
+## robot_feedback_rerun.py
+
+`robot_feedback_rerun.py` は、robot feedback の UDP multicast を受信し、`rerun-sdk` で時系列プロットする CLI ツールです。
+
+### 役割
+
+- `224.5.20.<機体番号>:50000+機体番号` を受信
+- `robot_feedback_packet.py` でデコード
+- 電圧、姿勢、カメラ座標、`tx_value_array` を Rerun へ記録
+- カメラ検出位置を 2D View に表示
+
+### CLI 例
+
+- 3番機体を表示
+  - `python -m uv run robot-feedback-rerun --machine-no 3`
+- 10 パケット受信して終了
+  - `python -m uv run robot-feedback-rerun --machine-no 3 --max-packets 10`
+- 5 秒だけ待って受信が無ければ終了
+  - `python -m uv run robot-feedback-rerun --machine-no 3 --max-packets 1 --receive-timeout 5`
+
 ## cm4_control.py
 
 `cm4_control.py` は、CM4 制御サーバー向けの共通クライアントです。GUI と CLI の両方から使います。

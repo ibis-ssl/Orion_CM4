@@ -6,3 +6,5 @@ cm4_camera
 cm4_control
 host_lancher
 lancher
+robot_feedback_packet
+robot_feedback_rerun

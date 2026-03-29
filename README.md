@@ -25,6 +25,10 @@ Orion 用の CM4 制御、カメラ配信、ホスト監視ツール一式です
 - `cam_viewer.py`
   - `cm4_camera.py` を使うホスト側 Qt GUI
   - raw 画像の ROI ドラッグによる HSV 自動推定に対応
+- `robot_feedback_packet.py`
+  - `forward_robot_feedback.cpp` の 128 バイトパケットを Python でデコード
+- `robot_feedback_rerun.py`
+  - UDP multicast の robot feedback を受信して `rerun-sdk` で可視化
 
 ## CM4 側セットアップ
 
@@ -142,6 +146,7 @@ python -m uv sync
 - `opencv-python`
 - `pillow`
 - `pyside6`
+- `rerun-sdk`
 
 ## 動作確認
 
@@ -203,6 +208,28 @@ ROI 推定:
 python -m uv run cm4-camera roi-calibrate --machine-no 3 --left 90 --top 180 --width 40 --height 40
 ```
 
+### Robot Feedback 受信 + プロット
+
+3番機体を受信して Rerun に表示:
+
+```powershell
+python -m uv run robot-feedback-rerun --machine-no 3
+```
+
+10 パケットだけ受信して終了:
+
+```powershell
+python -m uv run robot-feedback-rerun --machine-no 3 --max-packets 10
+```
+
+5 秒だけ待って受信が無ければ終了:
+
+```powershell
+python -m uv run robot-feedback-rerun --machine-no 3 --max-packets 1 --receive-timeout 5
+```
+
+既存の Rerun Viewer に接続したい場合は `--no-spawn` を使います。
+
 ## GUI 起動
 
 ### ホスト制御 GUI
@@ -234,4 +261,5 @@ python -m uv run cam-viewer
 
 - `host_lancher.py` と `cam_viewer.py` は `PySide6` が必要です。
 - 通信処理は GUI に持たせず、CLI から単独確認できる共通モジュールへ分離しています。
+- `robot_feedback_rerun.py` は Windows/Linux の両方で動く Python 製の受信ツールです。
 - 詳細な役割分担は `doc/overview.md` を参照してください。
