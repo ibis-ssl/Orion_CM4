@@ -63,6 +63,31 @@
 - `robot_feedback.out`
 - `dist/cam_server_v3`
 
+## forward_robot_feedback.cpp
+
+`forward_robot_feedback.cpp` は、STM32 から UART で受信した 128 バイトの状態パケットを、そのまま UDP multicast へ転送する中継プログラムです。
+
+### 役割
+
+- `/dev/ttyS0` からシリアル受信します。
+- 先頭同期バイト `0xAB 0xEA` を検出して 128 バイト固定長パケットを組み立てます。
+- 組み立てたパケットを `224.5.20.<機体番号>:50000+機体番号` へ送信します。
+
+### パケット構造
+
+- バイト `0`: 同期バイト `0xAB`
+- バイト `1`: 同期バイト `0xEA`
+- バイト `2`: チェックサム
+- バイト `3`: `check_counter`
+- バイト `4..63`: STM32 側 `sendRobotInfo()` が埋める固定項目
+- バイト `64..119`: `tx_value_array[14]` の float 値
+- バイト `120..127`: 現状未使用
+
+### 補足
+
+- 浮動小数点は STM32 側 `float_to_uchar4()` の生バイト列をそのまま送っているため、little-endian IEEE754 `float` 前提で解釈します。
+- 送信元の実装定義は `C:\Users\hiroyuki\STM32CubeIDE\workspace_1.17.0\G474_Orion_main\Core\Src\ai_comm.c` の `sendRobotInfo()` にあります。
+
 ## cm4_control.py
 
 `cm4_control.py` は、CM4 制御サーバー向けの共通クライアントです。GUI と CLI の両方から使います。

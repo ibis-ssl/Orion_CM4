@@ -1,3 +1,5 @@
+// このファイルはSTM32からUARTで受信した128バイトのロボット状態パケットを、
+// そのままUDP multicastへ転送する処理とパケット構造の定義を担当する。
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -15,7 +17,90 @@
 #include <boost/asio.hpp>
 #include <cstring>
 
-#define SERIAL_PORT "/dev/ttyS0"
+#define SERIAL_PORT "/dev/ttyAMA0"
+constexpr int PACKET_SIZE = 128;
+
+#pragma pack(push, 1)
+
+struct RobotFeedbackPacketHeader
+{
+  uint8_t sync0;
+  uint8_t sync1;
+  uint8_t checksum;
+  uint8_t check_counter;
+};
+
+struct RobotFeedbackPacket
+{
+  RobotFeedbackPacketHeader header;
+
+  // STM32 Core/Src/ai_comm.c の sendRobotInfo() に対応するペイロード。
+  // float 値は STM32 側 float_to_uchar4() の生バイト列がそのまま格納される。
+  // したがって little-endian IEEE754 float 前提で読む必要がある。
+  float imu_yaw_deg;                   // [4..7]
+  float battery_voltage_bldc_right;   // [8..11]
+  uint8_t ball_detection[3];           // [12..14]
+  uint8_t kick_state_div10;           // [15]
+  uint16_t current_error_id;          // [16..17] little-endian
+  uint16_t current_error_info;        // [18..19] little-endian
+  float current_error_value;          // [20..23]
+  uint8_t motor_current_x10[4];       // [24..27]
+  uint8_t ball_detection_extra;       // [28]
+  uint8_t temp_motor[4];              // [29..32]
+  uint8_t temp_fet;                   // [33]
+  uint8_t temp_coil[2];               // [34..35]
+  float diff_angle_deg;               // [36..39]
+  float capacitor_boost_voltage;      // [40..43]
+  float vision_based_position_x;      // [44..47]
+  float vision_based_position_y;      // [48..51]
+  float global_odom_speed_x;          // [52..55]
+  float global_odom_speed_y;          // [56..59]
+  uint8_t camera_pos_x_div2;          // [60]
+  uint8_t camera_pos_y;               // [61]
+  uint8_t camera_radius_div4;         // [62]
+  uint8_t camera_fps;                 // [63]
+  float tx_value_array[14];           // [64..119]
+  uint8_t reserved[8];                // [120..127] 現状は未使用。送信側で明示初期化なし。
+};
+
+#pragma pack(pop)
+
+static_assert(sizeof(RobotFeedbackPacket) == PACKET_SIZE, "RobotFeedbackPacket size must be 128 bytes");
+
+enum TxValueIndex {
+  TX_MOUSE_ODOM_X = 0,
+  TX_MOUSE_ODOM_Y,
+  TX_MOUSE_GLOBAL_VEL_X,
+  TX_MOUSE_GLOBAL_VEL_Y,
+  TX_OUTPUT_VEL_X,
+  TX_OUTPUT_VEL_Y,
+  TX_MOTOR_FEEDBACK_0,
+  TX_MOTOR_FEEDBACK_1,
+  TX_MOTOR_FEEDBACK_2,
+  TX_MOTOR_FEEDBACK_3,
+  TX_LOCAL_ODOM_SPEED_MVF_X,
+  TX_LOCAL_ODOM_SPEED_MVF_Y,
+  TX_LOCAL_ODOM_SPEED_MVF_W,
+  TX_MOUSE_QUALITY,
+};
+
+/*
+ * RobotFeedbackPacket.tx_value_array の意味:
+ * [0]  mouse->odom[0]
+ * [1]  mouse->odom[1]
+ * [2]  mouse->global_vel[0]
+ * [3]  mouse->global_vel[1]
+ * [4]  out->velocity[0]
+ * [5]  out->velocity[1]
+ * [6]  can_raw->motor_feedback[0]
+ * [7]  can_raw->motor_feedback[1]
+ * [8]  can_raw->motor_feedback[2]
+ * [9]  can_raw->motor_feedback[3]
+ * [10] omni->local_odom_speed_mvf[0]
+ * [11] omni->local_odom_speed_mvf[1]
+ * [12] omni->local_odom_speed_mvf[2]
+ * [13] mouse->quality
+ */
 
 union Data {
   float f;
@@ -53,7 +138,7 @@ int getMachineNumber(int argc, char * argv[])
 
 int getUartBaudrate(int argc, char * argv[])
 {
-  int speed = 2000000;
+  int speed = 1000000;
 
   // Parse command line arguments
   for (int i = 1; i < argc; ++i) {
@@ -71,7 +156,7 @@ int getUartBaudrate(int argc, char * argv[])
 int main(int argc, char * argv[])
 {
   printf("start");
-  printf("UART baud : 2000000 bps");
+  printf("UART baud : 1000000 bps");
 
   int machine_number = getMachineNumber(argc, argv);
   int uart_baudrate = getUartBaudrate(argc, argv);
@@ -87,8 +172,6 @@ int main(int argc, char * argv[])
   printf("UART %d bps\n", uart_baudrate);
 
   int count = 0;
-  constexpr int PACKET_SIZE = 128;
-
   char Rxbuf[PACKET_SIZE];
   char buf[PACKET_SIZE];
   char Rxdata[PACKET_SIZE];
@@ -154,7 +237,7 @@ startpoint:
         if (buf_idx >= PACKET_SIZE) {
           buf_idx = 0;
           sendto(sock, uart_rx_buf, PACKET_SIZE, 0, (struct sockaddr *)&addr, sizeof(addr));
-          printf("ck : %3d / ", uart_rx_buf[3]);
+          printf("check_counter : %3d / ", (uint8_t)uart_rx_buf[3]);
 
           for (int pi = 0; pi < PACKET_SIZE; pi++) {
             printf("0x%02x ", uart_rx_buf[pi]);
