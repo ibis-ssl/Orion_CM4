@@ -4,4 +4,6 @@ build/*
 runtime/*.json
 runtime/*.tmp
 cm4_cam/build
+cm4_cam/dist
 *.egg-info/
+*out
