@@ -1,5 +1,6 @@
 # このファイルはCM4カメラ GUI の Qt エントリポイントを担当し、
 # 共通通信処理 cm4_camera.py を利用して画像表示、座標表示、HSV 調整、ROI からの自動推定を行う。
+import argparse
 import io
 import sys
 import threading
@@ -11,6 +12,7 @@ from cm4_camera import (
     DEFAULT_MACHINE_NO,
     apply_hsv_params,
     build_connection_config,
+    build_debug_connection_config,
     create_coord_socket,
     estimate_hsv_params_from_frame_bytes,
     fetch_frame,
@@ -118,10 +120,11 @@ class ViewerSignals(QObject):
 
 
 class CameraWindow(QWidget):
-    def __init__(self):
+    def __init__(self, machine_no=DEFAULT_MACHINE_NO):
         super().__init__()
-        self.machine_no = DEFAULT_MACHINE_NO
+        self.machine_no = machine_no
         self.coords_text = "000,000,000,000"
+        self.coords_received = False
         self.running = True
         self.signals = ViewerSignals()
         self.slider_map = {}
@@ -213,13 +216,17 @@ class CameraWindow(QWidget):
 
     def apply_connection(self, machine_no):
         self.machine_no = machine_no
-        config = build_connection_config(machine_no)
+        config = build_debug_connection_config(machine_no)
         self.coords_text = "000,000,000,000"
+        self.coords_received = False
         self.last_raw_frame_bytes = None
         self.last_estimated_params = None
         self.raw_label.clear_selection()
+        host_interface = config.get("host_interface") or "unknown"
+        host_ip = config.get("host_ip") or "unknown"
         self.signals.connection_ready.emit(
-            f"機体{machine_no}: {config['api_server']} / {config['mcast_group']}:{config['mcast_port']}"
+            f"機体{machine_no}: {config['api_server']} / {config['mcast_group']}:{config['mcast_port']} / "
+            f"host {host_ip} ({host_interface})"
         )
         self.signals.coords_ready.emit(self.coords_text)
 
@@ -354,6 +361,7 @@ class CameraWindow(QWidget):
 
     def update_coords(self, coords_text):
         self.coords_text = coords_text
+        self.coords_received = True
         self.coords_label.setText(f"Coords: {coords_text}")
 
     def update_frame(self, image_name, image_bytes):
@@ -370,7 +378,14 @@ class CameraWindow(QWidget):
             pixmap = QPixmap.fromImage(qimage)
 
             coords = self.coords_text.split(",")
-            if len(coords) >= 2 and coords[0].isdigit() and coords[1].isdigit():
+            if (
+                self.coords_received
+                and len(coords) >= 3
+                and coords[0].isdigit()
+                and coords[1].isdigit()
+                and coords[2].isdigit()
+                and int(coords[2]) > 0
+            ):
                 x = int(int(coords[0]) * DISPLAY_FRAME_SIZE[0] / SOURCE_FRAME_SIZE[0])
                 y = int(int(coords[1]) * DISPLAY_FRAME_SIZE[1] / SOURCE_FRAME_SIZE[1])
                 if 0 <= x < DISPLAY_FRAME_SIZE[0] and 0 <= y < DISPLAY_FRAME_SIZE[1]:
@@ -390,8 +405,12 @@ class CameraWindow(QWidget):
 
 
 def main():
-    app = QApplication(sys.argv)
-    window = CameraWindow()
+    parser = argparse.ArgumentParser(description="CM4 camera debug viewer")
+    parser.add_argument("--machine-no", type=int, default=DEFAULT_MACHINE_NO)
+    args, qt_args = parser.parse_known_args()
+
+    app = QApplication([sys.argv[0], *qt_args])
+    window = CameraWindow(args.machine_no)
     window.show()
     sys.exit(app.exec())
 

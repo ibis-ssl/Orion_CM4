@@ -29,9 +29,6 @@ robot-feedback-rerun = "robot_feedback_rerun:main"
 
 [tool.setuptools]
 py-modules = [
-    "cam_server_v1",
-    "cam_server_v2",
-    "cam_server_v3",
     "cam_viewer",
     "cm4_camera",
     "cm4_control",
@@ -40,3 +37,4 @@ py-modules = [
     "robot_feedback_packet",
     "robot_feedback_rerun",
 ]
+packages = ["cm4_cam"]

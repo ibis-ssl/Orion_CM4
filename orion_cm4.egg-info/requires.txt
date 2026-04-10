@@ -1,9 +1,0 @@
-fastapi
-flask
-numpy
-opencv-python
-pillow
-pyside6
-rerun-sdk
-requests
-uvicorn

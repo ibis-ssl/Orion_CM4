@@ -1,21 +1,26 @@
 # CM4 側セットアップ
 
-このドキュメントは Raspberry Pi CM4 上で `Orion_CM4` を動かすためのセットアップ手順をまとめたものです。
+このドキュメントは Raspberry Pi CM4 上で `Orion_CM4` を動かすためのセットアップ手順です。
 
 ## 前提
 
 - OS は Raspberry Pi OS 64bit
 - 実行ユーザーは主に `ibis`
+- リポジトリ配置は `/home/ibis/Orion_CM4`
 - CM4 側 IP は `192.168.20.xxx` の固定 IP を使う
 - Python 依存は `uv` を使わず、`pip` で導入する
 
-## 1. Raspberry Pi 初期設定
+## 手動で行う設定
+
+次の項目は環境ごとに値や操作が変わるため、`setup.sh` には入れていません。
+
+### Raspberry Pi 初期設定
 
 - `sudo raspi-config`
 - 必要に応じて Serial Port、VNC などを設定
 - `wlan0` を有効化
 
-## 2. SSH 設定
+### SSH 設定
 
 CM4 側の `~/.ssh/authorized_keys` にホスト側の公開鍵を配置します。
 
@@ -30,7 +35,7 @@ Host CM4_1xx
     IdentityFile ~/.ssh/cm4_rsa
 ```
 
-## 3. Wi-Fi 固定 IP 設定
+### Wi-Fi 固定 IP 設定
 
 `nmtui` で `wlan0` を固定 IP に設定します。
 
@@ -40,51 +45,64 @@ Host CM4_1xx
 - `IPv4 CONFIGURATION` を `Manual`
 - 例: `192.168.20.103`
 
-## 4. 必要パッケージ
-
-```bash
-sudo apt update
-sudo apt upgrade -y
-sudo apt install -y git libboost-all-dev linux-headers-generic dkms pkg-config rsync gtkterm build-essential bc python3 python3-pip
-sudo apt autoremove -y
-```
-
-## 5. リポジトリ取得
+## リポジトリ取得
 
 ```bash
 git clone https://github.com/ibis-ssl/Orion_CM4.git
 cd Orion_CM4
 ```
 
+## セットアップ実行
 
-## 6. C++ バイナリのビルド
-
-```bash
-g++ forward_robot_feedback.cpp -pthread -o robot_feedback.out
-g++ forward_ai_cmd_v2.cpp -pthread -o ai_cmd_v2.out
-```
-
-## 7. Python 依存の導入
-
-`pyproject.toml` に定義した依存を `pip` で導入します。
+CM4 上で次を実行します。
 
 ```bash
-python3 -m pip install --user --break-system-packages -e .
+chmod +x setup.sh
+./setup.sh
 ```
 
-## 8. systemd 設定
+`sudo ./setup.sh` では実行しないでください。Python 依存を実行ユーザーの環境へ入れるため、必要な `sudo` はスクリプト内で個別に実行します。
 
-`control_server.service` を配置して有効化します。
+`setup.sh` は次を実行します。
+
+- APT パッケージの更新と導入
+- `pyproject.toml` に基づく Python 依存の導入
+- `forward_robot_feedback.cpp` と `forward_ai_cmd_v2.cpp` のビルド
+- `cm4_cam/cam_server_v3.py` の PyInstaller ビルド
+- `control_server.service` の配置、有効化、再起動
+
+APT upgrade を避けたい場合:
 
 ```bash
-sudo cp control_server.service /etc/systemd/system/control_server.service
-sudo systemctl daemon-reload
-sudo systemctl enable control_server.service
-sudo systemctl start control_server.service
+SKIP_APT_UPGRADE=1 ./setup.sh
 ```
 
-状態確認:
+カーネルヘッダの導入を省略したい場合:
+
+```bash
+SKIP_KERNEL_HEADERS=1 ./setup.sh
+```
+
+既存の `cm4_cam/dist/cam_server_v3` を使い、カメラサーバーの再ビルドを省略したい場合:
+
+```bash
+SKIP_CAMERA_BUILD=1 ./setup.sh
+```
+
+## 状態確認
 
 ```bash
 sudo systemctl status control_server.service
 ```
+
+ログを見る場合:
+
+```bash
+journalctl -u control_server.service -f
+```
+
+## 補足
+
+- `control_server.service` は `/home/ibis/Orion_CM4/lancher.py` を起動します。リポジトリ配置を変える場合は、サービスファイルも更新してください。
+- `cam_server_v3.py` の HSV 設定は、初回起動時に `cm4_cam/default_hsv_config.json` から `runtime/cam_server_v3_hsv.json` へ作成されます。
+- HSV 設定は `runtime/cam_server_v3_hsv.json` に保存され、Git 管理対象外です。
