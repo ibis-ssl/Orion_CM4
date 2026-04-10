@@ -3,3 +3,5 @@ cpp_local_cam/build/CMakeFiles/*
 build/*
 runtime/*.json
 runtime/*.tmp
+cm4_cam/build
+*.egg-info/
