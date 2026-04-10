@@ -1,7 +1,4 @@
 README.md
-cam_server_v1.py
-cam_server_v2.py
-cam_server_v3.py
 cam_viewer.py
 cm4_camera.py
 cm4_control.py
@@ -9,6 +6,9 @@ host_lancher.py
 lancher.py
 pyproject.toml
 robot_feedback_packet.py
+robot_feedback_rerun.py
+cm4_cam/__init__.py
+cm4_cam/cam_server_v3.py
 orion_cm4.egg-info/PKG-INFO
 orion_cm4.egg-info/SOURCES.txt
 orion_cm4.egg-info/dependency_links.txt

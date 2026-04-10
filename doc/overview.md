@@ -10,35 +10,33 @@
 
 ## Python 依存導入
 
-このリポジトリの Python 依存は `pyproject.toml` を元に `pip install -e .` で導入します。
+このリポジトリの Python 依存は `pyproject.toml` を元に導入します。
+CM4 側では `setup.sh` から `pip install -e .` を実行します。
+ホスト PC 側では `uv sync` と `uv run` を使います。
 
 ### 管理ファイル
 
 - `pyproject.toml`
-- 必要に応じて `.venv`
+- ホスト PC 側の `.venv`
 
 ### 主なコマンド
 
 - 依存を導入
-  - Linux: `python3 -m pip install --user --break-system-packages -e .`
-  - Windows: `python -m pip install --user -e .`
-- 仮想環境を使う場合
-  - `python -m venv .venv`
-  - Windows: `.venv\Scripts\pip install -e .`
-  - Linux: `.venv/bin/pip install -e .`
+  - CM4: `./setup.sh`
+  - ホスト PC: `uv sync`
 - 制御 CLI の実行
-  - `python cm4_control.py scan`
+  - ホスト PC: `uv run python cm4_control.py scan`
 - カメラ CLI の実行
-  - `python cm4_camera.py config --machine-no 3`
+  - ホスト PC: `uv run python cm4_camera.py config --machine-no 3`
 - ホスト GUI の実行
-  - `python host_lancher.py`
+  - `uv run python host_lancher.py`
 - カメラ GUI の実行
-  - `python cam_viewer.py`
+  - `uv run python cam_viewer.py`
 
 ### 補足
 
 - Qt GUI の起動には `PySide6` を依存として含めています。
-- `pip install -e .` を使うことで依存導入と編集可能インストールを同時に行えます。
+- ホスト PC 側では `uv sync` で依存導入と編集可能インストールを行います。
 - `project.scripts` を使えるよう、`pyproject.toml` には `setuptools` ベースのビルド設定を入れています。
 
 ## control_server.service
@@ -52,6 +50,23 @@
 - 作業ディレクトリを `/home/ibis/Orion_CM4` に固定して実行します。
 - `lancher.py` を `/usr/bin/python3` で起動します。
 - 異常終了時は 5 秒待って自動再起動します。
+
+## setup.sh
+
+`setup.sh` は、CM4 側の自動セットアップ用スクリプトです。
+
+### 役割
+
+- APT パッケージを更新・導入します。
+- `pyproject.toml` に基づいて Python 依存を導入します。
+- `forward_robot_feedback.cpp` と `forward_ai_cmd_v2.cpp` をビルドします。
+- `cm4_cam/cam_server_v3.py` を PyInstaller で `cm4_cam/dist/cam_server_v3` へビルドします。
+- `control_server.service` を `/etc/systemd/system/` へ配置し、有効化・再起動します。
+
+### 補足
+
+- `SKIP_APT_UPGRADE=1 ./setup.sh` で APT upgrade を省略できます。
+- `SKIP_CAMERA_BUILD=1 ./setup.sh` で既存の `cm4_cam/dist/cam_server_v3` を使い、カメラサーバーの再ビルドを省略できます。
 
 ## lancher.py
 
@@ -139,11 +154,11 @@
 ### CLI 例
 
 - 3番機体を表示
-  - `python robot_feedback_rerun.py --machine-no 3`
+  - `uv run python robot_feedback_rerun.py --machine-no 3`
 - 10 パケット受信して終了
-  - `python robot_feedback_rerun.py --machine-no 3 --max-packets 10`
+  - `uv run python robot_feedback_rerun.py --machine-no 3 --max-packets 10`
 - 5 秒だけ待って受信が無ければ終了
-  - `python robot_feedback_rerun.py --machine-no 3 --max-packets 1 --receive-timeout 5`
+  - `uv run python robot_feedback_rerun.py --machine-no 3 --max-packets 1 --receive-timeout 5`
 
 ## cm4_control.py
 
@@ -158,13 +173,13 @@
 ### CLI 例
 
 - 単体状態確認
-  - `python cm4_control.py status --ip 192.168.20.103`
+  - `uv run python cm4_control.py status --ip 192.168.20.103`
 - 複数台状態確認
-  - `python cm4_control.py scan`
+  - `uv run python cm4_control.py scan`
 - 起動
-  - `python cm4_control.py start --ip 192.168.20.103`
+  - `uv run python cm4_control.py start --ip 192.168.20.103`
 - 停止
-  - `python cm4_control.py stop --ip 192.168.20.103`
+  - `uv run python cm4_control.py stop --ip 192.168.20.103`
 
 ## host_lancher.py
 
@@ -204,15 +219,15 @@
 ### CLI 例
 
 - 接続先確認
-  - `python cm4_camera.py config --machine-no 3`
+  - `uv run python cm4_camera.py config --machine-no 3`
 - 画像取得
-  - `python cm4_camera.py frame --machine-no 3 --image-name raw --output raw.jpg`
+  - `uv run python cm4_camera.py frame --machine-no 3 --image-name raw --output raw.jpg`
 - HSV 更新
-  - `python cm4_camera.py params --machine-no 3 --hsv-min 0 100 100 --hsv-max 15 255 255`
+  - `uv run python cm4_camera.py params --machine-no 3 --hsv-min 0 100 100 --hsv-max 15 255 255`
 - 座標受信
-  - `python cm4_camera.py coords --machine-no 3 --timeout 1.0`
+  - `uv run python cm4_camera.py coords --machine-no 3 --timeout 1.0`
 - ROI 推定
-  - `python cm4_camera.py roi-calibrate --machine-no 3 --left 90 --top 180 --width 40 --height 40`
+  - `uv run python cm4_camera.py roi-calibrate --machine-no 3 --left 90 --top 180 --width 40 --height 40`
 
 ## cam_viewer.py
 
