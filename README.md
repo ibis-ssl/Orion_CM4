@@ -34,6 +34,8 @@ Orion 用の CM4 制御、カメラ配信、ホスト監視ツール一式です
   - `forward_robot_feedback.cpp` の 128 バイトパケットを Python でデコード
 - `robot_feedback_receiver.py`
   - UDP multicast の robot feedback を受信して標準出力へパース結果を表示
+- `robot_feedback_viewer.py`
+  - `robot_feedback_receiver.py` の受信・パース結果を Qt GUI でグラフ表示
 - `robot_feedback_rerun.py`
   - UDP multicast の robot feedback を受信して `rerun-sdk` で可視化
 
@@ -77,6 +79,6 @@ uv sync
 
 - `host_lancher.py` と `cam_viewer.py` は `PySide6` が必要です。
 - 通信処理は GUI に持たせず、CLI から単独確認できる共通モジュールへ分離しています。
-- `robot_feedback_receiver.py` と `robot_feedback_rerun.py` は Windows/Linux の両方で動く Python 製の受信ツールです。
+- `robot_feedback_receiver.py`、`robot_feedback_viewer.py`、`robot_feedback_rerun.py` は Windows/Linux の両方で動く Python 製の受信ツールです。
 - 詳細な役割分担は `doc/overview.md` を参照してください。
 - CM4 の初期構築手順は `SETUP.md` を参照してください。

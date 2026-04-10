@@ -10,6 +10,8 @@
   - 128 バイトのフィードバックパケットを Python でデコードします。
 - `robot_feedback_receiver.py`
   - UDP multicast を受信し、デコード結果を標準出力へ出します。
+- `robot_feedback_viewer.py`
+  - 受信・パース結果を Qt GUI で時系列グラフ表示します。
 - `robot_feedback_rerun.py`
   - デコード済みの robot feedback を `rerun-sdk` で時系列表示します。
 
@@ -84,6 +86,15 @@ STM32
 - `camera_radius = camera_radius_div4 * 4`
 - `camera_pos_y` と `camera_fps` はそのまま使います。
 
+### CM4 カメラから feedback までの経路
+
+`cm4_cam/cam_server_v3.py` は検出した `x, y, radius, fps` をローカル UDP `127.0.0.1:8890` へ 7 バイトで送ります。
+`forward_ai_cmd_v2.cpp` はこの値を STM32 へ送る UART パケットへ挿入します。
+STM32 は受け取ったカメラ値を feedback パケットの `camera_pos_x_div2`, `camera_pos_y`, `camera_radius_div4`, `camera_fps` に反映します。
+
+カメラ更新レートは STM32 の feedback 受信周期 125Hz より低いため、`forward_ai_cmd_v2.cpp` は最後に受信したカメラ値を短時間保持して使います。
+一定時間更新が無い場合やカメラが接続されていない場合は、`x=0, y=0, radius=0, fps=0` を STM32 へ送ります。
+
 ### tx_value_array
 
 `tx_value_array[14]` のラベルは次です。
@@ -139,6 +150,28 @@ GUI フロントエンドや Rerun には依存しないため、通信とパー
   - `uv run python robot_feedback_receiver.py --machine-no 3 --max-packets 1 --receive-timeout 5`
 - JSON Lines 形式で出力
   - `uv run python robot_feedback_receiver.py --machine-no 3 --json`
+
+## robot_feedback_viewer.py
+
+`robot_feedback_viewer.py` は robot feedback を Qt GUI で確認するためのフロントエンドです。
+受信・パースの責務は `robot_feedback_receiver.py` と `robot_feedback_packet.py` に置き、GUI 側では現在値と時系列グラフの表示だけを行います。
+
+### 表示する主な値
+
+- 電圧
+- 姿勢
+- カメラ座標
+- モーター電流
+- 同期バイトとチェックサムの検証結果
+- エラー情報
+- mouse quality
+
+### CLI 例
+
+- 10番機体を表示
+  - `uv run python robot_feedback_viewer.py --machine-no 10`
+- interface IP を明示して表示
+  - `uv run python robot_feedback_viewer.py --machine-no 10 --interface-ip 192.168.20.200`
 
 ## robot_feedback_rerun.py
 

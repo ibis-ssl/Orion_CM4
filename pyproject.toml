@@ -26,6 +26,7 @@ cm4-camera = "cm4_camera:main"
 host-launcher = "host_lancher:main"
 cam-viewer = "cam_viewer:main"
 robot-feedback-receiver = "robot_feedback_receiver:main"
+robot-feedback-viewer = "robot_feedback_viewer:main"
 robot-feedback-rerun = "robot_feedback_rerun:main"
 
 [tool.setuptools]
@@ -37,6 +38,7 @@ py-modules = [
     "lancher",
     "robot_feedback_packet",
     "robot_feedback_receiver",
+    "robot_feedback_viewer",
     "robot_feedback_rerun",
 ]
 packages = ["cm4_cam"]

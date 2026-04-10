@@ -22,6 +22,7 @@
   - `cm4_camera.py`
   - `cam_viewer.py`
   - `robot_feedback_receiver.py`
+  - `robot_feedback_viewer.py`
   - `robot_feedback_rerun.py`
   - `uv` による導入とホスト側実行コマンド
 - [制御パケット](control_packet.md)
@@ -34,8 +35,9 @@
   - `forward_robot_feedback.cpp`
   - `robot_feedback_packet.py`
   - `robot_feedback_receiver.py`
+  - `robot_feedback_viewer.py`
   - `robot_feedback_rerun.py`
-  - 128 バイト状態パケット、UDP multicast、受信パース、Rerun 表示
+  - 128 バイト状態パケット、UDP multicast、受信パース、Qt GUI 表示、Rerun 表示
 
 ## Python 依存導入
 

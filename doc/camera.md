@@ -48,8 +48,9 @@
 4. `cv2.findContours()` で外部輪郭を抽出します。
 5. 最大面積の輪郭を選びます。
 6. `cv2.minEnclosingCircle()` の中心を `x, y` とします。
-7. `cv2.contourArea()` を `area` とします。
-8. 輪郭が無い場合は `x=0, y=0, area=0` とします。
+7. `cv2.minEnclosingCircle()` の半径を `radius` とします。
+8. `cv2.contourArea()` を `area` とします。
+9. 輪郭が無い場合は `x=0, y=0, area=0, radius=0` とします。
 
 ### multicast 座標配信
 
@@ -62,6 +63,22 @@
 - multicast 送信は既定で `wlan0` の IP アドレスを `IP_MULTICAST_IF` に設定して行います。
 - `--mcast-if` で送信インターフェイス名を指定できます。
 - `--mcast-if-ip` で送信元 IPv4 アドレスを直接指定できます。
+
+### STM32 feedback 用ローカルカメラ UDP
+
+`forward_ai_cmd_v2.cpp` が STM32 へカメラ情報を渡せるよう、`cam_server_v3.py` は検出結果をローカル UDP にも送ります。
+
+- 既定の送信先: `127.0.0.1:8890`
+- 送信ペイロード: 7 バイト
+  - `0..1`: x 座標、big-endian uint16
+  - `2..3`: y 座標、big-endian uint16
+  - `4..5`: radius、big-endian uint16
+  - `6`: fps、uint8
+- `--local-cam-host` と `--local-cam-port` で送信先を変更できます。
+- `--disable-local-cam-udp` でこのローカル UDP 送信を無効化できます。
+
+カメラが未接続、切断、またはボール未検出の場合は `radius=0, x=0, y=0` になるよう扱います。
+カメラ更新が途絶えた場合は `forward_ai_cmd_v2.cpp` 側のタイムアウトで STM32 へ送る値が 0 に戻ります。
 
 ## ホスト側カメラクライアント
 

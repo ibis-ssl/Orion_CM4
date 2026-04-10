@@ -135,6 +135,27 @@ uv run python robot_feedback_receiver.py --machine-no 3 --json
 
 詳細: [フィードバックパケット](feedback_packet.md)
 
+### robot_feedback_viewer.py
+
+`robot_feedback_viewer.py` は、`robot_feedback_receiver.py` と `robot_feedback_packet.py` を利用して robot feedback を表示する Qt ベースの GUI ツールです。
+受信・パース処理は GUI 側に持たせず、フロントエンドとして時系列グラフと現在値だけを表示します。
+
+主な用途:
+
+- 電圧、姿勢、カメラ座標、モーター電流の時系列プロット
+- 同期バイトとチェックサムの状態表示
+- エラー情報、mouse quality、受信パケット数の表示
+- 使用する機体番号と interface IP の切り替え
+
+CLI 例:
+
+```powershell
+uv run python robot_feedback_viewer.py --machine-no 10
+uv run python robot_feedback_viewer.py --machine-no 10 --interface-ip 192.168.20.200
+```
+
+詳細: [フィードバックパケット](feedback_packet.md)
+
 ### robot_feedback_rerun.py
 
 `robot_feedback_rerun.py` は、CM4 から送信される robot feedback を Rerun へ記録する可視化用 CLI ツールです。
