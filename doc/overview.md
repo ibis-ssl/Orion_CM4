@@ -8,6 +8,32 @@
 - GUI からも CLI からも同じ共通モジュールを利用し、処理の二重実装を避けます。
 - CM4 の初期構築手順はプロジェクト直下の `SETUP.md` に分離して管理します。
 
+## 詳細ドキュメント
+
+- [カメラ制御・デバッグ](camera.md)
+  - `cm4_cam/cam_server_v3.py`
+  - `cm4_camera.py`
+  - `cam_viewer.py`
+  - HSV 設定、HTTP API、multicast 座標、デバッグ GUI
+- [ホスト PC 側ツール](host_tools.md)
+  - `cm4_control.py`
+  - `host_lancher.py`
+  - `cm4_camera.py`
+  - `cam_viewer.py`
+  - `robot_feedback_rerun.py`
+  - `uv` による導入とホスト側実行コマンド
+- [制御パケット](control_packet.md)
+  - `robot_packet.h`
+  - `forward_ai_cmd_v2.cpp`
+  - `cm4_control.py`
+  - `host_lancher.py`
+  - AI 制御パケット、UART 送信、CM4 制御 API
+- [フィードバックパケット](feedback_packet.md)
+  - `forward_robot_feedback.cpp`
+  - `robot_feedback_packet.py`
+  - `robot_feedback_rerun.py`
+  - 128 バイト状態パケット、UDP multicast、Rerun 表示
+
 ## Python 依存導入
 
 このリポジトリの Python 依存は `pyproject.toml` を元に導入します。
@@ -21,17 +47,12 @@ CM4 側では `setup.sh` から `pip install -e .` を実行します。
 
 ### 主なコマンド
 
-- 依存を導入
-  - CM4: `./setup.sh`
-  - ホスト PC: `uv sync`
-- 制御 CLI の実行
-  - ホスト PC: `uv run python cm4_control.py scan`
-- カメラ CLI の実行
-  - ホスト PC: `uv run python cm4_camera.py config --machine-no 3`
-- ホスト GUI の実行
-  - `uv run python host_lancher.py`
-- カメラ GUI の実行
-  - `uv run python cam_viewer.py --machine-no 10`
+- CM4 側の依存導入・ビルド・systemd 登録
+  - `./setup.sh`
+- ホスト PC 側の依存導入
+  - `uv sync`
+- ホスト PC 側ツールの実行
+  - [ホスト PC 側ツール](host_tools.md) を参照
 
 ### 補足
 
@@ -85,170 +106,6 @@ CM4 側では `setup.sh` から `pip install -e .` を実行します。
 - `ai_cmd_v2.out`
 - `robot_feedback.out`
 - `cm4_cam/dist/cam_server_v3`
-
-## cm4_cam/
-
-`cm4_cam/` は、CM4 上で実行するカメラサーバー関連ファイルをまとめたディレクトリです。
-
-### 役割
-
-- `cam_server_v3.py` を管理します。
-- `default_hsv_config.json` に、初回起動時に使うデフォルト HSV 設定を置きます。
-- `cam_server_v3.spec` で、`cam_server_v3.py` の PyInstaller ビルド設定を管理します。
-- `dist/cam_server_v3` に、`lancher.py` から起動するカメラサーバー実行ファイルを配置します。
-
-### 補足
-
-- ホスト側から利用する `cm4_camera.py` と `cam_viewer.py` は、引き続きプロジェクト直下に置きます。
-- `lancher.py` の `/start` は `cm4_cam/dist/cam_server_v3` を起動します。
-- `cam_server_v3.py` の HSV 初期値は `runtime/cam_server_v3_hsv.json` から読み込みます。
-- HSV を更新したときは同じディレクトリに一時ファイル `runtime/cam_server_v3_hsv.json.tmp` を書き、`runtime/cam_server_v3_hsv.json` へ置き換えて保存します。
-- `lancher.py` はカメラサーバー起動時に、保存先を環境変数 `ORION_CM4_HSV_CONFIG` で渡します。
-- multicast 座標送信は既定で `wlan0` の IP アドレスを `IP_MULTICAST_IF` に設定して送信します。
-- `dist/cam_server_v3` を使う場合は、`cam_server_v3.py` の変更後に CM4 上で再ビルドが必要です。
-
-## forward_robot_feedback.cpp
-
-`forward_robot_feedback.cpp` は、STM32 から UART で受信した 128 バイトの状態パケットを、そのまま UDP multicast へ転送する中継プログラムです。
-
-### 役割
-
-- `/dev/ttyS0` からシリアル受信します。
-- 先頭同期バイト `0xAB 0xEA` を検出して 128 バイト固定長パケットを組み立てます。
-- 組み立てたパケットを `224.5.20.<機体番号>:50000+機体番号` へ送信します。
-
-### パケット構造
-
-- バイト `0`: 同期バイト `0xAB`
-- バイト `1`: 同期バイト `0xEA`
-- バイト `2`: チェックサム
-- バイト `3`: `check_counter`
-- バイト `4..63`: STM32 側 `sendRobotInfo()` が埋める固定項目
-- バイト `64..119`: `tx_value_array[14]` の float 値
-- バイト `120..127`: 現状未使用
-
-### 補足
-
-- 浮動小数点は STM32 側 `float_to_uchar4()` の生バイト列をそのまま送っているため、little-endian IEEE754 `float` 前提で解釈します。
-- 送信元の実装定義は `C:\Users\hiroyuki\STM32CubeIDE\workspace_1.17.0\G474_Orion_main\Core\Src\ai_comm.c` の `sendRobotInfo()` にあります。
-
-## robot_feedback_packet.py
-
-`robot_feedback_packet.py` は、`forward_robot_feedback.cpp` が送る 128 バイトパケットを Python でデコードする共通モジュールです。
-
-### 役割
-
-- 同期バイト、チェックサム、固定長レイアウトの解釈
-- little-endian IEEE754 `float` の復元
-- `tx_value_array[14]` のラベル付け
-
-## robot_feedback_rerun.py
-
-`robot_feedback_rerun.py` は、robot feedback の UDP multicast を受信し、`rerun-sdk` で時系列プロットする CLI ツールです。
-
-### 役割
-
-- `224.5.20.<機体番号>:50000+機体番号` を受信
-- `robot_feedback_packet.py` でデコード
-- 電圧、姿勢、カメラ座標、`tx_value_array` を Rerun へ記録
-- カメラ検出位置を 2D View に表示
-
-### CLI 例
-
-- 3番機体を表示
-  - `uv run python robot_feedback_rerun.py --machine-no 3`
-- 10 パケット受信して終了
-  - `uv run python robot_feedback_rerun.py --machine-no 3 --max-packets 10`
-- 5 秒だけ待って受信が無ければ終了
-  - `uv run python robot_feedback_rerun.py --machine-no 3 --max-packets 1 --receive-timeout 5`
-
-## cm4_control.py
-
-`cm4_control.py` は、CM4 制御サーバー向けの共通クライアントです。GUI と CLI の両方から使います。
-
-### 役割
-
-- 制御サーバーの状態取得
-- `start` / `stop` コマンド送信
-- 複数 IP の並列スキャン
-
-### CLI 例
-
-- 単体状態確認
-  - `uv run python cm4_control.py status --ip 192.168.20.103`
-- 複数台状態確認
-  - `uv run python cm4_control.py scan`
-- 起動
-  - `uv run python cm4_control.py start --ip 192.168.20.103`
-- 停止
-  - `uv run python cm4_control.py stop --ip 192.168.20.103`
-
-## host_lancher.py
-
-`host_lancher.py` は、`cm4_control.py` を利用する Qt ベースのホスト GUI です。
-
-### 役割
-
-- `192.168.20.100` から `192.168.20.112` までの CM4 を監視します。
-- 各ノードに `Run` と `Stop` の操作ボタンを表示します。
-- 定期的に状態を更新します。
-
-### 実装方針
-
-- 通信処理は `cm4_control.py` に持たせます。
-- GUI は Qt の画面更新とイベント処理のみを担当します。
-- 状態取得とコマンド送信はバックグラウンドスレッドで処理し、GUI をブロックしません。
-
-## cm4_camera.py
-
-`cm4_camera.py` は、CM4 カメラサーバー向けの共通クライアントです。GUI と CLI の両方から使います。
-
-### 役割
-
-- 機体番号から接続先設定を計算
-- `raw` / `mask` 画像の取得
-- HSV パラメータ送信
-- multicast 座標受信
-- ROI 矩形からの HSV 自動推定
-
-### 接続先規則
-
-- 機体番号を `N` とすると HTTP 接続先 IP は `192.168.20.(100 + N)` です。
-- API ポートは `8001` です。
-- multicast グループは `224.5.10.(100 + N)` です。
-- multicast ポートは `5100 + N` です。
-
-### CLI 例
-
-- 接続先確認
-  - `uv run python cm4_camera.py config --machine-no 3`
-- 画像取得
-  - `uv run python cm4_camera.py frame --machine-no 3 --image-name raw --output raw.jpg`
-- HSV 更新
-  - `uv run python cm4_camera.py params --machine-no 3 --hsv-min 0 100 100 --hsv-max 15 255 255`
-- 座標受信
-  - `uv run python cm4_camera.py coords --machine-no 3 --timeout 1.0`
-- ROI 推定
-  - `uv run python cm4_camera.py roi-calibrate --machine-no 3 --left 90 --top 180 --width 40 --height 40`
-
-## cam_viewer.py
-
-`cam_viewer.py` は、`cm4_camera.py` を利用する Qt ベースのカメラ GUI です。
-
-### 役割
-
-- `raw` と `mask` の 2 画面表示
-- 座標の表示と十字線描画
-- 機体番号切り替え
-- HSV パラメータ調整
-- raw 画像上の ROI ドラッグから HSV 推定
-
-### 実装方針
-
-- 通信処理は `cm4_camera.py` に持たせます。
-- GUI は Qt による表示と入力だけを担当します。
-- 画像取得、HSV 送信、座標受信はバックグラウンドスレッドで処理し、GUI をブロックしません。
-- raw 画像上をドラッグすると、その矩形の色分布から HSV を推定してスライダーへ反映し、同時に CM4 側へ適用します。
 
 ## 補足
 
