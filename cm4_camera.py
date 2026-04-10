@@ -27,6 +27,15 @@ def build_connection_config(machine_no, api_port=API_PORT):
     }
 
 
+def infer_local_interface_ip(remote_ip, remote_port=API_PORT):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect((remote_ip, remote_port))
+        return sock.getsockname()[0]
+    finally:
+        sock.close()
+
+
 def fetch_frame(machine_no, image_name, timeout=DEFAULT_TIMEOUT):
     config = build_connection_config(machine_no)
     response = requests.get(f"{config['api_server']}/frame/{image_name}", timeout=timeout)
@@ -105,12 +114,16 @@ def estimate_hsv_params_from_frame_bytes(frame_bytes, roi, hue_margin=10, sat_ma
     }
 
 
-def create_coord_socket(machine_no, receive_timeout=1.0):
+def create_coord_socket(machine_no, receive_timeout=1.0, interface_ip=None):
     config = build_connection_config(machine_no)
+    api_ip = config["api_server"].split("//", 1)[1].split(":", 1)[0]
+    if interface_ip is None:
+        interface_ip = infer_local_interface_ip(api_ip)
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(("", config["mcast_port"]))
-    mreq = struct.pack("4s4s", socket.inet_aton(config["mcast_group"]), socket.inet_aton("0.0.0.0"))
+    mreq = struct.pack("4s4s", socket.inet_aton(config["mcast_group"]), socket.inet_aton(interface_ip))
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
     sock.settimeout(receive_timeout)
     return sock

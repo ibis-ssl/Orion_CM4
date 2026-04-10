@@ -163,7 +163,7 @@ uv run python host_lancher.py
 ### カメラ GUI
 
 ```powershell
-uv run python cam_viewer.py
+uv run python cam_viewer.py --machine-no 10
 ```
 
 `cam-viewer` では raw 画像上をドラッグすると、その ROI の色分布から HSV を推定し、スライダーへ反映して CM4 側へ適用します。

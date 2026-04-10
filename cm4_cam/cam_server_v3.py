@@ -120,6 +120,26 @@ def save_hsv_config():
             file.write("\n")
         os.replace(tmp_path, hsv_config_path)
 
+
+def detect_ball(frame):
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    with hsv_lock:
+        current_hsv_min = hsv_min.copy()
+        current_hsv_max = hsv_max.copy()
+    mask = cv2.inRange(hsv, current_hsv_min, current_hsv_max)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5,5),np.uint8))
+
+    cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if cnts:
+        c = max(cnts, key=cv2.contourArea)
+        (x_f, y_f), _ = cv2.minEnclosingCircle(c)
+        area_f = cv2.contourArea(c)
+        x, y, area = int(x_f), int(y_f), int(area_f)
+    else:
+        x = y = area = 0
+
+    return x, y, area, mask
+
 # --- キャプチャスレッド ---
 def capture_loop(device=0):
     global last_frame
@@ -157,27 +177,11 @@ def detect_loop(mcast_grp, mcast_port):
     while True:
         frame = frame_queue.get()  # 新フレーム来るまで待機
 
-        # 二値化マスク
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        with hsv_lock:
-            current_hsv_min = hsv_min.copy()
-            current_hsv_max = hsv_max.copy()
-        mask = cv2.inRange(hsv, current_hsv_min, current_hsv_max)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5,5),np.uint8))
+        x, y, area, mask = detect_ball(frame)
 
         # mask キャッシュ
         with mask_lock:
             last_mask = mask.copy()
-
-        # 輪郭検出
-        cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if cnts:
-            c = max(cnts, key=cv2.contourArea)
-            (x_f, y_f), _ = cv2.minEnclosingCircle(c)
-            area_f = cv2.contourArea(c)
-            x, y, area = int(x_f), int(y_f), int(area_f)
-        else:
-            x = y = area = 0
 
         detected['x'], detected['y'], detected['area'] = x, y, area
 

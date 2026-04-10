@@ -1,5 +1,6 @@
 # このファイルはCM4カメラ GUI の Qt エントリポイントを担当し、
 # 共通通信処理 cm4_camera.py を利用して画像表示、座標表示、HSV 調整、ROI からの自動推定を行う。
+import argparse
 import io
 import sys
 import threading
@@ -118,10 +119,12 @@ class ViewerSignals(QObject):
 
 
 class CameraWindow(QWidget):
-    def __init__(self):
+    def __init__(self, machine_no=DEFAULT_MACHINE_NO):
         super().__init__()
-        self.machine_no = DEFAULT_MACHINE_NO
+        self.machine_no = machine_no
         self.coords_text = "000,000,000,000"
+        self.coords_received = False
+        self.last_coord_time = 0.0
         self.running = True
         self.signals = ViewerSignals()
         self.slider_map = {}
@@ -215,6 +218,8 @@ class CameraWindow(QWidget):
         self.machine_no = machine_no
         config = build_connection_config(machine_no)
         self.coords_text = "000,000,000,000"
+        self.coords_received = False
+        self.last_coord_time = 0.0
         self.last_raw_frame_bytes = None
         self.last_estimated_params = None
         self.raw_label.clear_selection()
@@ -354,7 +359,30 @@ class CameraWindow(QWidget):
 
     def update_coords(self, coords_text):
         self.coords_text = coords_text
+        self.coords_received = True
+        if coords_text != "000,000,000,000":
+            self.last_coord_time = time.time()
         self.coords_label.setText(f"Coords: {coords_text}")
+
+    def update_coords_from_mask(self, image_bytes):
+        if time.time() - self.last_coord_time < 1.5:
+            return
+
+        mask = Image.open(io.BytesIO(image_bytes)).convert("L")
+        bbox = mask.point(lambda value: 255 if value > 0 else 0).getbbox()
+        if bbox is None:
+            self.coords_text = "000,000,000,mask"
+            self.coords_received = True
+            self.coords_label.setText(f"Coords: {self.coords_text}")
+            return
+
+        left, top, right, bottom = bbox
+        x = (left + right - 1) // 2
+        y = (top + bottom - 1) // 2
+        area = sum(1 for value in mask.getdata() if value > 0)
+        self.coords_text = f"{x},{y},{area},mask"
+        self.coords_received = True
+        self.coords_label.setText(f"Coords: {self.coords_text}")
 
     def update_frame(self, image_name, image_bytes):
         try:
@@ -370,7 +398,14 @@ class CameraWindow(QWidget):
             pixmap = QPixmap.fromImage(qimage)
 
             coords = self.coords_text.split(",")
-            if len(coords) >= 2 and coords[0].isdigit() and coords[1].isdigit():
+            if (
+                self.coords_received
+                and len(coords) >= 3
+                and coords[0].isdigit()
+                and coords[1].isdigit()
+                and coords[2].isdigit()
+                and int(coords[2]) > 0
+            ):
                 x = int(int(coords[0]) * DISPLAY_FRAME_SIZE[0] / SOURCE_FRAME_SIZE[0])
                 y = int(int(coords[1]) * DISPLAY_FRAME_SIZE[1] / SOURCE_FRAME_SIZE[1])
                 if 0 <= x < DISPLAY_FRAME_SIZE[0] and 0 <= y < DISPLAY_FRAME_SIZE[1]:
@@ -384,14 +419,19 @@ class CameraWindow(QWidget):
                 self.last_raw_frame_bytes = image_bytes
                 self.raw_label.set_frame_pixmap(pixmap)
             else:
+                self.update_coords_from_mask(image_bytes)
                 self.mask_label.setPixmap(pixmap)
         except Exception as exc:
             self.set_message(f"Frame render error: {exc}")
 
 
 def main():
-    app = QApplication(sys.argv)
-    window = CameraWindow()
+    parser = argparse.ArgumentParser(description="CM4 camera debug viewer")
+    parser.add_argument("--machine-no", type=int, default=DEFAULT_MACHINE_NO)
+    args, qt_args = parser.parse_known_args()
+
+    app = QApplication([sys.argv[0], *qt_args])
+    window = CameraWindow(args.machine_no)
     window.show()
     sys.exit(app.exec())
 
