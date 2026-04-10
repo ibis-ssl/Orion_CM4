@@ -9,7 +9,6 @@ SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}"
 APT_PACKAGES=(
   git
   libboost-all-dev
-  raspberrypi-kernel-headers
   dkms
   pkg-config
   rsync
@@ -19,6 +18,11 @@ APT_PACKAGES=(
   python3
   python3-dev
   python3-pip
+)
+
+KERNEL_HEADER_PACKAGES=(
+  raspberrypi-kernel-headers
+  linux-headers-rpi-v8
 )
 
 log() {
@@ -40,7 +44,26 @@ install_apt_packages() {
     run_sudo apt upgrade -y
   fi
   run_sudo apt install -y "${APT_PACKAGES[@]}"
+  install_kernel_headers
   run_sudo apt autoremove -y
+}
+
+install_kernel_headers() {
+  if [[ "${SKIP_KERNEL_HEADERS:-0}" == "1" ]]; then
+    log "SKIP_KERNEL_HEADERS=1 のためカーネルヘッダ導入をスキップします"
+    return
+  fi
+
+  local candidate
+  for candidate in "linux-headers-$(uname -r)" "${KERNEL_HEADER_PACKAGES[@]}"; do
+    if apt-cache show "${candidate}" >/dev/null 2>&1; then
+      log "カーネルヘッダ ${candidate} を導入します"
+      run_sudo apt install -y "${candidate}"
+      return
+    fi
+  done
+
+  log "利用可能なカーネルヘッダパッケージが見つかりません。必要な場合は手動で導入してください"
 }
 
 install_python_packages() {

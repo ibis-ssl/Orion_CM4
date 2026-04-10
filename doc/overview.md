@@ -66,6 +66,7 @@ CM4 側では `setup.sh` から `pip install -e .` を実行します。
 ### 補足
 
 - `SKIP_APT_UPGRADE=1 ./setup.sh` で APT upgrade を省略できます。
+- `SKIP_KERNEL_HEADERS=1 ./setup.sh` でカーネルヘッダ導入を省略できます。
 - `SKIP_CAMERA_BUILD=1 ./setup.sh` で既存の `cm4_cam/dist/cam_server_v3` を使い、カメラサーバーの再ビルドを省略できます。
 
 ## lancher.py

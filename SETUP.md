@@ -77,6 +77,12 @@ APT upgrade を避けたい場合:
 SKIP_APT_UPGRADE=1 ./setup.sh
 ```
 
+カーネルヘッダの導入を省略したい場合:
+
+```bash
+SKIP_KERNEL_HEADERS=1 ./setup.sh
+```
+
 既存の `cm4_cam/dist/cam_server_v3` を使い、カメラサーバーの再ビルドを省略したい場合:
 
 ```bash
