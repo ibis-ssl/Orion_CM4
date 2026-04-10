@@ -21,7 +21,9 @@ Orion 用の CM4 制御、カメラ配信、ホスト監視ツール一式です
 - `host_lancher.py`
   - `cm4_control.py` を使うホスト側 Qt GUI
 - `cm4_cam/`
-  - CM4 側で動作するカメラサーバー本体、PyInstaller 設定、実行ファイル
+  - CM4 側で動作するカメラサーバー本体、デフォルトHSV設定、PyInstaller 設定、実行ファイル
+- `runtime/`
+  - CM4 側で実行時に生成される設定ファイル置き場
 - `cm4_camera.py`
   - カメラ API / multicast 用の共通 CLI / ライブラリ
 - `cam_viewer.py`

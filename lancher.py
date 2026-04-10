@@ -37,7 +37,10 @@ def start_control():
     subprocess.Popen([executable_path,"-s","1000000","-n",ip_last])
 
     executable_path = os.path.join(base_dir, "cm4_cam", "dist", "cam_server_v3")
-    subprocess.Popen([executable_path,"-n",ip_last])
+    hsv_config_path = os.path.join(base_dir, "runtime", "cam_server_v3_hsv.json")
+    env = os.environ.copy()
+    env["ORION_CM4_HSV_CONFIG"] = hsv_config_path
+    subprocess.Popen([executable_path,"-n",ip_last], env=env)
 
     return {"status": "started"}
 

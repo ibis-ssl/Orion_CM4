@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 # このファイルはCM4上で動作するカメラサーバー v3 を担当し、画像処理、HTTP API、座標配信を行う。
 import argparse
+import json
+import os
+import sys
 import threading
 import queue
 import time
@@ -19,6 +22,9 @@ API_PORT   = 8001
 # HSV パラメータ初期値
 hsv_min = np.array([0, 100, 100])
 hsv_max = np.array([15, 255, 255])
+hsv_lock = threading.Lock()
+hsv_config_lock = threading.Lock()
+hsv_config_path = None
 
 # フレーム＆マスク共有
 frame_queue = queue.Queue(maxsize=1)
@@ -30,6 +36,89 @@ mask_lock  = threading.Lock()
 
 # FPS 計測用
 fps = 0.0
+
+
+def default_hsv_config_path():
+    env_path = os.environ.get("ORION_CM4_HSV_CONFIG")
+    if env_path:
+        return env_path
+    return os.path.join(os.getcwd(), "runtime", "cam_server_v3_hsv.json")
+
+
+def default_hsv_template_path():
+    if getattr(sys, "frozen", False):
+        return os.path.join(getattr(sys, "_MEIPASS", os.path.dirname(sys.executable)), "default_hsv_config.json")
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "default_hsv_config.json")
+
+
+def load_hsv_json(path):
+    with open(path, "r", encoding="utf-8") as file:
+        data = json.load(file)
+    apply_hsv_values(data["hsv_min"], data["hsv_max"])
+
+
+def validate_hsv_values(values, upper_limits):
+    if not isinstance(values, list) or len(values) != 3:
+        raise ValueError("HSV must be a list of 3 values")
+    result = []
+    for value, upper_limit in zip(values, upper_limits):
+        value = int(value)
+        if not 0 <= value <= upper_limit:
+            raise ValueError("HSV value is out of range")
+        result.append(value)
+    return result
+
+
+def apply_hsv_values(new_hsv_min, new_hsv_max):
+    new_hsv_min = validate_hsv_values(new_hsv_min, [180, 255, 255])
+    new_hsv_max = validate_hsv_values(new_hsv_max, [180, 255, 255])
+    with hsv_lock:
+        hsv_min[:] = new_hsv_min
+        hsv_max[:] = new_hsv_max
+
+
+def load_hsv_config(config_path):
+    global hsv_config_path
+    hsv_config_path = config_path
+    if not os.path.exists(config_path):
+        template_path = default_hsv_template_path()
+        try:
+            if os.path.exists(template_path):
+                load_hsv_json(template_path)
+                print(f"loaded default HSV config: {template_path}")
+            save_hsv_config()
+            print(f"created HSV config: {config_path}")
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            print(f"failed to create HSV config {config_path}: {exc}")
+        return
+
+    try:
+        load_hsv_json(config_path)
+        print(f"loaded HSV config: {config_path}")
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        print(f"failed to load HSV config {config_path}: {exc}")
+
+
+def save_hsv_config():
+    if hsv_config_path is None:
+        return
+
+    with hsv_lock:
+        data = {
+            "hsv_min": hsv_min.tolist(),
+            "hsv_max": hsv_max.tolist(),
+        }
+
+    config_dir = os.path.dirname(hsv_config_path)
+    if config_dir:
+        os.makedirs(config_dir, exist_ok=True)
+
+    with hsv_config_lock:
+        tmp_path = f"{hsv_config_path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as file:
+            json.dump(data, file, ensure_ascii=False, indent=2)
+            file.write("\n")
+        os.replace(tmp_path, hsv_config_path)
 
 # --- キャプチャスレッド ---
 def capture_loop(device=0):
@@ -70,7 +159,10 @@ def detect_loop(mcast_grp, mcast_port):
 
         # 二値化マスク
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(hsv, hsv_min, hsv_max)
+        with hsv_lock:
+            current_hsv_min = hsv_min.copy()
+            current_hsv_max = hsv_max.copy()
+        mask = cv2.inRange(hsv, current_hsv_min, current_hsv_max)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5,5),np.uint8))
 
         # mask キャッシュ
@@ -124,21 +216,25 @@ def get_mask_frame():
 
 @app.route("/params", methods=["GET"])
 def get_params():
-    return jsonify({
-        "hsv_min": hsv_min.tolist(),
-        "hsv_max": hsv_max.tolist()
-    })
+    with hsv_lock:
+        return jsonify({
+            "hsv_min": hsv_min.tolist(),
+            "hsv_max": hsv_max.tolist()
+        })
 
 @app.route("/params", methods=["POST"])
 def set_params():
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     mn = data.get("hsv_min", [])
     mx = data.get("hsv_max", [])
-    if len(mn)==3 and len(mx)==3:
-        hsv_min[:] = mn
-        hsv_max[:] = mx
+    try:
+        apply_hsv_values(mn, mx)
+        save_hsv_config()
         return ("OK", 200)
-    return ("Bad Request", 400)
+    except (TypeError, ValueError) as exc:
+        return (f"Bad Request: {exc}", 400)
+    except OSError as exc:
+        return (f"Failed to save HSV config: {exc}", 500)
 
 def start_api():
     app.run(host="0.0.0.0", port=API_PORT, threaded=True)
@@ -169,13 +265,16 @@ class PiGUI:
 
         # HSV スライダー
         self.sliders = {}
+        with hsv_lock:
+            initial_hsv_min = hsv_min.copy()
+            initial_hsv_max = hsv_max.copy()
         for name, r, arr, idx in [
-            ("H min",(0,180), hsv_min,0),
-            ("H max",(0,180), hsv_max,0),
-            ("S min",(0,255), hsv_min,1),
-            ("S max",(0,255), hsv_max,1),
-            ("V min",(0,255), hsv_min,2),
-            ("V max",(0,255), hsv_max,2),
+            ("H min",(0,180), initial_hsv_min,0),
+            ("H max",(0,180), initial_hsv_max,0),
+            ("S min",(0,255), initial_hsv_min,1),
+            ("S max",(0,255), initial_hsv_max,1),
+            ("V min",(0,255), initial_hsv_min,2),
+            ("V max",(0,255), initial_hsv_max,2),
         ]:
             var = tk.IntVar(value=int(arr[idx]))
             self.sliders[name] = var
@@ -186,12 +285,22 @@ class PiGUI:
         self.update_gui()
 
     def on_hsv_change(self, _=None):
-        hsv_min[0] = self.sliders["H min"].get()
-        hsv_max[0] = self.sliders["H max"].get()
-        hsv_min[1] = self.sliders["S min"].get()
-        hsv_max[1] = self.sliders["S max"].get()
-        hsv_min[2] = self.sliders["V min"].get()
-        hsv_max[2] = self.sliders["V max"].get()
+        try:
+            apply_hsv_values(
+                [
+                    self.sliders["H min"].get(),
+                    self.sliders["S min"].get(),
+                    self.sliders["V min"].get(),
+                ],
+                [
+                    self.sliders["H max"].get(),
+                    self.sliders["S max"].get(),
+                    self.sliders["V max"].get(),
+                ],
+            )
+            save_hsv_config()
+        except (OSError, TypeError, ValueError) as exc:
+            print(f"failed to save HSV config: {exc}")
 
     def update_gui(self):
         with frame_lock:
@@ -226,7 +335,10 @@ if __name__ == "__main__":
     parser.add_argument('-n', type=int, default=5,
                         help='lower 8 bits of multicast IP and lower 3 digits of port')
     parser.add_argument('--gui', action='store_true', help='Enable local GUI')
+    parser.add_argument('--hsv-config', default=default_hsv_config_path(),
+                        help='path to persistent HSV config JSON')
     args = parser.parse_args()
+    load_hsv_config(args.hsv_config)
 
     n = args.n % 256
     mcast_grp = f"224.5.10.{n}"

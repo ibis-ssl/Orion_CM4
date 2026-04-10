@@ -75,7 +75,8 @@
 
 ### 役割
 
-- `cam_server_v1.py`、`cam_server_v2.py`、`cam_server_v3.py` を管理します。
+- `cam_server_v3.py` を管理します。
+- `default_hsv_config.json` に、初回起動時に使うデフォルト HSV 設定を置きます。
 - `cam_server_v3.spec` で、`cam_server_v3.py` の PyInstaller ビルド設定を管理します。
 - `dist/cam_server_v3` に、`lancher.py` から起動するカメラサーバー実行ファイルを配置します。
 
@@ -83,6 +84,10 @@
 
 - ホスト側から利用する `cm4_camera.py` と `cam_viewer.py` は、引き続きプロジェクト直下に置きます。
 - `lancher.py` の `/start` は `cm4_cam/dist/cam_server_v3` を起動します。
+- `cam_server_v3.py` の HSV 初期値は `runtime/cam_server_v3_hsv.json` から読み込みます。
+- HSV を更新したときは同じディレクトリに一時ファイル `runtime/cam_server_v3_hsv.json.tmp` を書き、`runtime/cam_server_v3_hsv.json` へ置き換えて保存します。
+- `lancher.py` はカメラサーバー起動時に、保存先を環境変数 `ORION_CM4_HSV_CONFIG` で渡します。
+- `dist/cam_server_v3` を使う場合は、`cam_server_v3.py` の変更後に CM4 上で再ビルドが必要です。
 
 ## forward_robot_feedback.cpp
 

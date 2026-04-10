@@ -8,7 +8,7 @@ a = Analysis(
     [os.path.join(SPECPATH, 'cam_server_v3.py')],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[(os.path.join(SPECPATH, 'default_hsv_config.json'), '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
