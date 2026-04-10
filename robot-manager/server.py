@@ -224,8 +224,17 @@ class Handler(BaseHTTPRequestHandler):
         return
 
 
+class Server(ThreadingHTTPServer):
+    def handle_error(self, request, client_address) -> None:
+        import sys
+
+        if sys.exc_info()[0] in (BrokenPipeError, ConnectionResetError):
+            return
+        super().handle_error(request, client_address)
+
+
 def main() -> None:
-    server = ThreadingHTTPServer(("0.0.0.0", HTTP_PORT), Handler)
+    server = Server(("0.0.0.0", HTTP_PORT), Handler)
     print(f"robot-manager listening on http://0.0.0.0:{HTTP_PORT}")
 
     def handle_signal(signum, frame):
