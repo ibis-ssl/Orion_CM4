@@ -8,8 +8,10 @@
   - STM32 から UART で受信した 128 バイトの状態パケットを UDP multicast へ転送します。
 - `robot_feedback_packet.py`
   - 128 バイトのフィードバックパケットを Python でデコードします。
+- `robot_feedback_receiver.py`
+  - UDP multicast を受信し、デコード結果を標準出力へ出します。
 - `robot_feedback_rerun.py`
-  - UDP multicast を受信し、`rerun-sdk` で時系列表示します。
+  - デコード済みの robot feedback を `rerun-sdk` で時系列表示します。
 
 ## 通信経路
 
@@ -18,19 +20,21 @@ STM32
   -> UART /dev/ttyS0
   -> forward_robot_feedback.cpp
   -> UDP multicast
-  -> robot_feedback_packet.py / robot_feedback_rerun.py
+  -> robot_feedback_receiver.py
+  -> robot_feedback_packet.py
 ```
 
 ## UDP multicast
 
 `forward_robot_feedback.cpp` は、`-n` で指定した値から送信先を作ります。
+`lancher.py` 経由で起動する場合は CM4 の IP 末尾オクテットを渡すため、ホスト側の機体番号 `N` に対して `100 + N` が使われます。
 
-- multicast グループ: `224.5.20.<機体番号>`
-- port: `50000 + 機体番号`
+- multicast グループ: `224.5.20.<100 + 機体番号>`
+- port: `50000 + 100 + 機体番号`
 
 例:
 
-- 機体番号 `3`: `224.5.20.3:50003`
+- 機体番号 `10`: `224.5.20.110:50110`
 
 ## パケット仕様
 
@@ -109,9 +113,37 @@ STM32
 - little-endian IEEE754 float の復元
 - `tx_value_array[14]` のラベル付け
 
+## robot_feedback_receiver.py
+
+`robot_feedback_receiver.py` は robot feedback の UDP multicast を受信し、標準出力へデコード結果を出します。
+GUI フロントエンドや Rerun には依存しないため、通信とパースだけを確認する用途で使います。
+
+### 出力する主な値
+
+- 同期バイトの検証結果
+- チェックサムの検証結果
+- 電圧
+- 姿勢
+- エラー情報
+- モーター電流
+- カメラ座標
+- JSON Lines 形式の全フィールド
+
+### CLI 例
+
+- 3番機体のフィードバックをテキスト表示
+  - `uv run python robot_feedback_receiver.py --machine-no 3`
+- 10 パケット受信して終了
+  - `uv run python robot_feedback_receiver.py --machine-no 3 --max-packets 10`
+- 5 秒だけ待って受信が無ければ終了
+  - `uv run python robot_feedback_receiver.py --machine-no 3 --max-packets 1 --receive-timeout 5`
+- JSON Lines 形式で出力
+  - `uv run python robot_feedback_receiver.py --machine-no 3 --json`
+
 ## robot_feedback_rerun.py
 
-`robot_feedback_rerun.py` は robot feedback の UDP multicast を受信し、Rerun に記録します。
+`robot_feedback_rerun.py` は robot feedback を Rerun に記録します。
+通信とパースだけを確認したい場合は `robot_feedback_receiver.py` を使います。
 
 ### 記録する主な値
 

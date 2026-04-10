@@ -4,6 +4,7 @@
 
 - ホスト側 GUI は `tkinter` ではなく Qt を使います。
 - GUI は表示と操作に限定し、通信や処理本体は独立した Python モジュールへ分離します。
+- robot feedback の受信・パースは GUI や Rerun などのフロントエンドに依存させません。
 - 各機能は CLI だけで動作確認できる構成にします。
 - GUI からも CLI からも同じ共通モジュールを利用し、処理の二重実装を避けます。
 - CM4 の初期構築手順はプロジェクト直下の `SETUP.md` に分離して管理します。
@@ -20,6 +21,7 @@
   - `host_lancher.py`
   - `cm4_camera.py`
   - `cam_viewer.py`
+  - `robot_feedback_receiver.py`
   - `robot_feedback_rerun.py`
   - `uv` による導入とホスト側実行コマンド
 - [制御パケット](control_packet.md)
@@ -31,8 +33,9 @@
 - [フィードバックパケット](feedback_packet.md)
   - `forward_robot_feedback.cpp`
   - `robot_feedback_packet.py`
+  - `robot_feedback_receiver.py`
   - `robot_feedback_rerun.py`
-  - 128 バイト状態パケット、UDP multicast、Rerun 表示
+  - 128 バイト状態パケット、UDP multicast、受信パース、Rerun 表示
 
 ## Python 依存導入
 

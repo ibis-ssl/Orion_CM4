@@ -111,14 +111,37 @@ uv run python cam_viewer.py --machine-no 10
 
 詳細: [カメラ制御・デバッグ](camera.md)
 
-### robot_feedback_rerun.py
+### robot_feedback_receiver.py
 
-`robot_feedback_rerun.py` は、CM4 から送信される robot feedback の UDP multicast を受信し、Rerun に記録する CLI ツールです。
+`robot_feedback_receiver.py` は、CM4 から送信される robot feedback の UDP multicast を受信し、パケットをデコードして標準出力へ出す CLI ツールです。
+GUI や Rerun などのフロントエンドには依存しません。
 
 主な用途:
 
 - 128 バイトの状態パケット受信
 - `robot_feedback_packet.py` によるデコード
+- 同期バイトとチェックサムの確認
+- カメラ座標、電圧、姿勢、エラー情報などのテキスト表示
+- JSON Lines 形式での出力
+
+CLI 例:
+
+```powershell
+uv run python robot_feedback_receiver.py --machine-no 3
+uv run python robot_feedback_receiver.py --machine-no 3 --max-packets 10
+uv run python robot_feedback_receiver.py --machine-no 3 --max-packets 1 --receive-timeout 5
+uv run python robot_feedback_receiver.py --machine-no 3 --json
+```
+
+詳細: [フィードバックパケット](feedback_packet.md)
+
+### robot_feedback_rerun.py
+
+`robot_feedback_rerun.py` は、CM4 から送信される robot feedback を Rerun へ記録する可視化用 CLI ツールです。
+受信とパースだけを確認したい場合は、フロントエンド非依存の `robot_feedback_receiver.py` を使います。
+
+主な用途:
+
 - 電圧、姿勢、カメラ座標、`tx_value_array` の可視化
 
 CLI 例:
@@ -147,9 +170,12 @@ uv run python robot_feedback_rerun.py --machine-no 3 --no-spawn
 - カメラ API ポート: `8001`
 - カメラ座標 multicast グループ: `224.5.10.(100 + N)`
 - カメラ座標 multicast ポート: `5100 + N`
+- フィードバック multicast グループ: `224.5.20.(100 + N)`
+- フィードバック multicast ポート: `50100 + N`
 
 例: 機体番号 10 の場合:
 
 - 制御 API: `http://192.168.20.110:8000`
 - カメラ API: `http://192.168.20.110:8001`
 - カメラ座標 multicast: `224.5.10.110:5110`
+- フィードバック multicast: `224.5.20.110:50110`
