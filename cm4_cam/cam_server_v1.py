@@ -1,3 +1,4 @@
+# このファイルはCM4上で動作する旧版カメラサーバー v1 を担当し、画像配信と検出結果の送信を行う。
 import cv2
 import io
 import uvicorn

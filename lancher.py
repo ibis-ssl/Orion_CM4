@@ -1,3 +1,4 @@
+# このファイルはCM4上の制御用Web APIを担当し、制御プロセスとカメラサーバーを起動・停止する。
 from fastapi import FastAPI
 import subprocess
 import uvicorn
@@ -35,7 +36,7 @@ def start_control():
     executable_path = os.path.join(base_dir, "robot_feedback.out")
     subprocess.Popen([executable_path,"-s","1000000","-n",ip_last])
 
-    executable_path = os.path.join(base_dir, "./dist/cam_server_v3")
+    executable_path = os.path.join(base_dir, "cm4_cam", "dist", "cam_server_v3")
     subprocess.Popen([executable_path,"-n",ip_last])
 
     return {"status": "started"}

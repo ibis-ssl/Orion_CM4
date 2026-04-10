@@ -1,3 +1,4 @@
+# このファイルはCM4上で動作する旧版カメラサーバー v2 を担当し、カメラ画像処理、HTTP API、簡易GUIを提供する。
 import argparse
 import threading
 import socket

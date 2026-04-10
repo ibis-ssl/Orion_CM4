@@ -1,8 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+# このファイルはCM4カメラサーバー v3 を単体実行ファイルへ変換する PyInstaller 設定を担当する。
+import os
+
 
 a = Analysis(
-    ['cam_server_v3.py'],
+    [os.path.join(SPECPATH, 'cam_server_v3.py')],
     pathex=[],
     binaries=[],
     datas=[],

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# このファイルはCM4上で動作するカメラサーバー v3 を担当し、画像処理、HTTP API、座標配信を行う。
 import argparse
 import threading
 import queue
