@@ -4,6 +4,7 @@ import argparse
 import json
 import socket
 import struct
+import subprocess
 
 import cv2
 import numpy as np
@@ -34,6 +35,44 @@ def infer_local_interface_ip(remote_ip, remote_port=API_PORT):
         return sock.getsockname()[0]
     finally:
         sock.close()
+
+
+def infer_windows_interface_name(interface_ip):
+    try:
+        result = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                (
+                    "Get-NetIPAddress -AddressFamily IPv4 "
+                    f"| Where-Object {{$_.IPAddress -eq '{interface_ip}'}} "
+                    "| Select-Object -First 1 -ExpandProperty InterfaceAlias"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+    if result.returncode != 0:
+        return None
+    name = result.stdout.strip()
+    return name or None
+
+
+def build_debug_connection_config(machine_no):
+    config = build_connection_config(machine_no)
+    api_ip = config["api_server"].split("//", 1)[1].split(":", 1)[0]
+    try:
+        host_ip = infer_local_interface_ip(api_ip)
+    except OSError:
+        host_ip = None
+    config["host_ip"] = host_ip
+    config["host_interface"] = infer_windows_interface_name(host_ip) if host_ip else None
+    return config
 
 
 def fetch_frame(machine_no, image_name, timeout=DEFAULT_TIMEOUT):
@@ -183,7 +222,7 @@ def main():
     args = parser.parse_args()
 
     if args.subcommand == "config":
-        print(json.dumps(build_connection_config(args.machine_no), ensure_ascii=False))
+        print(json.dumps(build_debug_connection_config(args.machine_no), ensure_ascii=False))
         return
 
     if args.subcommand == "frame":

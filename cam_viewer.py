@@ -12,6 +12,7 @@ from cm4_camera import (
     DEFAULT_MACHINE_NO,
     apply_hsv_params,
     build_connection_config,
+    build_debug_connection_config,
     create_coord_socket,
     estimate_hsv_params_from_frame_bytes,
     fetch_frame,
@@ -124,7 +125,6 @@ class CameraWindow(QWidget):
         self.machine_no = machine_no
         self.coords_text = "000,000,000,000"
         self.coords_received = False
-        self.last_coord_time = 0.0
         self.running = True
         self.signals = ViewerSignals()
         self.slider_map = {}
@@ -216,15 +216,17 @@ class CameraWindow(QWidget):
 
     def apply_connection(self, machine_no):
         self.machine_no = machine_no
-        config = build_connection_config(machine_no)
+        config = build_debug_connection_config(machine_no)
         self.coords_text = "000,000,000,000"
         self.coords_received = False
-        self.last_coord_time = 0.0
         self.last_raw_frame_bytes = None
         self.last_estimated_params = None
         self.raw_label.clear_selection()
+        host_interface = config.get("host_interface") or "unknown"
+        host_ip = config.get("host_ip") or "unknown"
         self.signals.connection_ready.emit(
-            f"機体{machine_no}: {config['api_server']} / {config['mcast_group']}:{config['mcast_port']}"
+            f"機体{machine_no}: {config['api_server']} / {config['mcast_group']}:{config['mcast_port']} / "
+            f"host {host_ip} ({host_interface})"
         )
         self.signals.coords_ready.emit(self.coords_text)
 
@@ -360,29 +362,7 @@ class CameraWindow(QWidget):
     def update_coords(self, coords_text):
         self.coords_text = coords_text
         self.coords_received = True
-        if coords_text != "000,000,000,000":
-            self.last_coord_time = time.time()
         self.coords_label.setText(f"Coords: {coords_text}")
-
-    def update_coords_from_mask(self, image_bytes):
-        if time.time() - self.last_coord_time < 1.5:
-            return
-
-        mask = Image.open(io.BytesIO(image_bytes)).convert("L")
-        bbox = mask.point(lambda value: 255 if value > 0 else 0).getbbox()
-        if bbox is None:
-            self.coords_text = "000,000,000,mask"
-            self.coords_received = True
-            self.coords_label.setText(f"Coords: {self.coords_text}")
-            return
-
-        left, top, right, bottom = bbox
-        x = (left + right - 1) // 2
-        y = (top + bottom - 1) // 2
-        area = sum(1 for value in mask.getdata() if value > 0)
-        self.coords_text = f"{x},{y},{area},mask"
-        self.coords_received = True
-        self.coords_label.setText(f"Coords: {self.coords_text}")
 
     def update_frame(self, image_name, image_bytes):
         try:
@@ -419,7 +399,6 @@ class CameraWindow(QWidget):
                 self.last_raw_frame_bytes = image_bytes
                 self.raw_label.set_frame_pixmap(pixmap)
             else:
-                self.update_coords_from_mask(image_bytes)
                 self.mask_label.setPixmap(pixmap)
         except Exception as exc:
             self.set_message(f"Frame render error: {exc}")
