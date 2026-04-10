@@ -1,0 +1,16 @@
+services:
+  robot-manager:
+    build:
+      context: ./robot-manager
+    container_name: orion-robot-manager
+    ports:
+      - "${HTTP_PORT:-8090}:${HTTP_PORT:-8090}"
+    environment:
+      - HTTP_PORT=${HTTP_PORT:-8090}
+      - NUM_ROBOTS=${NUM_ROBOTS:-13}
+      - ROBOT_IP_BASE=${ROBOT_IP_BASE:-192.168.20.}
+      - ROBOT_IP_OFFSET=${ROBOT_IP_OFFSET:-100}
+      - ROBOT_PORT=${ROBOT_PORT:-8000}
+      - HTTP_TIMEOUT_SEC=${HTTP_TIMEOUT_SEC:-0.8}
+      - BACK_URL=${BACK_URL:-}
+    restart: unless-stopped
