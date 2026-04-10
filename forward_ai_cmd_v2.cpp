@@ -19,7 +19,7 @@
 
 #include "robot_packet.h"
 
-#define SERIAL_PORT "/dev/ttyAMA0"
+#define SERIAL_PORT "/dev/ttyS0"
 
 constexpr int AI_CMD_V2_SIZE = 64;
 constexpr int AI_CMD_V2_ROBOT_NUM = 11;
