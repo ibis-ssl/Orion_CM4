@@ -6,33 +6,39 @@
 - GUI は表示と操作に限定し、通信や処理本体は独立した Python モジュールへ分離します。
 - 各機能は CLI だけで動作確認できる構成にします。
 - GUI からも CLI からも同じ共通モジュールを利用し、処理の二重実装を避けます。
+- CM4 の初期構築手順はプロジェクト直下の `SETUP.md` に分離して管理します。
 
-## uv
+## Python 依存導入
 
-このリポジトリの Python 依存管理には `uv` を使います。
+このリポジトリの Python 依存は `pyproject.toml` を元に `pip install -e .` で導入します。
 
 ### 管理ファイル
 
 - `pyproject.toml`
-- `uv.lock`
-- `.venv`
+- 必要に応じて `.venv`
 
 ### 主なコマンド
 
-- 仮想環境と依存を作成
-  - `python -m uv sync`
+- 依存を導入
+  - Linux: `python3 -m pip install --user --break-system-packages -e .`
+  - Windows: `python -m pip install --user -e .`
+- 仮想環境を使う場合
+  - `python -m venv .venv`
+  - Windows: `.venv\Scripts\pip install -e .`
+  - Linux: `.venv/bin/pip install -e .`
 - 制御 CLI の実行
-  - `python -m uv run cm4-control scan`
+  - `python cm4_control.py scan`
 - カメラ CLI の実行
-  - `python -m uv run cm4-camera config --machine-no 3`
+  - `python cm4_camera.py config --machine-no 3`
 - ホスト GUI の実行
-  - `python -m uv run host-launcher`
+  - `python host_lancher.py`
 - カメラ GUI の実行
-  - `python -m uv run cam-viewer`
+  - `python cam_viewer.py`
 
 ### 補足
 
 - Qt GUI の起動には `PySide6` を依存として含めています。
+- `pip install -e .` を使うことで依存導入と編集可能インストールを同時に行えます。
 - `project.scripts` を使えるよう、`pyproject.toml` には `setuptools` ベースのビルド設定を入れています。
 
 ## control_server.service
@@ -112,11 +118,11 @@
 ### CLI 例
 
 - 3番機体を表示
-  - `python -m uv run robot-feedback-rerun --machine-no 3`
+  - `python robot_feedback_rerun.py --machine-no 3`
 - 10 パケット受信して終了
-  - `python -m uv run robot-feedback-rerun --machine-no 3 --max-packets 10`
+  - `python robot_feedback_rerun.py --machine-no 3 --max-packets 10`
 - 5 秒だけ待って受信が無ければ終了
-  - `python -m uv run robot-feedback-rerun --machine-no 3 --max-packets 1 --receive-timeout 5`
+  - `python robot_feedback_rerun.py --machine-no 3 --max-packets 1 --receive-timeout 5`
 
 ## cm4_control.py
 
