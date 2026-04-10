@@ -140,6 +140,29 @@ def detect_ball(frame):
 
     return x, y, area, mask
 
+
+def get_interface_ip(interface_name):
+    import fcntl
+
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        return socket.inet_ntoa(
+            fcntl.ioctl(
+                sock.fileno(),
+                0x8915,  # SIOCGIFADDR
+                struct.pack('256s', interface_name[:15].encode('utf-8'))
+            )[20:24]
+        )
+
+
+def configure_multicast_interface(sock, interface_name, interface_ip):
+    if interface_ip is None and interface_name:
+        interface_ip = get_interface_ip(interface_name)
+    if interface_ip is None:
+        return None
+
+    sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(interface_ip))
+    return interface_ip
+
 # --- キャプチャスレッド ---
 def capture_loop(device=0):
     global last_frame
@@ -166,10 +189,16 @@ def capture_loop(device=0):
             frame_queue.put(frame, block=False)
 
 # --- 検出＆UDP送信スレッド ---
-def detect_loop(mcast_grp, mcast_port):
+def detect_loop(mcast_grp, mcast_port, mcast_interface_name=None, mcast_interface_ip=None):
     global fps, last_mask
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, struct.pack('b',1))
+    try:
+        active_mcast_ip = configure_multicast_interface(sock, mcast_interface_name, mcast_interface_ip)
+        if active_mcast_ip:
+            print(f"multicast interface: {active_mcast_ip}")
+    except OSError as exc:
+        print(f"failed to configure multicast interface: {exc}")
 
     last_report = time.time()
     count = 0
@@ -341,6 +370,10 @@ if __name__ == "__main__":
     parser.add_argument('--gui', action='store_true', help='Enable local GUI')
     parser.add_argument('--hsv-config', default=default_hsv_config_path(),
                         help='path to persistent HSV config JSON')
+    parser.add_argument('--mcast-if', default='wlan0',
+                        help='interface name used for multicast send')
+    parser.add_argument('--mcast-if-ip', default=None,
+                        help='interface IPv4 address used for multicast send')
     args = parser.parse_args()
     load_hsv_config(args.hsv_config)
 
@@ -350,7 +383,11 @@ if __name__ == "__main__":
 
     # スレッド開始
     threading.Thread(target=capture_loop, daemon=True).start()
-    threading.Thread(target=detect_loop,args=(mcast_grp, mcast_port), daemon=True).start()
+    threading.Thread(
+        target=detect_loop,
+        args=(mcast_grp, mcast_port, args.mcast_if, args.mcast_if_ip),
+        daemon=True,
+    ).start()
     threading.Thread(target=start_api, daemon=True).start()
 
     if args.gui:

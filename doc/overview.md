@@ -104,6 +104,7 @@ CM4 側では `setup.sh` から `pip install -e .` を実行します。
 - `cam_server_v3.py` の HSV 初期値は `runtime/cam_server_v3_hsv.json` から読み込みます。
 - HSV を更新したときは同じディレクトリに一時ファイル `runtime/cam_server_v3_hsv.json.tmp` を書き、`runtime/cam_server_v3_hsv.json` へ置き換えて保存します。
 - `lancher.py` はカメラサーバー起動時に、保存先を環境変数 `ORION_CM4_HSV_CONFIG` で渡します。
+- multicast 座標送信は既定で `wlan0` の IP アドレスを `IP_MULTICAST_IF` に設定して送信します。
 - `dist/cam_server_v3` を使う場合は、`cam_server_v3.py` の変更後に CM4 上で再ビルドが必要です。
 
 ## forward_robot_feedback.cpp
