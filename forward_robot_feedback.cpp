@@ -86,6 +86,7 @@ enum TxValueIndex {
 
 /*
  * RobotFeedbackPacket.tx_value_array の意味:
+ * STM32 Core/Src/ai_comm.c の sendRobotInfo() で enqueueFloatArray() した順番に対応する。
  * [0]  mouse->odom[0]
  * [1]  mouse->odom[1]
  * [2]  mouse->global_vel[0]

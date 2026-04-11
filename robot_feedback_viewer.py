@@ -226,6 +226,8 @@ class FeedbackWindow(QWidget):
             "motor_current",
             "error",
             "mouse_quality",
+            "mouse_global_vel",
+            "local_odom_speed_mvf",
             "packet_count",
             "packet_rate",
         )
@@ -241,6 +243,8 @@ class FeedbackWindow(QWidget):
             PlotWidget("Angle", ("yaw", "diff_angle"), self.history_size, y_range=(-180.0, 180.0)),
             PlotWidget("Camera", ("camera_x", "camera_y", "camera_radius"), self.history_size),
             PlotWidget("Motor Current", ("motor_0", "motor_1", "motor_2", "motor_3"), self.history_size, y_range=(-10.0, 10.0)),
+            PlotWidget("Mouse Global Velocity", ("mouse_global_vel_x", "mouse_global_vel_y"), self.history_size),
+            PlotWidget("Local Odom Speed MVF", ("local_odom_speed_mvf_x", "local_odom_speed_mvf_y"), self.history_size),
             PlotWidget("Receive Rate", ("packets/s",), self.history_size, y_range=(0.0, 150.0)),
         )
         for plot in self.plots:
@@ -309,6 +313,7 @@ class FeedbackWindow(QWidget):
         while self.packet_timestamps and self.packet_timestamps[0] < now - 1.0:
             self.packet_timestamps.popleft()
         packet_rate = len(self.packet_timestamps)
+        tx_values = dict(zip(TX_VALUE_LABELS, packet.tx_value_array))
 
         self.value_labels["counter"].setText(str(packet.check_counter))
         self.value_labels["sync"].setText(str(packet.is_sync_valid))
@@ -324,7 +329,13 @@ class FeedbackWindow(QWidget):
         self.value_labels["error"].setText(
             f"id={packet.current_error_id}, info={packet.current_error_info}, value={packet.current_error_value:.3f}"
         )
-        self.value_labels["mouse_quality"].setText(f"{packet.tx_value_array[TX_VALUE_LABELS.index('mouse_quality')]:.1f}")
+        self.value_labels["mouse_quality"].setText(f"{tx_values['mouse_quality']:.1f}")
+        self.value_labels["mouse_global_vel"].setText(
+            f"x={tx_values['mouse_global_vel_x']:.3f}, y={tx_values['mouse_global_vel_y']:.3f}"
+        )
+        self.value_labels["local_odom_speed_mvf"].setText(
+            f"x={tx_values['local_odom_speed_mvf_x']:.3f}, y={tx_values['local_odom_speed_mvf_y']:.3f}"
+        )
         self.value_labels["packet_count"].setText(str(self.packet_count))
         self.value_labels["packet_rate"].setText(f"{packet_rate:.0f} packets/s")
         self.status_label.setText("receiving")
@@ -337,7 +348,16 @@ class FeedbackWindow(QWidget):
             {"camera_x": packet.camera_pos_x, "camera_y": packet.camera_pos_y, "camera_radius": packet.camera_radius}
         )
         self.plots[3].append({f"motor_{index}": value for index, value in enumerate(packet.motor_current)})
-        self.plots[4].append({"packets/s": packet_rate})
+        self.plots[4].append(
+            {"mouse_global_vel_x": tx_values["mouse_global_vel_x"], "mouse_global_vel_y": tx_values["mouse_global_vel_y"]}
+        )
+        self.plots[5].append(
+            {
+                "local_odom_speed_mvf_x": tx_values["local_odom_speed_mvf_x"],
+                "local_odom_speed_mvf_y": tx_values["local_odom_speed_mvf_y"],
+            }
+        )
+        self.plots[6].append({"packets/s": packet_rate})
 
 
 def build_parser() -> argparse.ArgumentParser:

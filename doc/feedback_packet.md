@@ -98,6 +98,7 @@ STM32 は受け取ったカメラ値を feedback パケットの `camera_pos_x_d
 ### tx_value_array
 
 `tx_value_array[14]` のラベルは次です。
+送信元は STM32 側 `Core/Src/ai_comm.c` の `sendRobotInfo()` で、`enqueueFloatArray()` に追加した順番のまま `buf[64..119]` に little-endian float として格納されます。
 
 - `0`: `mouse_odom_x`
 - `1`: `mouse_odom_y`
@@ -162,6 +163,8 @@ GUI フロントエンドや Rerun には依存しないため、通信とパー
 - 姿勢
 - カメラ座標
 - モーター電流
+- `mouse->global_vel[0]`, `mouse->global_vel[1]`
+- `omni->local_odom_speed_mvf[0]`, `omni->local_odom_speed_mvf[1]`
 - 同期バイトとチェックサムの検証結果
 - エラー情報
 - mouse quality
