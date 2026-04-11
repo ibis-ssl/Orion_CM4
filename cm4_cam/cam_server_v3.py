@@ -18,6 +18,8 @@ import io
 
 # --- 定数・設定 ---
 API_PORT   = 8001
+LOCAL_CAMERA_UDP_HOST = "127.0.0.1"
+LOCAL_CAMERA_UDP_PORT = 8890
 
 # HSV パラメータ初期値
 hsv_min = np.array([0, 100, 100])
@@ -28,7 +30,7 @@ hsv_config_path = None
 
 # フレーム＆マスク共有
 frame_queue = queue.Queue(maxsize=1)
-detected = {'x': 0, 'y': 0, 'area': 0}
+detected = {'x': 0, 'y': 0, 'area': 0, 'radius': 0}
 last_frame = None
 last_mask  = None
 frame_lock = threading.Lock()
@@ -132,13 +134,31 @@ def detect_ball(frame):
     cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if cnts:
         c = max(cnts, key=cv2.contourArea)
-        (x_f, y_f), _ = cv2.minEnclosingCircle(c)
+        (x_f, y_f), radius_f = cv2.minEnclosingCircle(c)
         area_f = cv2.contourArea(c)
-        x, y, area = int(x_f), int(y_f), int(area_f)
+        x, y, area, radius = int(x_f), int(y_f), int(area_f), int(radius_f)
     else:
-        x = y = area = 0
+        x = y = area = radius = 0
 
-    return x, y, area, mask
+    return x, y, area, radius, mask
+
+
+def clamp_uint16(value):
+    return max(0, min(65535, int(value)))
+
+
+def clamp_uint8(value):
+    return max(0, min(255, int(value)))
+
+
+def pack_local_camera_packet(x, y, radius, camera_fps):
+    return struct.pack(
+        ">HHHB",
+        clamp_uint16(x),
+        clamp_uint16(y),
+        clamp_uint16(radius),
+        clamp_uint8(round(camera_fps)),
+    )
 
 
 def get_interface_ip(interface_name):
@@ -189,10 +209,11 @@ def capture_loop(device=0):
             frame_queue.put(frame, block=False)
 
 # --- 検出＆UDP送信スレッド ---
-def detect_loop(mcast_grp, mcast_port, mcast_interface_name=None, mcast_interface_ip=None):
+def detect_loop(mcast_grp, mcast_port, mcast_interface_name=None, mcast_interface_ip=None, local_cam_addr=None):
     global fps, last_mask
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, struct.pack('b',1))
+    local_cam_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) if local_cam_addr is not None else None
     try:
         active_mcast_ip = configure_multicast_interface(sock, mcast_interface_name, mcast_interface_ip)
         if active_mcast_ip:
@@ -206,13 +227,13 @@ def detect_loop(mcast_grp, mcast_port, mcast_interface_name=None, mcast_interfac
     while True:
         frame = frame_queue.get()  # 新フレーム来るまで待機
 
-        x, y, area, mask = detect_ball(frame)
+        x, y, area, radius, mask = detect_ball(frame)
 
         # mask キャッシュ
         with mask_lock:
             last_mask = mask.copy()
 
-        detected['x'], detected['y'], detected['area'] = x, y, area
+        detected['x'], detected['y'], detected['area'], detected['radius'] = x, y, area, radius
 
         # FPS 更新
         count += 1
@@ -225,6 +246,13 @@ def detect_loop(mcast_grp, mcast_port, mcast_interface_name=None, mcast_interfac
         # UDP 送信: x,y,area,fps
         msg = f"{x},{y},{area},{fps:.1f}"
         sock.sendto(msg.encode(), (mcast_grp, mcast_port))
+        if local_cam_sock is not None:
+            try:
+                local_cam_sock.sendto(pack_local_camera_packet(x, y, radius, fps), local_cam_addr)
+            except OSError as exc:
+                print(f"failed to send local camera packet: {exc}")
+                local_cam_sock.close()
+                local_cam_sock = None
 
 # --- HTTP API サーバー (Flask) ---
 app = Flask(__name__)
@@ -276,8 +304,8 @@ def start_api():
 def headless_report():
     while True:
         time.sleep(1)
-        x,y,area = detected['x'], detected['y'], detected['area']
-        print(f"x={x}, y={y}, area={area}, fps={fps:.1f}")
+        x,y,area,radius = detected['x'], detected['y'], detected['area'], detected['radius']
+        print(f"x={x}, y={y}, area={area}, radius={radius}, fps={fps:.1f}")
 
 # --- GUI モード ---
 class PiGUI:
@@ -355,7 +383,7 @@ class PiGUI:
 
             self.stats.set(
                 f"x={detected['x']:03d},y={detected['y']:03d},"
-                f"a={detected['area']:03d},fps={fps:.1f}"
+                f"a={detected['area']:03d},r={detected['radius']:03d},fps={fps:.1f}"
             )
         self.root.after(30, self.update_gui)
 
@@ -374,18 +402,25 @@ if __name__ == "__main__":
                         help='interface name used for multicast send')
     parser.add_argument('--mcast-if-ip', default=None,
                         help='interface IPv4 address used for multicast send')
+    parser.add_argument('--local-cam-host', default=LOCAL_CAMERA_UDP_HOST,
+                        help='local UDP host used by forward_ai_cmd_v2.cpp')
+    parser.add_argument('--local-cam-port', type=int, default=LOCAL_CAMERA_UDP_PORT,
+                        help='local UDP port used by forward_ai_cmd_v2.cpp')
+    parser.add_argument('--disable-local-cam-udp', action='store_true',
+                        help='disable 7-byte local camera UDP packet output')
     args = parser.parse_args()
     load_hsv_config(args.hsv_config)
 
     n = args.n % 256
     mcast_grp = f"224.5.10.{n}"
     mcast_port = 5000 + (n % 1000)
+    local_cam_addr = None if args.disable_local_cam_udp else (args.local_cam_host, args.local_cam_port)
 
     # スレッド開始
     threading.Thread(target=capture_loop, daemon=True).start()
     threading.Thread(
         target=detect_loop,
-        args=(mcast_grp, mcast_port, args.mcast_if, args.mcast_if_ip),
+        args=(mcast_grp, mcast_port, args.mcast_if, args.mcast_if_ip, local_cam_addr),
         daemon=True,
     ).start()
     threading.Thread(target=start_api, daemon=True).start()

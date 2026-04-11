@@ -25,6 +25,7 @@ constexpr int AI_CMD_V2_SIZE = 64;
 constexpr int AI_CMD_V2_ROBOT_NUM = 11;
 constexpr int CAM_BUF_SIZE = 7;                                      // camera 7 + ck1
 constexpr int UART_PACKET_SIZE = AI_CMD_V2_SIZE + CAM_BUF_SIZE + 1;  // local cam + ck
+constexpr long long LOCAL_CAMERA_TIMEOUT_MS = 100;
 
 typedef struct
 {
@@ -186,6 +187,7 @@ int main(int argc, char * argv[])
   struct sockaddr_in ai_cmd_addr;
 
   char local_cam_buf[CAM_BUF_SIZE] = {};
+  char latest_local_cam_buf[CAM_BUF_SIZE] = {};
   char ai_cmd_buf[(AI_CMD_V2_SIZE + 1) * AI_CMD_V2_ROBOT_NUM] = {};
 
   char uart_tx_buf[UART_PACKET_SIZE] = {};
@@ -220,7 +222,9 @@ int main(int argc, char * argv[])
   char pre_check_cnt = 0;
   camera_t camera;
 
-  long long pre_time, diff_time = 0;
+  long long pre_time = get_current_time_ms();
+  long long diff_time = 0;
+  long long last_cam_time = 0;
 
   while (1) {
     int cmd_n, cam_n;
@@ -240,19 +244,26 @@ int main(int argc, char * argv[])
 
     uart_tx_buf[0] = 254;  //パケットヘッダ
 
-    // camera.* はデバッグprint用のパース
-    if (cam_n != -1) {
-      camera.pos_xy[0] = (local_cam_buf[0] << 8) + local_cam_buf[1];
-      camera.pos_xy[1] = (local_cam_buf[2] << 8) + local_cam_buf[3];
-      camera.radius = (local_cam_buf[4] << 8) + local_cam_buf[5];
-      camera.fps = local_cam_buf[6];
+    if (cam_n == CAM_BUF_SIZE) {
+      memcpy(latest_local_cam_buf, local_cam_buf, CAM_BUF_SIZE);
+      long long now = get_current_time_ms();
+      diff_time = now - pre_time;
+      pre_time = now;
+      last_cam_time = now;
+    }
 
-      memcpy(&uart_tx_buf[UART_PACKET_SIZE - CAM_BUF_SIZE - 1], local_cam_buf, CAM_BUF_SIZE);
-      diff_time = get_current_time_ms() - pre_time;
-      pre_time = get_current_time_ms();
+    bool has_recent_camera = last_cam_time > 0 && (get_current_time_ms() - last_cam_time) <= LOCAL_CAMERA_TIMEOUT_MS;
+    if (has_recent_camera) {
+      camera.pos_xy[0] = ((uint8_t)latest_local_cam_buf[0] << 8) + (uint8_t)latest_local_cam_buf[1];
+      camera.pos_xy[1] = ((uint8_t)latest_local_cam_buf[2] << 8) + (uint8_t)latest_local_cam_buf[3];
+      camera.radius = ((uint8_t)latest_local_cam_buf[4] << 8) + (uint8_t)latest_local_cam_buf[5];
+      camera.fps = (uint8_t)latest_local_cam_buf[6];
+      memcpy(&uart_tx_buf[UART_PACKET_SIZE - CAM_BUF_SIZE - 1], latest_local_cam_buf, CAM_BUF_SIZE);
     } else {
+      camera.pos_xy[0] = 0;
+      camera.pos_xy[1] = 0;
+      camera.radius = 0;
       camera.fps = 0;
-
       memset(&uart_tx_buf[UART_PACKET_SIZE - CAM_BUF_SIZE - 1], 0, CAM_BUF_SIZE);
     }
 
