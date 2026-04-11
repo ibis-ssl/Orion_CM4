@@ -242,13 +242,20 @@ class FeedbackWindow(QWidget):
             PlotWidget("Power", ("battery", "capacitor/10"), self.history_size, y_range=(0.0, 40.0)),
             PlotWidget("Angle", ("yaw", "diff_angle"), self.history_size, y_range=(-180.0, 180.0)),
             PlotWidget("Camera", ("camera_x", "camera_y", "camera_radius"), self.history_size),
-            PlotWidget("Motor Current", ("motor_0", "motor_1", "motor_2", "motor_3"), self.history_size, y_range=(-10.0, 10.0)),
-            PlotWidget("Mouse Global Velocity", ("mouse_global_vel_x", "mouse_global_vel_y"), self.history_size),
-            PlotWidget("Local Odom Speed MVF", ("local_odom_speed_mvf_x", "local_odom_speed_mvf_y"), self.history_size),
+            PlotWidget("Motor Current", ("motor_0", "motor_1", "motor_2", "motor_3"), self.history_size, y_range=(0.0, 3.0)),
+            PlotWidget("Velocity X", ("mouse_global_vel_x100", "local_odom_speed_mvf_x"), self.history_size, y_range=(-3.0, 3.0)),
+            PlotWidget("Velocity Y", ("mouse_global_vel_y100", "local_odom_speed_mvf_y"), self.history_size, y_range=(-3.0, 3.0)),
             PlotWidget("Receive Rate", ("packets/s",), self.history_size, y_range=(0.0, 150.0)),
         )
-        for plot in self.plots:
-            root_layout.addWidget(plot)
+        plot_layout = QGridLayout()
+        plot_layout.addWidget(self.plots[0], 0, 0)
+        plot_layout.addWidget(self.plots[6], 0, 1)
+        plot_layout.addWidget(self.plots[1], 1, 0)
+        plot_layout.addWidget(self.plots[2], 1, 1)
+        plot_layout.addWidget(self.plots[3], 2, 0, 1, 2)
+        plot_layout.addWidget(self.plots[4], 3, 0)
+        plot_layout.addWidget(self.plots[5], 3, 1)
+        root_layout.addLayout(plot_layout)
 
     def closeEvent(self, event) -> None:
         self.running = False
@@ -331,7 +338,7 @@ class FeedbackWindow(QWidget):
         )
         self.value_labels["mouse_quality"].setText(f"{tx_values['mouse_quality']:.1f}")
         self.value_labels["mouse_global_vel"].setText(
-            f"x={tx_values['mouse_global_vel_x']:.3f}, y={tx_values['mouse_global_vel_y']:.3f}"
+            f"x={tx_values['mouse_global_vel_x'] * 100.0:.3f}, y={tx_values['mouse_global_vel_y'] * 100.0:.3f}"
         )
         self.value_labels["local_odom_speed_mvf"].setText(
             f"x={tx_values['local_odom_speed_mvf_x']:.3f}, y={tx_values['local_odom_speed_mvf_y']:.3f}"
@@ -349,11 +356,14 @@ class FeedbackWindow(QWidget):
         )
         self.plots[3].append({f"motor_{index}": value for index, value in enumerate(packet.motor_current)})
         self.plots[4].append(
-            {"mouse_global_vel_x": tx_values["mouse_global_vel_x"], "mouse_global_vel_y": tx_values["mouse_global_vel_y"]}
+            {
+                "mouse_global_vel_x100": tx_values["mouse_global_vel_x"] * 100.0,
+                "local_odom_speed_mvf_x": tx_values["local_odom_speed_mvf_x"],
+            }
         )
         self.plots[5].append(
             {
-                "local_odom_speed_mvf_x": tx_values["local_odom_speed_mvf_x"],
+                "mouse_global_vel_y100": tx_values["mouse_global_vel_y"] * 100.0,
                 "local_odom_speed_mvf_y": tx_values["local_odom_speed_mvf_y"],
             }
         )
