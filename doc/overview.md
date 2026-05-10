@@ -1,4 +1,4 @@
-# overview
+﻿# overview
 
 ## 全体方針
 
@@ -26,10 +26,10 @@ Orion_CM4/
     host_lancher.py
     cm4_camera.py
     cam_viewer.py
-    robot_feedback_packet.py
-    robot_feedback_receiver.py
-    robot_feedback_viewer.py
-    robot_feedback_rerun.py
+    feedback_viewer/robot_feedback_packet.py
+    feedback_viewer/robot_feedback_receiver.py
+    feedback_viewer/robot_feedback_viewer.py
+    feedback_viewer/robot_feedback_rerun.py
 
   cm4/
     lancher.py
@@ -100,7 +100,7 @@ uv run robot-feedback-viewer --machine-no 10
 ```powershell
 uv run python -m host.cm4_control scan
 uv run python -m host.cm4_camera config --machine-no 10
-uv run python -m host.robot_feedback_receiver --machine-no 3
+uv run python -m host.feedback_viewer.robot_feedback_receiver --machine-no 3
 ```
 
 ## Web 管理 UI

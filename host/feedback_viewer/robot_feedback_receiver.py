@@ -11,7 +11,7 @@ import socket
 import struct
 from typing import Iterator
 
-from host.robot_feedback_packet import PACKET_SIZE, TX_VALUE_LABELS, RobotFeedbackPacket, decode_robot_feedback_packet
+from host.feedback_viewer.robot_feedback_packet import PACKET_SIZE, TX_VALUE_LABELS, RobotFeedbackPacket, decode_robot_feedback_packet
 
 
 DEFAULT_INTERFACE_IP = "0.0.0.0"

@@ -1,7 +1,7 @@
 # このファイルは robot feedback の受信結果を Qt GUI で表示し、
 # 主要な時系列値をグラフにプロットするホスト PC 側ツールを担当する。
 # このファイルは host 側で robot feedback の受信結果を Qt GUI 表示する。
-# 現在値と時系列グラフを表示し、通信・デコード処理は host.robot_feedback_receiver に委譲する。
+# 現在値と時系列グラフを表示し、通信・デコード処理は host.feedback_viewer.robot_feedback_receiver に委譲する。
 from __future__ import annotations
 
 import argparse
@@ -11,8 +11,8 @@ import sys
 import threading
 import time
 
-from host.robot_feedback_packet import PACKET_SIZE, RobotFeedbackPacket, TX_VALUE_LABELS, decode_robot_feedback_packet
-from host.robot_feedback_receiver import (
+from host.feedback_viewer.robot_feedback_packet import PACKET_SIZE, RobotFeedbackPacket, TX_VALUE_LABELS, decode_robot_feedback_packet
+from host.feedback_viewer.robot_feedback_receiver import (
     DEFAULT_INTERFACE_IP,
     RECEIVE_BUFFER_SIZE,
     multicast_endpoint,

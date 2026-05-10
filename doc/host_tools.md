@@ -1,4 +1,4 @@
-# ホスト PC 側ツール
+﻿# ホスト PC 側ツール
 
 ホスト側で実行する Python ツールは `host/` にまとめています。
 
@@ -99,7 +99,7 @@ uv run robot-feedback-rerun --machine-no 3 --no-spawn
 - `host/host_lancher.py`
 - `host/cm4_camera.py`
 - `host/cam_viewer.py`
-- `host/robot_feedback_packet.py`
-- `host/robot_feedback_receiver.py`
-- `host/robot_feedback_viewer.py`
-- `host/robot_feedback_rerun.py`
+- `host/feedback_viewer/robot_feedback_packet.py`
+- `host/feedback_viewer/robot_feedback_receiver.py`
+- `host/feedback_viewer/robot_feedback_viewer.py`
+- `host/feedback_viewer/robot_feedback_rerun.py`

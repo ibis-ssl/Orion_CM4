@@ -1,37 +1,17 @@
-# このファイルはforward_robot_feedback.cppのUDP multicastを受信し、
-# Windows/Linux 共通でデコード結果をrerun-sdkへ時系列プロットするCLIツールを担当する。
-from __future__ import annotations
-
 # このファイルは host 側で robot feedback を Rerun に記録する CLI を担当する。
 # multicast 受信とパケットデコード結果を Rerun の時系列ビューへ送る。
+from __future__ import annotations
+
 import argparse
 from datetime import datetime, timezone
 import socket
-import struct
 from typing import Iterable
 
 import rerun as rr
 import rerun.blueprint as rrb
 
-from host.robot_feedback_packet import PACKET_SIZE, TX_VALUE_LABELS, decode_robot_feedback_packet
-
-
-def build_multicast_config(machine_no: int) -> tuple[str, int]:
-    return f"224.5.20.{machine_no}", 50000 + machine_no
-
-
-def create_multicast_receiver(multicast_group: str, port: int, interface_ip: str) -> socket.socket:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
-    try:
-        sock.bind(("", port))
-    except OSError:
-        sock.bind((interface_ip, port))
-
-    mreq = struct.pack("4s4s", socket.inet_aton(multicast_group), socket.inet_aton(interface_ip))
-    sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-    return sock
+from host.feedback_viewer.robot_feedback_packet import PACKET_SIZE, TX_VALUE_LABELS, decode_robot_feedback_packet
+from host.feedback_viewer.robot_feedback_receiver import DEFAULT_INTERFACE_IP, RECEIVE_BUFFER_SIZE, multicast_endpoint, open_multicast_socket
 
 
 def build_blueprint() -> rrb.Blueprint:
@@ -117,7 +97,7 @@ def log_packet(packet_index: int, packet_bytes: bytes) -> None:
 
 def receive_packets(sock: socket.socket) -> Iterable[bytes]:
     while True:
-        payload, _address = sock.recvfrom(4096)
+        payload, _address = sock.recvfrom(RECEIVE_BUFFER_SIZE)
         if len(payload) != PACKET_SIZE:
             continue
         yield payload
@@ -128,7 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--machine-no", type=int, default=3, help="target machine number")
     parser.add_argument("--multicast-group", default=None, help="override multicast group")
     parser.add_argument("--port", type=int, default=None, help="override UDP port")
-    parser.add_argument("--interface-ip", default="0.0.0.0", help="local interface IP for multicast join")
+    parser.add_argument("--interface-ip", default=DEFAULT_INTERFACE_IP, help="local interface IP for multicast join")
     parser.add_argument("--application-id", default="orion_robot_feedback", help="Rerun application id")
     parser.add_argument("--max-packets", type=int, default=0, help="stop after receiving this many packets")
     parser.add_argument("--no-spawn", action="store_true", help="do not spawn a local Rerun viewer")
@@ -140,13 +120,13 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    default_group, default_port = build_multicast_config(args.machine_no)
+    default_group, default_port = multicast_endpoint(args.machine_no)
     multicast_group = args.multicast_group or default_group
     port = args.port or default_port
 
     rr.init(args.application_id, spawn=not args.no_spawn, default_blueprint=build_blueprint())
 
-    sock = create_multicast_receiver(multicast_group, port, args.interface_ip)
+    sock = open_multicast_socket(multicast_group, port, args.interface_ip)
     if args.receive_timeout > 0:
         sock.settimeout(args.receive_timeout)
     print(f"listen multicast={multicast_group}:{port} interface={args.interface_ip}")
