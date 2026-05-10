@@ -21,24 +21,16 @@ dependencies = [
 ]
 
 [project.scripts]
-cm4-control = "cm4_control:main"
-cm4-camera = "cm4_camera:main"
-host-launcher = "host_lancher:main"
-cam-viewer = "cam_viewer:main"
-robot-feedback-receiver = "robot_feedback_receiver:main"
-robot-feedback-viewer = "robot_feedback_viewer:main"
-robot-feedback-rerun = "robot_feedback_rerun:main"
+cm4-control = "host.cm4_control:main"
+cm4-camera = "host.cm4_camera:main"
+host-launcher = "host.host_lancher:main"
+cam-viewer = "host.cam_viewer:main"
+robot-feedback-receiver = "host.robot_feedback_receiver:main"
+robot-feedback-viewer = "host.robot_feedback_viewer:main"
+robot-feedback-rerun = "host.robot_feedback_rerun:main"
 
-[tool.setuptools]
-py-modules = [
-    "cam_viewer",
-    "cm4_camera",
-    "cm4_control",
-    "host_lancher",
-    "lancher",
-    "robot_feedback_packet",
-    "robot_feedback_receiver",
-    "robot_feedback_viewer",
-    "robot_feedback_rerun",
-]
-packages = ["cm4_cam"]
+[tool.setuptools.packages.find]
+include = ["host*", "cm4*"]
+
+[tool.setuptools.package-data]
+"cm4.camera" = ["default_hsv_config.json"]

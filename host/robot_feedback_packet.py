@@ -2,6 +2,8 @@
 # Python でデコードし、Windows/Linux 共通の受信ツールから扱える形へ変換する。
 from __future__ import annotations
 
+# このファイルは robot feedback の 128 バイト状態パケット定義を担当する。
+# CM4 から転送されたバイナリを Python で扱いやすいデータ構造へ変換する。
 from dataclasses import dataclass
 import struct
 

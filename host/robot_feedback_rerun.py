@@ -2,6 +2,8 @@
 # Windows/Linux 共通でデコード結果をrerun-sdkへ時系列プロットするCLIツールを担当する。
 from __future__ import annotations
 
+# このファイルは host 側で robot feedback を Rerun に記録する CLI を担当する。
+# multicast 受信とパケットデコード結果を Rerun の時系列ビューへ送る。
 import argparse
 from datetime import datetime, timezone
 import socket
@@ -11,7 +13,7 @@ from typing import Iterable
 import rerun as rr
 import rerun.blueprint as rrb
 
-from robot_feedback_packet import PACKET_SIZE, TX_VALUE_LABELS, decode_robot_feedback_packet
+from host.robot_feedback_packet import PACKET_SIZE, TX_VALUE_LABELS, decode_robot_feedback_packet
 
 
 def build_multicast_config(machine_no: int) -> tuple[str, int]:

@@ -2,6 +2,7 @@
 
 # このファイルはCM4カメラサーバー v3 を単体実行ファイルへ変換する PyInstaller 設定を担当する。
 import os
+# このファイルは cm4/camera/cam_server_v3.py を単体実行ファイルへ変換する PyInstaller 設定を担当する。
 
 
 a = Analysis(

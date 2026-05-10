@@ -1,33 +1,33 @@
-# 制御パケット
+﻿# 制御パケット
 
 このドキュメントは、AI から CM4 を経由して STM32 へ送る制御パケットの責務とレイアウトをまとめます。
 
 ## 対象ファイル
 
-- `robot_packet.h`
+- `cm4/bridge/robot_packet.h`
   - 64 バイトの `RobotCommandSerializedV2` と、C++ 側のシリアライズ / デシリアライズ処理を定義します。
-- `forward_ai_cmd_v2.cpp`
+- `cm4/bridge/forward_ai_cmd_v2.cpp`
   - AI から受け取った制御パケットとローカルカメラ情報をまとめ、UART で STM32 へ送ります。
-- `cm4_control.py`
+- `host/cm4_control.py`
   - CM4 の制御 API サーバーへ `start` / `stop` / `status` を送るホスト側クライアントです。
-- `host_lancher.py`
-  - `cm4_control.py` を利用するホスト側 GUI です。
-- `lancher.py`
+- `host/host_lancher.py`
+  - `host/cm4_control.py` を利用するホスト側 GUI です。
+- `cm4/lancher.py`
   - CM4 側で制御関連プロセスを起動・停止する Web API サーバーです。
 
 ## 制御プロセス
 
-`lancher.py` の `/start` は次のプロセスを起動します。
+`cm4/lancher.py` の `/start` は次のプロセスを起動します。
 
 - `ai_cmd_v2.out`
 - `robot_feedback.out`
-- `cm4_cam/dist/cam_server_v3`
+- `cm4/camera/dist/cam_server_v3`
 
 `/stop` は上記の関連プロセスを `pkill -f` で停止します。
 
 ## RobotCommandSerializedV2
 
-`robot_packet.h` の `RobotCommandSerializedV2` は 64 バイト固定長です。
+`cm4/bridge/robot_packet.h` の `RobotCommandSerializedV2` は 64 バイト固定長です。
 
 ### 固定フィールド
 
@@ -103,9 +103,9 @@
 - `8..9`: `trajectory_origin_angle`
 - `10..11`: `trajectory_curvature`
 
-## forward_ai_cmd_v2.cpp
+## cm4/bridge/forward_ai_cmd_v2.cpp
 
-`forward_ai_cmd_v2.cpp` は AI 側 UDP とローカルカメラ UDP を受け、STM32 へ UART 送信します。
+`cm4/bridge/forward_ai_cmd_v2.cpp` は AI 側 UDP とローカルカメラ UDP を受け、STM32 へ UART 送信します。
 
 ### 入力
 
@@ -128,30 +128,30 @@
 
 ### ローカルカメラ情報の挿入
 
-`cm4_cam/cam_server_v3.py` は、検出したカメラ情報をローカル UDP `127.0.0.1:8890` へ 7 バイトで送ります。
-`forward_ai_cmd_v2.cpp` はこの値を受け、UART パケット末尾手前に挿入します。
+`cm4/camera/cam_server_v3.py` は、検出したカメラ情報をローカル UDP `127.0.0.1:8890` へ 7 バイトで送ります。
+`cm4/bridge/forward_ai_cmd_v2.cpp` はこの値を受け、UART パケット末尾手前に挿入します。
 
 - `0..1`: x 座標
 - `2..3`: y 座標
 - `4..5`: radius
 - `6`: fps
 
-カメラ更新レートは STM32 への送信周期より低いため、`forward_ai_cmd_v2.cpp` は最後に受信したカメラ情報を短時間保持して使います。
+カメラ更新レートは STM32 への送信周期より低いため、`cm4/bridge/forward_ai_cmd_v2.cpp` は最後に受信したカメラ情報を短時間保持して使います。
 一定時間更新が無い場合、またはカメラが接続されていない場合は、カメラ領域を 0 で埋め、`x=0, y=0, radius=0, fps=0` として扱います。
 
 ## ホスト側制御ツール
 
-`cm4_control.py` は CM4 の `lancher.py` に対する HTTP クライアントです。
+`host/cm4_control.py` は CM4 の `cm4/lancher.py` に対する HTTP クライアントです。
 
 ### CLI 例
 
 - 単体状態確認
-  - `uv run python cm4_control.py status --ip 192.168.20.103`
+  - `uv run cm4-control status --ip 192.168.20.103`
 - 複数台状態確認
-  - `uv run python cm4_control.py scan`
+  - `uv run cm4-control scan`
 - 起動
-  - `uv run python cm4_control.py start --ip 192.168.20.103`
+  - `uv run cm4-control start --ip 192.168.20.103`
 - 停止
-  - `uv run python cm4_control.py stop --ip 192.168.20.103`
+  - `uv run cm4-control stop --ip 192.168.20.103`
 
-`host_lancher.py` はこの通信処理を利用し、`192.168.20.100` から `192.168.20.112` までの CM4 を GUI で監視・操作します。
+`host/host_lancher.py` はこの通信処理を利用し、`192.168.20.100` から `192.168.20.112` までの CM4 を GUI で監視・操作します。

@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - 'robot-manager/**'
+      - 'host/robot-manager/**'
   workflow_dispatch:
 
 jobs:
@@ -31,7 +31,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: ./robot-manager
+          context: ./host/robot-manager
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/robot-manager:latest

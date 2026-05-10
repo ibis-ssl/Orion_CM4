@@ -1,6 +1,8 @@
 // このファイルはSTM32からUARTで受信した128バイトのロボット状態パケットを、
 // そのままUDP multicastへ転送する処理とパケット構造の定義を担当する。
 #include <arpa/inet.h>
+// このファイルは STM32 から UART で受信した 128 バイトのロボット状態パケットを、
+// host 側へ UDP multicast で転送するブリッジを担当する。
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <stdint.h>

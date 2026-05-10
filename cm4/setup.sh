@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
-# このスクリプトはCM4上のOrion_CM4初期セットアップを担当し、依存導入、ビルド、systemd登録をまとめて実行する。
+# このスクリプトは CM4 側の初期セットアップを担当する。
+# 依存パッケージ導入、Python editable install、C++ ブリッジのビルド、
+# カメラサーバーの PyInstaller ビルド、systemd 登録をまとめて行う。
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CM4_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "${CM4_DIR}/.." && pwd)"
 SERVICE_NAME="control_server.service"
 SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}"
+BRIDGE_DIR="${CM4_DIR}/bridge"
+BIN_DIR="${CM4_DIR}/bin"
+CAMERA_DIR="${CM4_DIR}/camera"
 
 APT_PACKAGES=(
   git
@@ -38,7 +44,7 @@ run_sudo() {
 }
 
 install_apt_packages() {
-  log "APTパッケージを更新・導入します"
+  log "APT パッケージを更新・導入します"
   run_sudo apt update
   if [[ "${SKIP_APT_UPGRADE:-0}" != "1" ]]; then
     run_sudo apt upgrade -y
@@ -67,36 +73,37 @@ install_kernel_headers() {
 }
 
 install_python_packages() {
-  log "Python依存を導入します"
+  log "Python 依存を導入します"
   python3 -m pip install --user --break-system-packages -e "${REPO_DIR}"
 }
 
 build_cpp_binaries() {
-  log "C++バイナリをビルドします"
-  g++ "${REPO_DIR}/forward_robot_feedback.cpp" -pthread -o "${REPO_DIR}/robot_feedback.out"
-  g++ "${REPO_DIR}/forward_ai_cmd_v2.cpp" -pthread -o "${REPO_DIR}/ai_cmd_v2.out"
-  chmod +x "${REPO_DIR}/robot_feedback.out" "${REPO_DIR}/ai_cmd_v2.out"
+  log "C++ ブリッジをビルドします"
+  mkdir -p "${BIN_DIR}"
+  g++ "${BRIDGE_DIR}/forward_robot_feedback.cpp" -pthread -o "${BIN_DIR}/robot_feedback.out"
+  g++ "${BRIDGE_DIR}/forward_ai_cmd_v2.cpp" -pthread -o "${BIN_DIR}/ai_cmd_v2.out"
+  chmod +x "${BIN_DIR}/robot_feedback.out" "${BIN_DIR}/ai_cmd_v2.out"
 }
 
 build_camera_server() {
   if [[ "${SKIP_CAMERA_BUILD:-0}" == "1" ]]; then
-    log "SKIP_CAMERA_BUILD=1 のためカメラサーバーのビルドをスキップします"
-    chmod +x "${REPO_DIR}/cm4_cam/dist/cam_server_v3"
+    log "SKIP_CAMERA_BUILD=1 のためカメラサーバーの再ビルドをスキップします"
+    chmod +x "${CAMERA_DIR}/dist/cam_server_v3"
     return
   fi
 
-  log "カメラサーバーをPyInstallerでビルドします"
+  log "カメラサーバーを PyInstaller でビルドします"
   python3 -m pip install --user --break-system-packages pyinstaller
   (
-    cd "${REPO_DIR}/cm4_cam"
+    cd "${CAMERA_DIR}"
     python3 -m PyInstaller --clean --distpath dist --workpath build cam_server_v3.spec
   )
-  chmod +x "${REPO_DIR}/cm4_cam/dist/cam_server_v3"
+  chmod +x "${CAMERA_DIR}/dist/cam_server_v3"
 }
 
 install_systemd_service() {
-  log "systemdサービスを登録します"
-  run_sudo cp "${REPO_DIR}/${SERVICE_NAME}" "${SERVICE_PATH}"
+  log "systemd サービスを登録します"
+  run_sudo cp "${CM4_DIR}/${SERVICE_NAME}" "${SERVICE_PATH}"
   run_sudo systemctl daemon-reload
   run_sudo systemctl enable "${SERVICE_NAME}"
   run_sudo systemctl restart "${SERVICE_NAME}"
@@ -104,15 +111,13 @@ install_systemd_service() {
 
 main() {
   if [[ "${EUID}" -eq 0 ]]; then
-    echo "setup.sh は sudo なしで実行してください。sudo が必要な処理はスクリプト内で実行します。" >&2
+    echo "cm4/setup.sh は sudo なしで実行してください。sudo が必要な処理はスクリプト内で実行します。" >&2
     exit 1
   fi
 
   if [[ "$(id -un)" != "ibis" ]]; then
     echo "警告: control_server.service は User=ibis を前提にしています。現在のユーザーは $(id -un) です。" >&2
   fi
-
-  cd "${REPO_DIR}"
 
   install_apt_packages
   install_python_packages

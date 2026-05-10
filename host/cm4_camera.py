@@ -1,5 +1,7 @@
 # このファイルはCM4カメラサーバーとの通信処理を共通化し、
 # GUI と CLI の両方から利用できる接続設定、画像取得、座標受信、HSV 更新、ROI からのHSV推定を担当する。
+# このファイルはホスト側から CM4 カメラサーバーを操作する CLI/共通処理を担当する。
+# 接続設定、画像取得、HSV 更新、座標 multicast 受信、ROI からの HSV 推定を提供する。
 import argparse
 import json
 import socket

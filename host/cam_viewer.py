@@ -1,5 +1,7 @@
 # このファイルはCM4カメラ GUI の Qt エントリポイントを担当し、
 # 共通通信処理 cm4_camera.py を利用して画像表示、座標表示、HSV 調整、ROI からの自動推定を行う。
+# このファイルはホスト側カメラデバッグ GUI を担当する。
+# host.cm4_camera を利用して画像表示、座標表示、HSV 調整、ROI からの自動推定を行う。
 import argparse
 import io
 import sys
@@ -8,7 +10,7 @@ import time
 
 from PIL import Image
 
-from cm4_camera import (
+from host.cm4_camera import (
     DEFAULT_MACHINE_NO,
     apply_hsv_params,
     build_connection_config,

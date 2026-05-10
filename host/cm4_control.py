@@ -1,6 +1,8 @@
 # このファイルはCM4制御サーバーへの起動停止と状態確認を共通化し、
 # CLI と GUI の両方から利用できる制御クライアント機能を担当する。
 import argparse
+# このファイルはホスト側から CM4 制御 API を呼び出す CLI/共通処理を担当する。
+# 複数 CM4 の状態確認と、起動/停止コマンド送信を提供する。
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests

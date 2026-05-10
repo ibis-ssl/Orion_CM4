@@ -2,117 +2,129 @@
 
 ## 全体方針
 
-- ホスト側 GUI は `tkinter` ではなく Qt を使います。
-- GUI は表示と操作に限定し、通信や処理本体は独立した Python モジュールへ分離します。
-- robot feedback の受信・パースは GUI や Rerun などのフロントエンドに依存させません。
-- 各機能は CLI だけで動作確認できる構成にします。
-- GUI からも CLI からも同じ共通モジュールを利用し、処理の二重実装を避けます。
-- CM4 の初期構築手順はプロジェクト直下の `SETUP.md` に分離して管理します。
+このリポジトリは、実行場所で大きく分けています。
 
-## 詳細ドキュメント
+- `host/`
+  - ホスト PC 上で実行する Python CLI / GUI ツールを置きます。
+  - Windows/Linux の両方で動かすツールはここに集約します。
+- `cm4/`
+  - Raspberry Pi CM4 上で実行する制御 API、カメラサーバー、UART ブリッジ、セットアップ資材を置きます。
+  - 生成される CM4 用実行ファイルは `cm4/bin/` に置きます。
+- `host/robot-manager/`
+  - 複数台の CM4 をブラウザから操作する管理 Web UI です。
+- `host/templates/`
+  - 旧 Web 表示用の静的 HTML テンプレートです。
+- `doc/`
+  - 通信仕様、セットアップ、運用メモを日本語で残します。
 
-- [カメラ制御・デバッグ](camera.md)
-  - `cm4_cam/cam_server_v3.py`
-  - `cm4_camera.py`
-  - `cam_viewer.py`
-  - HSV 設定、HTTP API、multicast 座標、デバッグ GUI
+## 主要ディレクトリ
+
+```text
+Orion_CM4/
+  host/
+    cm4_control.py
+    host_lancher.py
+    cm4_camera.py
+    cam_viewer.py
+    robot_feedback_packet.py
+    robot_feedback_receiver.py
+    robot_feedback_viewer.py
+    robot_feedback_rerun.py
+
+  cm4/
+    lancher.py
+    setup.sh
+    control_server.service
+    bridge/
+      forward_ai_cmd_v2.cpp
+      forward_robot_feedback.cpp
+      robot_packet.h
+    camera/
+      cam_server_v3.py
+      cam_server_v3.spec
+      default_hsv_config.json
+    bin/
+      ai_cmd_v2.out
+      robot_feedback.out
+    runtime/
+      cam_server_v3_hsv.json
+
+  host/
+    robot-manager/
+    templates/
+```
+
+## CM4 側
+
+`cm4/lancher.py` は、各 CM4 上で動作する制御用 FastAPI サーバーです。
+
+- `/start`
+  - `cm4/bin/ai_cmd_v2.out` を起動します。
+  - `cm4/bin/robot_feedback.out` を起動します。
+  - `cm4/camera/dist/cam_server_v3` を起動します。
+- `/stop`
+  - 上記プロセスを停止します。
+- `/status`
+  - 制御ブリッジの起動状態を返します。
+
+`cm4/setup.sh` は CM4 側の初期セットアップ用スクリプトです。
+
+- APT パッケージを導入します。
+- `pip install -e .` で Python 依存を導入します。
+- `cm4/bridge/*.cpp` をビルドし、`cm4/bin/` に出力します。
+- `cm4/camera/cam_server_v3.py` を PyInstaller で `cm4/camera/dist/cam_server_v3` にビルドします。
+- `cm4/control_server.service` を `/etc/systemd/system/` に配置します。
+
+主な実行コマンド:
+
+```bash
+cd /home/ibis/Orion_CM4
+chmod +x cm4/setup.sh
+./cm4/setup.sh
+```
+
+## ホスト側
+
+ホスト PC では `uv sync` で依存を導入し、`pyproject.toml` の entry point から実行します。
+
+```powershell
+uv sync
+uv run cm4-control scan
+uv run host-launcher
+uv run cam-viewer --machine-no 10
+uv run robot-feedback-viewer --machine-no 10
+```
+
+ファイルを直接指定する場合は、パッケージとして実行します。
+
+```powershell
+uv run python -m host.cm4_control scan
+uv run python -m host.cm4_camera config --machine-no 10
+uv run python -m host.robot_feedback_receiver --machine-no 3
+```
+
+## Web 管理 UI
+
+`host/robot-manager/` は Docker で動く管理 Web UI です。
+
+```powershell
+docker compose up --build
+```
+
+`docker-compose.yaml` の build context は `./host/robot-manager` です。
+
+## 通信の基本
+
+機体番号を `N` とすると、基本的な接続先は次の通りです。
+
+- CM4 制御 API: `http://192.168.20.(100 + N):8000`
+- カメラ API: `http://192.168.20.(100 + N):8001`
+- カメラ座標 multicast: `224.5.10.(100 + N):5100 + N`
+- robot feedback multicast: `224.5.20.(100 + N):50000 + (100 + N)`
+
+## 関連ドキュメント
+
 - [ホスト PC 側ツール](host_tools.md)
-  - `cm4_control.py`
-  - `host_lancher.py`
-  - `cm4_camera.py`
-  - `cam_viewer.py`
-  - `robot_feedback_receiver.py`
-  - `robot_feedback_viewer.py`
-  - `robot_feedback_rerun.py`
-  - `uv` による導入とホスト側実行コマンド
+- [カメラ制御・デバッグ](camera.md)
 - [制御パケット](control_packet.md)
-  - `robot_packet.h`
-  - `forward_ai_cmd_v2.cpp`
-  - `cm4_control.py`
-  - `host_lancher.py`
-  - AI 制御パケット、UART 送信、CM4 制御 API
 - [フィードバックパケット](feedback_packet.md)
-  - `forward_robot_feedback.cpp`
-  - `robot_feedback_packet.py`
-  - `robot_feedback_receiver.py`
-  - `robot_feedback_viewer.py`
-  - `robot_feedback_rerun.py`
-  - 128 バイト状態パケット、UDP multicast、受信パース、Qt GUI 表示、Rerun 表示
-
-## Python 依存導入
-
-このリポジトリの Python 依存は `pyproject.toml` を元に導入します。
-CM4 側では `setup.sh` から `pip install -e .` を実行します。
-ホスト PC 側では `uv sync` と `uv run` を使います。
-
-### 管理ファイル
-
-- `pyproject.toml`
-- ホスト PC 側の `.venv`
-
-### 主なコマンド
-
-- CM4 側の依存導入・ビルド・systemd 登録
-  - `./setup.sh`
-- ホスト PC 側の依存導入
-  - `uv sync`
-- ホスト PC 側ツールの実行
-  - [ホスト PC 側ツール](host_tools.md) を参照
-
-### 補足
-
-- Qt GUI の起動には `PySide6` を依存として含めています。
-- ホスト PC 側では `uv sync` で依存導入と編集可能インストールを行います。
-- `project.scripts` を使えるよう、`pyproject.toml` には `setuptools` ベースのビルド設定を入れています。
-
-## control_server.service
-
-`control_server.service` は、CM4 起動後にハードウェア制御用の FastAPI サーバーを自動起動するための `systemd` ユニットファイルです。
-
-### 役割
-
-- ネットワーク初期化後に制御サーバーを起動します。
-- `wlan0` の IP アドレスを起動時に取得するため、`network-online.target` を待ってから起動します。
-- 作業ディレクトリを `/home/ibis/Orion_CM4` に固定して実行します。
-- `lancher.py` を `/usr/bin/python3` で起動します。
-- 異常終了時は 5 秒待って自動再起動します。
-
-## setup.sh
-
-`setup.sh` は、CM4 側の自動セットアップ用スクリプトです。
-
-### 役割
-
-- APT パッケージを更新・導入します。
-- `pyproject.toml` に基づいて Python 依存を導入します。
-- `forward_robot_feedback.cpp` と `forward_ai_cmd_v2.cpp` をビルドします。
-- `cm4_cam/cam_server_v3.py` を PyInstaller で `cm4_cam/dist/cam_server_v3` へビルドします。
-- `control_server.service` を `/etc/systemd/system/` へ配置し、有効化・再起動します。
-
-### 補足
-
-- `SKIP_APT_UPGRADE=1 ./setup.sh` で APT upgrade を省略できます。
-- `SKIP_KERNEL_HEADERS=1 ./setup.sh` でカーネルヘッダ導入を省略できます。
-- `SKIP_CAMERA_BUILD=1 ./setup.sh` で既存の `cm4_cam/dist/cam_server_v3` を使い、カメラサーバーの再ビルドを省略できます。
-
-## lancher.py
-
-`lancher.py` は、各 CM4 上で動作する制御用 Web API サーバーです。
-
-### 役割
-
-- `/start` で制御関連プロセスを起動します。
-- `/stop` で制御関連プロセスを停止します。
-- `/status` で制御プロセスの稼働状態を返します。
-- `wlan0` の IP アドレスを取得し、その IP の `8000` 番ポートで待ち受けます。
-
-### 起動するプロセス
-
-- `ai_cmd_v2.out`
-- `robot_feedback.out`
-- `cm4_cam/dist/cam_server_v3`
-
-## 補足
-
-- `host_lancher.py` と `cam_viewer.py` の実行には `PySide6` が必要です。
-- CLI モジュールは Qt 非依存なので、Qt 未導入環境でも単体動作確認できます。

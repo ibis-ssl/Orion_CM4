@@ -1,23 +1,23 @@
-# カメラ制御・デバッグ
+﻿# カメラ制御・デバッグ
 
 このドキュメントは、CM4 側カメラサーバー、ホスト側カメラクライアント、デバッグ GUI の責務と通信仕様をまとめます。
 
 ## 対象ファイル
 
-- `cm4_cam/cam_server_v3.py`
+- `cm4/camera/cam_server_v3.py`
   - CM4 上で動作するカメラサーバーです。
-- `cm4_cam/default_hsv_config.json`
+- `cm4/camera/default_hsv_config.json`
   - 初回起動時に使うデフォルト HSV 設定です。
-- `cm4_cam/cam_server_v3.spec`
+- `cm4/camera/cam_server_v3.spec`
   - `cam_server_v3.py` を PyInstaller で単体実行ファイルへ変換する設定です。
-- `cm4_camera.py`
+- `host/cm4_camera.py`
   - ホスト側から CM4 カメラサーバーを操作する共通 CLI / ライブラリです。
-- `cam_viewer.py`
-  - `cm4_camera.py` を利用する Qt ベースのカメラデバッグ GUI です。
+- `host/cam_viewer.py`
+  - `host/cm4_camera.py` を利用する Qt ベースのカメラデバッグ GUI です。
 
 ## CM4 側カメラサーバー
 
-`cm4_cam/cam_server_v3.py` は、カメラ画像を取得し、HSV マスクによるボール検出、HTTP API、multicast 座標配信を行います。
+`cm4/camera/cam_server_v3.py` は、カメラ画像を取得し、HSV マスクによるボール検出、HTTP API、multicast 座標配信を行います。
 
 ### HTTP API
 
@@ -34,10 +34,10 @@
 
 ### HSV 設定
 
-- 初回起動時のデフォルト値は `cm4_cam/default_hsv_config.json` に置きます。
-- `lancher.py` 経由で起動した場合、保存先は `runtime/cam_server_v3_hsv.json` です。
-- 保存時は一時ファイル `runtime/cam_server_v3_hsv.json.tmp` に書いてから、`runtime/cam_server_v3_hsv.json` へ置き換えます。
-- `lancher.py` は保存先を環境変数 `ORION_CM4_HSV_CONFIG` で渡します。
+- 初回起動時のデフォルト値は `cm4/camera/default_hsv_config.json` に置きます。
+- `cm4/lancher.py` 経由で起動した場合、保存先は `cm4/runtime/cam_server_v3_hsv.json` です。
+- 保存時は一時ファイル `cm4/runtime/cam_server_v3_hsv.json.tmp` に書いてから、`cm4/runtime/cam_server_v3_hsv.json` へ置き換えます。
+- `cm4/lancher.py` は保存先を環境変数 `ORION_CM4_HSV_CONFIG` で渡します。
 - `runtime/*.json` と `runtime/*.tmp` は Git 管理対象外です。
 
 ### 座標計算
@@ -55,7 +55,7 @@
 ### multicast 座標配信
 
 - `-n` に渡した値を `N` とすると、配信先は `224.5.10.N:5000+N` です。
-- `lancher.py` 経由では CM4 の IP 末尾を渡します。
+- `cm4/lancher.py` 経由では CM4 の IP 末尾を渡します。
   - 例: 機体番号 10、IP `192.168.20.110` の場合は `-n 110`
   - 配信先は `224.5.10.110:5110`
 - 送信ペイロードは文字列です。
@@ -66,7 +66,7 @@
 
 ### STM32 feedback 用ローカルカメラ UDP
 
-`forward_ai_cmd_v2.cpp` が STM32 へカメラ情報を渡せるよう、`cam_server_v3.py` は検出結果をローカル UDP にも送ります。
+`cm4/bridge/forward_ai_cmd_v2.cpp` が STM32 へカメラ情報を渡せるよう、`cam_server_v3.py` は検出結果をローカル UDP にも送ります。
 
 - 既定の送信先: `127.0.0.1:8890`
 - 送信ペイロード: 7 バイト
@@ -78,11 +78,11 @@
 - `--disable-local-cam-udp` でこのローカル UDP 送信を無効化できます。
 
 カメラが未接続、切断、またはボール未検出の場合は `radius=0, x=0, y=0` になるよう扱います。
-カメラ更新が途絶えた場合は `forward_ai_cmd_v2.cpp` 側のタイムアウトで STM32 へ送る値が 0 に戻ります。
+カメラ更新が途絶えた場合は `cm4/bridge/forward_ai_cmd_v2.cpp` 側のタイムアウトで STM32 へ送る値が 0 に戻ります。
 
 ## ホスト側カメラクライアント
 
-`cm4_camera.py` は、GUI と CLI から共通利用するカメラ通信処理です。
+`host/cm4_camera.py` は、GUI と CLI から共通利用するカメラ通信処理です。
 
 ### 接続先規則
 
@@ -101,21 +101,21 @@
 ### CLI 例
 
 - 接続先確認
-  - `uv run python cm4_camera.py config --machine-no 10`
+  - `uv run cm4-camera config --machine-no 10`
 - HSV パラメータ取得
-  - `uv run python cm4_camera.py get-params --machine-no 10`
+  - `uv run cm4-camera get-params --machine-no 10`
 - 画像取得
-  - `uv run python cm4_camera.py frame --machine-no 10 --image-name raw --output raw.jpg`
+  - `uv run cm4-camera frame --machine-no 10 --image-name raw --output raw.jpg`
 - HSV 更新
-  - `uv run python cm4_camera.py params --machine-no 10 --hsv-min 0 100 100 --hsv-max 15 255 255`
+  - `uv run cm4-camera params --machine-no 10 --hsv-min 0 100 100 --hsv-max 15 255 255`
 - 座標受信
-  - `uv run python cm4_camera.py coords --machine-no 10 --timeout 1.0`
+  - `uv run cm4-camera coords --machine-no 10 --timeout 1.0`
 - ROI 推定
-  - `uv run python cm4_camera.py roi-calibrate --machine-no 10 --left 90 --top 180 --width 40 --height 40`
+  - `uv run cm4-camera roi-calibrate --machine-no 10 --left 90 --top 180 --width 40 --height 40`
 
 ## カメラデバッグ GUI
 
-`cam_viewer.py` は、CM4 側カメラサーバーの出力を見るためのデバッグ GUI です。
+`host/cam_viewer.py` は、CM4 側カメラサーバーの出力を見るためのデバッグ GUI です。
 
 ### 役割
 
@@ -128,14 +128,14 @@
 
 ### 注意
 
-- `cam_viewer.py` は座標計算を行いません。
+- `host/cam_viewer.py` は座標計算を行いません。
 - 座標は CM4 側から受信した `x,y,area,fps` のみを使います。
 - mask 画像は表示だけに使います。
 
 ### 起動例
 
 ```powershell
-uv run python cam_viewer.py --machine-no 10
+uv run cam-viewer --machine-no 10
 ```
 
 表示例:
@@ -146,6 +146,6 @@ uv run python cam_viewer.py --machine-no 10
 
 ## ビルド
 
-`setup.sh` は `cm4_cam/cam_server_v3.py` を PyInstaller で `cm4_cam/dist/cam_server_v3` へビルドします。
+`cm4/setup.sh` は `cm4/camera/cam_server_v3.py` を PyInstaller で `cm4/camera/dist/cam_server_v3` へビルドします。
 
-`cm4_cam/dist/cam_server_v3` を使う場合は、`cam_server_v3.py` の変更後に CM4 上で再ビルドが必要です。
+`cm4/camera/dist/cam_server_v3` を使う場合は、`cam_server_v3.py` の変更後に CM4 上で再ビルドが必要です。

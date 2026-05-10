@@ -1,5 +1,7 @@
 # このファイルは robot feedback の UDP multicast を受信し、
 # 128 バイト状態パケットのデコード結果を標準出力へ出す CLI ツールを担当する。
+# このファイルは host 側で robot feedback の UDP multicast を受信する CLI を担当する。
+# 128 バイトの状態パケットをデコードし、標準出力や JSON Lines として出力する。
 from __future__ import annotations
 
 import argparse
@@ -9,7 +11,7 @@ import socket
 import struct
 from typing import Iterator
 
-from robot_feedback_packet import PACKET_SIZE, TX_VALUE_LABELS, RobotFeedbackPacket, decode_robot_feedback_packet
+from host.robot_feedback_packet import PACKET_SIZE, TX_VALUE_LABELS, RobotFeedbackPacket, decode_robot_feedback_packet
 
 
 DEFAULT_INTERFACE_IP = "0.0.0.0"

@@ -1,84 +1,83 @@
 # Orion_CM4
 
-Orion 用の CM4 制御、カメラ配信、ホスト監視ツール一式です。
+Orion 用 CM4 制御、カメラ配信、ホスト側監視ツール一式です。
 
-## 前提
+## ディレクトリ構成
 
-- CM4 側 OS は Raspberry Pi OS 64bit
-- 主な実行ユーザーは `ibis`
-- CM4 側は `192.168.20.xxx` の固定 IP を利用
-- ホスト側 GUI は Qt ベース
-- CM4 側 Python 依存は `setup.sh` 経由で `pip` 導入
-- ホスト PC 側 Python 依存は `uv` で導入・実行
+実行場所で大きく分けています。
 
-## ディレクトリ内の主な役割
+- `host/`
+  - ホスト PC 上で実行する Python CLI / Qt GUI です。
+  - `cm4_control.py`, `host_lancher.py`, `cm4_camera.py`, `cam_viewer.py`, `robot_feedback_*.py`
+- `cm4/`
+  - Raspberry Pi CM4 上で実行するコードとセットアップ資材です。
+  - `lancher.py`, `setup.sh`, `control_server.service`, `bridge/`, `camera/`
+- `host/robot-manager/`
+  - 複数台の CM4 を操作する Web 管理 UI です。
+- `doc/`
+  - 仕様と運用メモです。日本語で記述します。
 
-- `lancher.py`
-  - CM4 側の制御 API サーバー
-- `control_server.service`
-  - `lancher.py` を自動起動する `systemd` ユニット
-- `cm4_control.py`
-  - 制御 API 用の共通 CLI / ライブラリ
-- `host_lancher.py`
-  - `cm4_control.py` を使うホスト側 Qt GUI
-- `cm4_cam/`
-  - CM4 側で動作するカメラサーバー本体、デフォルトHSV設定、PyInstaller 設定、実行ファイル
-- `runtime/`
-  - CM4 側で実行時に生成される設定ファイル置き場
-- `cm4_camera.py`
-  - カメラ API / multicast 用の共通 CLI / ライブラリ
-- `cam_viewer.py`
-  - `cm4_camera.py` を使うホスト側 Qt GUI
-  - raw 画像の ROI ドラッグによる HSV 自動推定に対応
-- `robot_feedback_packet.py`
-  - `forward_robot_feedback.cpp` の 128 バイトパケットを Python でデコード
-- `robot_feedback_receiver.py`
-  - UDP multicast の robot feedback を受信して標準出力へパース結果を表示
-- `robot_feedback_viewer.py`
-  - `robot_feedback_receiver.py` の受信・パース結果を Qt GUI でグラフ表示
-- `robot_feedback_rerun.py`
-  - UDP multicast の robot feedback を受信して `rerun-sdk` で可視化
+## CM4 側
 
-## CM4 側セットアップ
+CM4 側のセットアップ:
 
-CM4 側のセットアップ手順は専用ドキュメントに分離しました。
+```bash
+cd /home/ibis/Orion_CM4
+chmod +x cm4/setup.sh
+./cm4/setup.sh
+```
 
-- 詳細手順: [SETUP.md](SETUP.md)
-- 内容: Raspberry Pi 初期設定、固定 IP、`setup.sh` による依存導入、C++ ビルド、カメラサーバービルド、`systemd` 設定
+`cm4/setup.sh` は C++ ブリッジを `cm4/bin/` にビルドし、カメラサーバーを `cm4/camera/dist/` にビルドし、`cm4/control_server.service` を systemd に登録します。
 
-## 詳細ドキュメント
+`cm4/lancher.py` は `:8000` の FastAPI サーバーとして動き、`/start`, `/stop`, `/status` を提供します。
 
-- [概要](doc/overview.md)
-- [ホスト PC 側ツール](doc/host_tools.md)
-- [カメラ制御・デバッグ](doc/camera.md)
-- [制御パケット](doc/control_packet.md)
-- [フィードバックパケット](doc/feedback_packet.md)
+## ホスト側
 
-## ホスト PC 側セットアップ・ツール
-
-ホスト PC 側は `uv` で依存環境を管理します。
+ホスト PC 側の依存導入:
 
 ```powershell
 uv sync
 ```
 
-各ツールの起動方法は [ホスト PC 側ツール](doc/host_tools.md) を参照してください。
+主な実行コマンド:
 
-## 機体番号と接続先規則
+```powershell
+uv run cm4-control scan
+uv run host-launcher
+uv run cam-viewer --machine-no 10
+uv run robot-feedback-viewer --machine-no 10
+uv run robot-feedback-rerun --machine-no 10
+```
+
+直接 Python module として実行する場合:
+
+```powershell
+uv run python -m host.cm4_control scan
+uv run python -m host.cm4_camera config --machine-no 10
+```
+
+## Web 管理 UI
+
+```powershell
+docker compose up --build
+```
+
+Docker build context は `host/robot-manager/` です。
+
+## 接続規則
 
 機体番号を `N` とすると:
 
-- 制御サーバー IP: `192.168.20.(100 + N)`
-- 制御サーバーポート: `8000`
-- カメラ API IP: `192.168.20.(100 + N)`
-- カメラ API ポート: `8001`
-- multicast グループ: `224.5.10.(100 + N)`
-- multicast ポート: `5100 + N`
+- 制御 API: `192.168.20.(100 + N):8000`
+- カメラ API: `192.168.20.(100 + N):8001`
+- カメラ multicast: `224.5.10.(100 + N):5100 + N`
+- robot feedback multicast: `224.5.20.(100 + N):50000 + (100 + N)`
 
-## 補足
+## 詳細ドキュメント
 
-- `host_lancher.py` と `cam_viewer.py` は `PySide6` が必要です。
-- 通信処理は GUI に持たせず、CLI から単独確認できる共通モジュールへ分離しています。
-- `robot_feedback_receiver.py`、`robot_feedback_viewer.py`、`robot_feedback_rerun.py` は Windows/Linux の両方で動く Python 製の受信ツールです。
-- 詳細な役割分担は `doc/overview.md` を参照してください。
-- CM4 の初期構築手順は `SETUP.md` を参照してください。
+- [概要](doc/overview.md)
+- [CM4 セットアップ](SETUP.md)
+- [ホスト PC 側ツール](doc/host_tools.md)
+- [カメラ制御・デバッグ](doc/camera.md)
+- [制御パケット](doc/control_packet.md)
+- [フィードバックパケット](doc/feedback_packet.md)

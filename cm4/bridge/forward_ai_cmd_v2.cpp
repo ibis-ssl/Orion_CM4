@@ -1,4 +1,6 @@
 #include <arpa/inet.h>
+// このファイルは CM4 上で AI 制御 UDP とローカルカメラ UDP を受け取り、
+// STM32 へ送る UART パケットを生成・送信するブリッジを担当する。
 #include <fcntl.h>
 #include <ifaddrs.h>
 #include <net/if.h>

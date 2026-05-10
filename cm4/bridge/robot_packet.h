@@ -5,6 +5,8 @@
 // https://opensource.org/licenses/MIT.
 
 #ifndef CRANE_SENDER__ROBOT_PACKET_H_
+// このファイルは AI 制御コマンドの 64 バイトパケット形式を定義する。
+// CM4 の forward_ai_cmd_v2.cpp から STM32 へ送るデータのシリアライズ責務を持つ。
 #define CRANE_SENDER__ROBOT_PACKET_H_
 
 #include <math.h>

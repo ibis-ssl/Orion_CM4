@@ -1,4 +1,6 @@
 # このファイルはCM4上の制御用Web APIを担当し、制御プロセスとカメラサーバーを起動・停止する。
+# このファイルは CM4 上の制御用 Web API を担当する。
+# 制御ブリッジ、feedback 転送、カメラサーバーの起動停止をまとめて行う。
 from fastapi import FastAPI
 import subprocess
 import uvicorn
@@ -27,16 +29,17 @@ def start_control():
         return {"status": "already_running"}
     
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    executable_path = os.path.join(base_dir, "ai_cmd_v2.out")
+    bin_dir = os.path.join(base_dir, "bin")
+    executable_path = os.path.join(bin_dir, "ai_cmd_v2.out")
     subprocess.Popen([executable_path,"-s","1000000"])
     
     ip = get_ip_address()
     ip_last = ip.split(".")[-1]
 
-    executable_path = os.path.join(base_dir, "robot_feedback.out")
+    executable_path = os.path.join(bin_dir, "robot_feedback.out")
     subprocess.Popen([executable_path,"-s","1000000","-n",ip_last])
 
-    executable_path = os.path.join(base_dir, "cm4_cam", "dist", "cam_server_v3")
+    executable_path = os.path.join(base_dir, "camera", "dist", "cam_server_v3")
     hsv_config_path = os.path.join(base_dir, "runtime", "cam_server_v3_hsv.json")
     env = os.environ.copy()
     env["ORION_CM4_HSV_CONFIG"] = hsv_config_path
