@@ -72,3 +72,15 @@ journalctl -u control_server.service -f
 カメラサーバーの HSV 設定は、`cm4/lancher.py` 経由で起動した場合に `cm4/runtime/cam_server_v3_hsv.json` に保存されます。
 
 初回起動時は `cm4/camera/default_hsv_config.json` から作成されます。
+
+
+## 手動ビルド
+g++ cm4/bridge/forward_robot_feedback.cpp -pthread -o cm4/bin/robot_feedback.out
+g++ cm4/bridge/forward_ai_cmd_v2.cpp -pthread -o cm4/bin/ai_cmd_v2.out
+
+--debug バイナリ表示になる。マイコン側には送信されない。
+-s オプションでボーレートを変更できる。デフォルト2Mbps
+ ./cm4/bin/ai_cmd_v2.out --debug
+
+ -n でIP指定(例:101)
+ ./cm4/bin/robot_feedback.out -n 101
