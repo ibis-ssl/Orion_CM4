@@ -26,7 +26,7 @@ uv run cm4-control stop --ip 192.168.20.103
 Python module として直接実行する場合:
 
 ```powershell
-uv run python -m host.cm4_control scan
+uv run python -m host.apps.cm4_control_cli scan
 ```
 
 ### `host-launcher`
@@ -95,11 +95,12 @@ uv run robot-feedback-rerun --machine-no 3 --no-spawn
 
 ## ファイル配置
 
-- `host/cm4_control.py`
-- `host/host_lancher.py`
-- `host/cm4_camera.py`
-- `host/cam_viewer.py`
-- `host/feedback_viewer/robot_feedback_packet.py`
-- `host/feedback_viewer/robot_feedback_receiver.py`
-- `host/feedback_viewer/robot_feedback_viewer.py`
-- `host/feedback_viewer/robot_feedback_rerun.py`
+- `host/lib/cm4_control_client.py`
+- `host/apps/host_lancher.py`
+- `host/lib/cm4_camera_client.py`
+- `host/apps/cam_viewer.py`
+- `host/lib/feedback/packet.py`
+- `host/lib/feedback/receiver.py`
+- `host/apps/robot_feedback_receiver_cli.py`
+- `host/apps/robot_feedback_viewer.py`
+- `host/apps/robot_feedback_rerun.py`

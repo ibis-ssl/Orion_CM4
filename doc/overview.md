@@ -22,14 +22,20 @@
 ```text
 Orion_CM4/
   host/
-    cm4_control.py
-    host_lancher.py
-    cm4_camera.py
-    cam_viewer.py
-    feedback_viewer/robot_feedback_packet.py
-    feedback_viewer/robot_feedback_receiver.py
-    feedback_viewer/robot_feedback_viewer.py
-    feedback_viewer/robot_feedback_rerun.py
+    apps/
+      cm4_control_cli.py
+      cm4_camera_cli.py
+      host_lancher.py
+      cam_viewer.py
+      robot_feedback_receiver_cli.py
+      robot_feedback_viewer.py
+      robot_feedback_rerun.py
+    lib/
+      cm4_control_client.py
+      cm4_camera_client.py
+      feedback/
+        packet.py
+        receiver.py
 
   cm4/
     lancher.py
@@ -98,9 +104,9 @@ uv run robot-feedback-viewer --machine-no 10
 ファイルを直接指定する場合は、パッケージとして実行します。
 
 ```powershell
-uv run python -m host.cm4_control scan
-uv run python -m host.cm4_camera config --machine-no 10
-uv run python -m host.feedback_viewer.robot_feedback_receiver --machine-no 3
+uv run python -m host.apps.cm4_control_cli scan
+uv run python -m host.apps.cm4_camera_cli config --machine-no 10
+uv run python -m host.apps.robot_feedback_receiver_cli --machine-no 3
 ```
 
 ## Web 管理 UI

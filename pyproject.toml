@@ -21,13 +21,13 @@ dependencies = [
 ]
 
 [project.scripts]
-cm4-control = "host.cm4_control:main"
-cm4-camera = "host.cm4_camera:main"
-host-launcher = "host.host_lancher:main"
-cam-viewer = "host.cam_viewer:main"
-robot-feedback-receiver = "host.feedback_viewer.robot_feedback_receiver:main"
-robot-feedback-viewer = "host.feedback_viewer.robot_feedback_viewer:main"
-robot-feedback-rerun = "host.feedback_viewer.robot_feedback_rerun:main"
+cm4-control = "host.apps.cm4_control_cli:main"
+cm4-camera = "host.apps.cm4_camera_cli:main"
+host-launcher = "host.apps.host_lancher:main"
+cam-viewer = "host.apps.cam_viewer:main"
+robot-feedback-receiver = "host.apps.robot_feedback_receiver_cli:main"
+robot-feedback-viewer = "host.apps.robot_feedback_viewer:main"
+robot-feedback-rerun = "host.apps.robot_feedback_rerun:main"
 
 [tool.setuptools.packages.find]
 include = ["host*", "cm4*"]

@@ -1,12 +1,9 @@
-# このファイルはCM4制御 GUI の Qt エントリポイントを担当し、
-# 共通制御処理 cm4_control.py を利用して状態監視と起動停止操作を表示する。
 # このファイルはホスト側の CM4 制御 GUI を担当する。
-# host.cm4_control を利用して状態監視と起動停止操作を表示する。
-import sys
+# host.lib.cm4_control_client を利用して状態監視と起動停止操作を表示する。
 import sys
 import threading
 
-from host.cm4_control import DEFAULT_IP_LIST, fetch_statuses, send_command
+from host.lib.cm4_control_client import DEFAULT_IP_LIST, fetch_statuses, send_command
 
 try:
     from PySide6.QtCore import QObject, Qt, QTimer, Signal

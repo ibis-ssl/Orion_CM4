@@ -8,10 +8,10 @@
   - 64 バイトの `RobotCommandSerializedV2` と、C++ 側のシリアライズ / デシリアライズ処理を定義します。
 - `cm4/bridge/forward_ai_cmd_v2.cpp`
   - AI から受け取った制御パケットとローカルカメラ情報をまとめ、UART で STM32 へ送ります。
-- `host/cm4_control.py`
+- `host/lib/cm4_control_client.py`
   - CM4 の制御 API サーバーへ `start` / `stop` / `status` を送るホスト側クライアントです。
-- `host/host_lancher.py`
-  - `host/cm4_control.py` を利用するホスト側 GUI です。
+- `host/apps/host_lancher.py`
+  - `host/lib/cm4_control_client.py` を利用するホスト側 GUI です。
 - `cm4/lancher.py`
   - CM4 側で制御関連プロセスを起動・停止する Web API サーバーです。
 
@@ -141,7 +141,7 @@
 
 ## ホスト側制御ツール
 
-`host/cm4_control.py` は CM4 の `cm4/lancher.py` に対する HTTP クライアントです。
+`host/lib/cm4_control_client.py` は CM4 の `cm4/lancher.py` に対する HTTP クライアントです。
 
 ### CLI 例
 
@@ -154,4 +154,4 @@
 - 停止
   - `uv run cm4-control stop --ip 192.168.20.103`
 
-`host/host_lancher.py` はこの通信処理を利用し、`192.168.20.100` から `192.168.20.112` までの CM4 を GUI で監視・操作します。
+`host/apps/host_lancher.py` はこの通信処理を利用し、`192.168.20.100` から `192.168.20.112` までの CM4 を GUI で監視・操作します。

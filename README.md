@@ -8,7 +8,7 @@ Orion 用 CM4 制御、カメラ配信、ホスト側監視ツール一式です
 
 - `host/`
   - ホスト PC 上で実行する Python CLI / Qt GUI です。
-  - `cm4_control.py`, `host_lancher.py`, `cm4_camera.py`, `cam_viewer.py`, `robot_feedback_*.py`
+  - 実行アプリケーションは `host/apps/`、共通ライブラリは `host/lib/` に置きます。
 - `cm4/`
   - Raspberry Pi CM4 上で実行するコードとセットアップ資材です。
   - `lancher.py`, `setup.sh`, `control_server.service`, `bridge/`, `camera/`
@@ -52,8 +52,8 @@ uv run robot-feedback-rerun --machine-no 10
 直接 Python module として実行する場合:
 
 ```powershell
-uv run python -m host.cm4_control scan
-uv run python -m host.cm4_camera config --machine-no 10
+uv run python -m host.apps.cm4_control_cli scan
+uv run python -m host.apps.cm4_camera_cli config --machine-no 10
 ```
 
 ## Web 管理 UI

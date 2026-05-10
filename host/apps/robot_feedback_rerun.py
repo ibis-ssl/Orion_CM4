@@ -10,8 +10,8 @@ from typing import Iterable
 import rerun as rr
 import rerun.blueprint as rrb
 
-from host.feedback_viewer.robot_feedback_packet import PACKET_SIZE, TX_VALUE_LABELS, decode_robot_feedback_packet
-from host.feedback_viewer.robot_feedback_receiver import DEFAULT_INTERFACE_IP, RECEIVE_BUFFER_SIZE, multicast_endpoint, open_multicast_socket
+from host.lib.feedback.packet import PACKET_SIZE, TX_VALUE_LABELS, decode_robot_feedback_packet
+from host.lib.feedback.receiver import DEFAULT_INTERFACE_IP, RECEIVE_BUFFER_SIZE, multicast_endpoint, open_multicast_socket
 
 
 def build_blueprint() -> rrb.Blueprint:

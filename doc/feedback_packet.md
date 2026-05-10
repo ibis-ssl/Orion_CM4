@@ -6,13 +6,13 @@
 
 - `cm4/bridge/forward_robot_feedback.cpp`
   - STM32 から UART で受信した 128 バイトの状態パケットを UDP multicast へ転送します。
-- `host/feedback_viewer/robot_feedback_packet.py`
+- `host/lib/feedback/packet.py`
   - 128 バイトのフィードバックパケットを Python でデコードします。
-- `host/feedback_viewer/robot_feedback_receiver.py`
+- `host/lib/feedback/receiver.py`
   - UDP multicast を受信し、デコード結果を標準出力へ出します。
-- `host/feedback_viewer/robot_feedback_viewer.py`
+- `host/apps/robot_feedback_viewer.py`
   - 受信・パース結果を Qt GUI で時系列グラフ表示します。
-- `host/feedback_viewer/robot_feedback_rerun.py`
+- `host/apps/robot_feedback_rerun.py`
   - デコード済みの robot feedback を `rerun-sdk` で時系列表示します。
 
 ## 通信経路
@@ -22,8 +22,8 @@ STM32
   -> UART /dev/ttyS0
   -> cm4/bridge/forward_robot_feedback.cpp
   -> UDP multicast
-  -> host/feedback_viewer/robot_feedback_receiver.py
-  -> host/feedback_viewer/robot_feedback_packet.py
+  -> host/lib/feedback/receiver.py
+  -> host/lib/feedback/packet.py
 ```
 
 ## UDP multicast
@@ -80,7 +80,7 @@ STM32
 
 ### カメラ値の復元
 
-`host/feedback_viewer/robot_feedback_packet.py` では、通信量削減用に圧縮された値を次のように復元します。
+`host/lib/feedback/packet.py` では、通信量削減用に圧縮された値を次のように復元します。
 
 - `camera_pos_x = camera_pos_x_div2 * 2`
 - `camera_radius = camera_radius_div4 * 4`
@@ -115,9 +115,9 @@ STM32 は受け取ったカメラ値を feedback パケットの `camera_pos_x_d
 - `12`: `local_odom_speed_mvf_w`
 - `13`: `mouse_quality`
 
-## host/feedback_viewer/robot_feedback_packet.py
+## host/lib/feedback/packet.py
 
-`host/feedback_viewer/robot_feedback_packet.py` は次を担当します。
+`host/lib/feedback/packet.py` は次を担当します。
 
 - 同期バイトの確認
 - チェックサム検証
@@ -125,9 +125,9 @@ STM32 は受け取ったカメラ値を feedback パケットの `camera_pos_x_d
 - little-endian IEEE754 float の復元
 - `tx_value_array[14]` のラベル付け
 
-## host/feedback_viewer/robot_feedback_receiver.py
+## host/lib/feedback/receiver.py
 
-`host/feedback_viewer/robot_feedback_receiver.py` は robot feedback の UDP multicast を受信し、標準出力へデコード結果を出します。
+`host/lib/feedback/receiver.py` は robot feedback の UDP multicast を受信し、標準出力へデコード結果を出します。
 GUI フロントエンドや Rerun には依存しないため、通信とパースだけを確認する用途で使います。
 
 ### 出力する主な値
@@ -152,10 +152,10 @@ GUI フロントエンドや Rerun には依存しないため、通信とパー
 - JSON Lines 形式で出力
   - `uv run robot-feedback-receiver --machine-no 3 --json`
 
-## host/feedback_viewer/robot_feedback_viewer.py
+## host/apps/robot_feedback_viewer.py
 
-`host/feedback_viewer/robot_feedback_viewer.py` は robot feedback を Qt GUI で確認するためのフロントエンドです。
-受信・パースの責務は `host/feedback_viewer/robot_feedback_receiver.py` と `host/feedback_viewer/robot_feedback_packet.py` に置き、GUI 側では現在値と時系列グラフの表示だけを行います。
+`host/apps/robot_feedback_viewer.py` は robot feedback を Qt GUI で確認するためのフロントエンドです。
+受信・パースの責務は `host/lib/feedback/receiver.py` と `host/lib/feedback/packet.py` に置き、GUI 側では現在値と時系列グラフの表示だけを行います。
 
 ### 表示する主な値
 
@@ -176,10 +176,10 @@ GUI フロントエンドや Rerun には依存しないため、通信とパー
 - interface IP を明示して表示
   - `uv run robot-feedback-viewer --machine-no 10 --interface-ip 192.168.20.200`
 
-## host/feedback_viewer/robot_feedback_rerun.py
+## host/apps/robot_feedback_rerun.py
 
-`host/feedback_viewer/robot_feedback_rerun.py` は robot feedback を Rerun に記録します。
-通信とパースだけを確認したい場合は `host/feedback_viewer/robot_feedback_receiver.py` を使います。
+`host/apps/robot_feedback_rerun.py` は robot feedback を Rerun に記録します。
+通信とパースだけを確認したい場合は `host/lib/feedback/receiver.py` を使います。
 
 ### 記録する主な値
 

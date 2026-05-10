@@ -10,10 +10,10 @@
   - 初回起動時に使うデフォルト HSV 設定です。
 - `cm4/camera/cam_server_v3.spec`
   - `cam_server_v3.py` を PyInstaller で単体実行ファイルへ変換する設定です。
-- `host/cm4_camera.py`
+- `host/lib/cm4_camera_client.py`
   - ホスト側から CM4 カメラサーバーを操作する共通 CLI / ライブラリです。
-- `host/cam_viewer.py`
-  - `host/cm4_camera.py` を利用する Qt ベースのカメラデバッグ GUI です。
+- `host/apps/cam_viewer.py`
+  - `host/lib/cm4_camera_client.py` を利用する Qt ベースのカメラデバッグ GUI です。
 
 ## CM4 側カメラサーバー
 
@@ -82,7 +82,7 @@
 
 ## ホスト側カメラクライアント
 
-`host/cm4_camera.py` は、GUI と CLI から共通利用するカメラ通信処理です。
+`host/lib/cm4_camera_client.py` は、GUI と CLI から共通利用するカメラ通信処理です。
 
 ### 接続先規則
 
@@ -115,7 +115,7 @@
 
 ## カメラデバッグ GUI
 
-`host/cam_viewer.py` は、CM4 側カメラサーバーの出力を見るためのデバッグ GUI です。
+`host/apps/cam_viewer.py` は、CM4 側カメラサーバーの出力を見るためのデバッグ GUI です。
 
 ### 役割
 
@@ -128,7 +128,7 @@
 
 ### 注意
 
-- `host/cam_viewer.py` は座標計算を行いません。
+- `host/apps/cam_viewer.py` は座標計算を行いません。
 - 座標は CM4 側から受信した `x,y,area,fps` のみを使います。
 - mask 画像は表示だけに使います。
 
