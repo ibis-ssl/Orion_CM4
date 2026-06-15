@@ -15,8 +15,10 @@ from host.lib.cm4_camera_client import (
     build_debug_connection_config,
     create_coord_socket,
     estimate_hsv_params_from_frame_bytes,
+    fetch_camera_status,
     fetch_frame,
     fetch_hsv_params,
+    iter_frame_stream,
 )
 
 try:
@@ -40,7 +42,9 @@ except ImportError as exc:
 
 SOURCE_FRAME_SIZE = (320, 240)
 DISPLAY_FRAME_SIZE = (480, 360)
-FRAME_FETCH_INTERVAL = 0.1
+RAW_STREAM_FPS = 30.0
+MASK_STREAM_FPS = 15.0
+STATUS_FETCH_INTERVAL = 0.5
 HSV_DEFAULTS = {"h_min": 0, "h_max": 15, "s_min": 100, "s_max": 255, "v_min": 100, "v_max": 255}
 HSV_LIMITS = {"h_min": 180, "h_max": 180, "s_min": 255, "s_max": 255, "v_min": 255, "v_max": 255}
 
@@ -113,6 +117,7 @@ class FrameLabel(QLabel):
 class ViewerSignals(QObject):
     frame_ready = Signal(str, bytes)
     coords_ready = Signal(str)
+    camera_status_ready = Signal(dict)
     connection_ready = Signal(str)
     message_ready = Signal(str)
     params_ready = Signal(dict)
@@ -133,6 +138,7 @@ class CameraWindow(QWidget):
         self._setup_ui()
         self.signals.frame_ready.connect(self.update_frame)
         self.signals.coords_ready.connect(self.update_coords)
+        self.signals.camera_status_ready.connect(self.update_camera_status)
         self.signals.connection_ready.connect(self.update_connection_label)
         self.signals.message_ready.connect(self.set_message)
         self.signals.params_ready.connect(self.apply_server_params)
@@ -142,6 +148,7 @@ class CameraWindow(QWidget):
         threading.Thread(target=self.frame_loop, args=("raw",), daemon=True).start()
         threading.Thread(target=self.frame_loop, args=("mask",), daemon=True).start()
         threading.Thread(target=self.coord_loop, daemon=True).start()
+        threading.Thread(target=self.status_loop, daemon=True).start()
 
     def _setup_ui(self):
         self.setWindowTitle("Ball Tracker")
@@ -168,6 +175,9 @@ class CameraWindow(QWidget):
 
         self.message_label = QLabel("Ready")
         root_layout.addWidget(self.message_label)
+
+        self.camera_status_label = QLabel("Camera: waiting")
+        root_layout.addWidget(self.camera_status_label)
 
         image_layout = QHBoxLayout()
         self.raw_label = FrameLabel()
@@ -323,15 +333,35 @@ class CameraWindow(QWidget):
         threading.Thread(target=worker, daemon=True).start()
 
     def frame_loop(self, image_name):
+        stream_fps = RAW_STREAM_FPS if image_name == "raw" else MASK_STREAM_FPS
         while self.running:
             machine_no = self.machine_no
             try:
-                frame_bytes = fetch_frame(machine_no, image_name)
-                if machine_no == self.machine_no:
+                for frame_bytes in iter_frame_stream(machine_no, image_name, stream_fps):
+                    if not self.running or machine_no != self.machine_no:
+                        break
                     self.signals.frame_ready.emit(image_name, frame_bytes)
             except Exception:
+                time.sleep(0.5)
+
+    def status_loop(self):
+        while self.running:
+            machine_no = self.machine_no
+            try:
+                status = fetch_camera_status(machine_no)
+                if machine_no == self.machine_no:
+                    self.signals.camera_status_ready.emit(status)
+            except Exception:
                 pass
-            time.sleep(FRAME_FETCH_INTERVAL)
+            time.sleep(STATUS_FETCH_INTERVAL)
+
+    def update_camera_status(self, status):
+        self.camera_status_label.setText(
+            f"Camera: sensor {status.get('sensor_width', 0)}x{status.get('sensor_height', 0)} "
+            f"target {status.get('target_fps', 0):.1f} fps / "
+            f"capture {status.get('capture_fps', 0):.1f} fps / "
+            f"detect {status.get('detect_fps', 0):.1f} fps"
+        )
 
     def coord_loop(self):
         sock = None

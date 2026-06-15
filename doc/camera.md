@@ -19,6 +19,15 @@
 
 `cm4/camera/cam_server_v3.py` は、カメラ画像を取得し、HSV マスクによるボール検出、HTTP API、multicast 座標配信を行います。
 
+### IMX219 高速モード
+
+- Picamera2を使用し、センサーは `640x480`、目標 `206fps` で動作させます。
+- ISPで `320x240 RGB` に縮小した画像をHSV検出へ渡します。
+- `--camera-fps` で目標fpsを変更できます。既定値は `206` です。
+- 206fpsはセンサー取得とCM4内部の検出処理の目標値です。ホストGUIへの全フレーム転送は行いません。
+- MJPEGによる確認映像はraw約30Hz、mask約15Hzに間引きます。
+- 実測値は環境、露光時間、HTTPアクセス負荷などで公称値より数fps低くなる場合があります。
+
 ### HTTP API
 
 - API ポート: `8001`
@@ -26,6 +35,12 @@
   - raw 画像を JPEG で返します。
 - `GET /frame/mask`
   - HSV マスク画像を JPEG で返します。
+- `GET /stream/raw?fps=30`
+  - raw確認映像をMJPEGで連続配信します。
+- `GET /stream/mask?fps=15`
+  - mask確認映像をMJPEGで連続配信します。
+- `GET /status`
+  - センサーサイズ、処理サイズ、目標fps、取得fps、検出fpsをJSONで返します。
 - `GET /params`
   - 現在の HSV パラメータを JSON で返します。
 - `POST /params`
@@ -136,6 +151,19 @@
 
 ```powershell
 uv run cam-viewer --machine-no 10
+```
+
+CM4を手動起動して確認する場合:
+
+```bash
+cd /home/ibis/Orion_CM4
+python3 cm4/camera/cam_server_v3.py -n 110 --camera-fps 206
+```
+
+ホストから実測fpsだけを確認する場合:
+
+```powershell
+Invoke-RestMethod http://192.168.20.110:8001/status
 ```
 
 表示例:

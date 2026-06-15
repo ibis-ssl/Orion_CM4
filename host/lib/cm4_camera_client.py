@@ -80,9 +80,47 @@ def fetch_frame(machine_no, image_name, timeout=DEFAULT_TIMEOUT):
     return response.content
 
 
+def iter_frame_stream(machine_no, image_name, stream_fps, timeout=DEFAULT_TIMEOUT):
+    config = build_connection_config(machine_no)
+    url = f"{config['api_server']}/stream/{image_name}"
+    with requests.get(
+        url,
+        params={"fps": stream_fps},
+        stream=True,
+        timeout=(timeout, timeout * 3),
+    ) as response:
+        response.raise_for_status()
+        buffer = bytearray()
+        for chunk in response.iter_content(chunk_size=4096):
+            if not chunk:
+                continue
+            buffer.extend(chunk)
+            while True:
+                start = buffer.find(b"\xff\xd8")
+                if start < 0:
+                    if len(buffer) > 1:
+                        del buffer[:-1]
+                    break
+                end = buffer.find(b"\xff\xd9", start + 2)
+                if end < 0:
+                    if start > 0:
+                        del buffer[:start]
+                    break
+                frame_end = end + 2
+                yield bytes(buffer[start:frame_end])
+                del buffer[:frame_end]
+
+
 def fetch_hsv_params(machine_no, timeout=DEFAULT_TIMEOUT):
     config = build_connection_config(machine_no)
     response = requests.get(f"{config['api_server']}/params", timeout=timeout)
+    response.raise_for_status()
+    return response.json()
+
+
+def fetch_camera_status(machine_no, timeout=DEFAULT_TIMEOUT):
+    config = build_connection_config(machine_no)
+    response = requests.get(f"{config['api_server']}/status", timeout=timeout)
     response.raise_for_status()
     return response.json()
 

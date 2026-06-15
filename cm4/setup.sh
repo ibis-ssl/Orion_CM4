@@ -24,6 +24,7 @@ APT_PACKAGES=(
   python3
   python3-dev
   python3-pip
+  python3-picamera2
 )
 
 KERNEL_HEADER_PACKAGES=(

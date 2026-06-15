@@ -15,13 +15,17 @@ import cv2
 import numpy as np
 import tkinter as tk
 from tkinter import font
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, Response, jsonify, request, send_file
+from picamera2 import Picamera2
 import io
 
 # --- 定数・設定 ---
 API_PORT   = 8001
 LOCAL_CAMERA_UDP_HOST = "127.0.0.1"
 LOCAL_CAMERA_UDP_PORT = 8890
+SENSOR_FRAME_SIZE = (640, 480)
+PROCESS_FRAME_SIZE = (320, 240)
+DEFAULT_CAMERA_FPS = 206.0
 
 # HSV パラメータ初期値
 hsv_min = np.array([0, 100, 100])
@@ -40,6 +44,8 @@ mask_lock  = threading.Lock()
 
 # FPS 計測用
 fps = 0.0
+capture_fps = 0.0
+camera_target_fps = DEFAULT_CAMERA_FPS
 
 
 def default_hsv_config_path():
@@ -186,20 +192,35 @@ def configure_multicast_interface(sock, interface_name, interface_ip):
     return interface_ip
 
 # --- キャプチャスレッド ---
-def capture_loop(device=0):
-    global last_frame
-    cap = cv2.VideoCapture(device, cv2.CAP_V4L2)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
-    cap.set(cv2.CAP_PROP_FPS, 120)
-    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+def capture_loop(camera_fps=DEFAULT_CAMERA_FPS):
+    global capture_fps, last_frame
+    frame_duration_us = round(1_000_000 / camera_fps)
+    camera = Picamera2()
+    camera.configure(
+        camera.create_video_configuration(
+            main={"size": PROCESS_FRAME_SIZE, "format": "RGB888"},
+            raw={"size": SENSOR_FRAME_SIZE},
+            controls={"FrameDurationLimits": (frame_duration_us, frame_duration_us)},
+            buffer_count=6,
+            queue=False,
+        )
+    )
+    camera.start()
+    print(
+        f"camera started: sensor={SENSOR_FRAME_SIZE[0]}x{SENSOR_FRAME_SIZE[1]}, "
+        f"process={PROCESS_FRAME_SIZE[0]}x{PROCESS_FRAME_SIZE[1]}, target_fps={camera_fps:.2f}"
+    )
+
+    last_report = time.monotonic()
+    count = 0
     while True:
-        if not cap.grab():
-            time.sleep(0.005); continue
-        ret, frame = cap.retrieve()
-        if not ret:
-            time.sleep(0.005); continue
+        frame = camera.capture_array("main")
+        count += 1
+        now = time.monotonic()
+        if now - last_report >= 1.0:
+            capture_fps = count / (now - last_report)
+            count = 0
+            last_report = now
 
         # 最新フレームのみキュー＆キャッシュ
         with frame_lock:
@@ -277,6 +298,53 @@ def get_mask_frame():
     _, buf = cv2.imencode('.jpg', m)
     return send_file(io.BytesIO(buf.tobytes()), mimetype='image/jpeg')
 
+
+def generate_mjpeg(image_name, stream_fps):
+    interval = 1.0 / stream_fps
+    while True:
+        started_at = time.monotonic()
+        if image_name == "raw":
+            with frame_lock:
+                image = last_frame.copy() if last_frame is not None else None
+            encode_params = [cv2.IMWRITE_JPEG_QUALITY, 80]
+        else:
+            with mask_lock:
+                image = last_mask.copy() if last_mask is not None else None
+            encode_params = []
+
+        if image is not None:
+            encoded, buffer = cv2.imencode(".jpg", image, encode_params)
+            if encoded:
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n"
+                    b"Content-Length: " + str(len(buffer)).encode("ascii") + b"\r\n\r\n"
+                    + buffer.tobytes()
+                    + b"\r\n"
+                )
+
+        remaining = interval - (time.monotonic() - started_at)
+        if remaining > 0:
+            time.sleep(remaining)
+
+
+@app.route("/stream/<image_name>")
+def stream_frames(image_name):
+    if image_name not in {"raw", "mask"}:
+        return ("Unknown image", 404)
+    default_fps = 30.0 if image_name == "raw" else 15.0
+    try:
+        stream_fps = float(request.args.get("fps", default_fps))
+    except ValueError:
+        return ("fps must be a number", 400)
+    if not 1.0 <= stream_fps <= 60.0:
+        return ("fps must be between 1 and 60", 400)
+    return Response(
+        generate_mjpeg(image_name, stream_fps),
+        mimetype="multipart/x-mixed-replace; boundary=frame",
+    )
+
+
 @app.route("/params", methods=["GET"])
 def get_params():
     with hsv_lock:
@@ -284,6 +352,20 @@ def get_params():
             "hsv_min": hsv_min.tolist(),
             "hsv_max": hsv_max.tolist()
         })
+
+
+@app.route("/status")
+def get_camera_status():
+    return jsonify({
+        "sensor_width": SENSOR_FRAME_SIZE[0],
+        "sensor_height": SENSOR_FRAME_SIZE[1],
+        "process_width": PROCESS_FRAME_SIZE[0],
+        "process_height": PROCESS_FRAME_SIZE[1],
+        "target_fps": camera_target_fps,
+        "capture_fps": capture_fps,
+        "detect_fps": fps,
+    })
+
 
 @app.route("/params", methods=["POST"])
 def set_params():
@@ -307,7 +389,10 @@ def headless_report():
     while True:
         time.sleep(1)
         x,y,area,radius = detected['x'], detected['y'], detected['area'], detected['radius']
-        print(f"x={x}, y={y}, area={area}, radius={radius}, fps={fps:.1f}")
+        print(
+            f"x={x}, y={y}, area={area}, radius={radius}, "
+            f"capture_fps={capture_fps:.1f}, detect_fps={fps:.1f}"
+        )
 
 # --- GUI モード ---
 class PiGUI:
@@ -410,8 +495,13 @@ if __name__ == "__main__":
                         help='local UDP port used by forward_ai_cmd_v2.cpp')
     parser.add_argument('--disable-local-cam-udp', action='store_true',
                         help='disable 7-byte local camera UDP packet output')
+    parser.add_argument('--camera-fps', type=float, default=DEFAULT_CAMERA_FPS,
+                        help='IMX219 sensor target FPS for the 640x480 high-speed mode')
     args = parser.parse_args()
+    if args.camera_fps <= 0:
+        parser.error("--camera-fps must be greater than zero")
     load_hsv_config(args.hsv_config)
+    camera_target_fps = args.camera_fps
 
     n = args.n % 256
     mcast_grp = f"224.5.10.{n}"
@@ -419,7 +509,7 @@ if __name__ == "__main__":
     local_cam_addr = None if args.disable_local_cam_udp else (args.local_cam_host, args.local_cam_port)
 
     # スレッド開始
-    threading.Thread(target=capture_loop, daemon=True).start()
+    threading.Thread(target=capture_loop, args=(args.camera_fps,), daemon=True).start()
     threading.Thread(
         target=detect_loop,
         args=(mcast_grp, mcast_port, args.mcast_if, args.mcast_if_ip, local_cam_addr),

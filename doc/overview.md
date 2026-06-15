@@ -128,6 +128,14 @@ docker compose up --build
 - カメラ座標 multicast: `224.5.10.(100 + N):5100 + N`
 - robot feedback multicast: `224.5.20.(100 + N):50000 + (100 + N)`
 
+## IMX219 高速カメラ
+
+- CM4 側は Picamera2 で IMX219 の `640x480` 高速センサーモードを使用します。
+- 目標フレームレートは `206fps`、画像処理サイズは ISP 縮小後の `320x240` です。
+- `GET /status` でセンサー取得fpsとHSV検出fpsを確認できます。
+- ホスト側 `cam-viewer` はMJPEGでraw画像を約30Hz、mask画像を約15Hz表示します。表示レートは処理fpsとは独立しており、映像確認のために206fps全フレームをネットワーク転送しない構成です。
+- 実機の起動例と確認方法は [カメラ制御・デバッグ](camera.md) を参照してください。
+
 ## 関連ドキュメント
 
 - [ホスト PC 側ツール](host_tools.md)
