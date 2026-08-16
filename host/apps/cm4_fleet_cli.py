@@ -2,8 +2,9 @@
 # 通信処理は host.lib.fleet に置き、ここでは引数処理と標準出力だけを行う。
 import argparse
 import sys
+import time
 
-from host.lib.fleet import bootstrap, config_push, deploy, inventory, report, ssh
+from host.lib.fleet import bootstrap, config_push, deploy, inventory, proxy, report, ssh
 from host.lib.fleet.status import fleet_status
 
 
@@ -46,6 +47,15 @@ def build_parser():
     push_parser.add_argument("--target", required=True, choices=["env", "hsv", "authorized-keys", "file"])
     push_parser.add_argument("--file", required=True, help="配布するローカルファイル")
     push_parser.add_argument("--remote-path", help="配布先の相対パス(ホームディレクトリ基準)")
+
+    proxy_parser = subparsers.add_parser(
+        "proxy", help="open on-demand HTTP proxy tunnels for OTA/debug internet access",
+    )
+    _add_target_args(proxy_parser)
+    proxy_parser.add_argument(
+        "--port", type=int, default=proxy.DEFAULT_PORT,
+        help=f"デバイス側の待受ポート(デフォルト: {proxy.DEFAULT_PORT})",
+    )
 
     return parser
 
@@ -105,6 +115,44 @@ def _dispatch(args):
         print(report.format_results(results, title=f"設定配布結果 (target={args.target}):"))
         if any(not r.ok for r in results):
             sys.exit(1)
+        return
+
+    if args.subcommand == "proxy":
+        hosts = _resolve_hosts(args)
+        tunnels, errors, close_all = proxy.open_tunnels(hosts, port=args.port)
+        for host, error in errors:
+            print(f"  [FAIL] machine_no={host.machine_no} ip={host.ip}: {error}", file=sys.stderr)
+        if not tunnels:
+            print("トンネルを1つも確立できませんでした。", file=sys.stderr)
+            sys.exit(1)
+        for tunnel in tunnels:
+            print(
+                f"  [ OK ] machine_no={tunnel.host.machine_no} ip={tunnel.host.ip}: "
+                f"デバイス上で http_proxy=http://127.0.0.1:{tunnel.port} が利用可能",
+            )
+        example = tunnels[0].host
+        print(f"\n{len(tunnels)}台のトンネルを確立しました。Ctrl+C で終了します。")
+        print(
+            f"例: ssh {example.ssh_user}@{example.ip} "
+            f"\"https_proxy=http://127.0.0.1:{args.port} curl -sS -o /dev/null "
+            f"-w 'HTTP=%{{http_code}}\\n' https://pypi.org/simple/\"",
+        )
+        try:
+            while tunnels:
+                time.sleep(2.0)
+                dead = [t for t in tunnels if not t.ok]
+                for t in dead:
+                    print(
+                        f"  [WARN] machine_no={t.host.machine_no} ip={t.host.ip}: トンネルが切断されました",
+                        file=sys.stderr,
+                    )
+                tunnels = [t for t in tunnels if t.ok]
+            if not tunnels:
+                print("全てのトンネルが切断されました。終了します。", file=sys.stderr)
+        except KeyboardInterrupt:
+            print("\n終了します...")
+        finally:
+            close_all()
         return
 
 

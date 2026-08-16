@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from host.lib.cm4_control_client import fetch_status
-from host.lib.fleet import ssh
+from host.lib.fleet import proxy, ssh
 
 REMOTE_REPO_RELATIVE = "Orion_CM4"
 REMOTE_INCOMING_RELATIVE = ".orion_deploy/incoming"
@@ -143,7 +143,8 @@ def _verify_reachable(host, attempts=5, delay=1.5):
 
 
 def deploy_one(host, archive_path, commit_sha, ref, dirty, *, force=False,
-                rebuild_camera=False, repo_dir=None):
+                rebuild_camera=False, repo_dir=None, local_http_port=None,
+                proxy_remote_port=proxy.DEFAULT_PORT):
     if not force:
         current = fetch_status(host.ip, host.control_port)
         if current.get("state") == "Running":
@@ -157,6 +158,7 @@ def deploy_one(host, archive_path, commit_sha, ref, dirty, *, force=False,
     except Exception as exc:
         return DeployResult(host=host, ok=False, stage="connect", commit=commit_sha, error=str(exc))
 
+    tunnel = None
     try:
         remote_home = f"/home/{host.ssh_user}"
         remote_repo = f"{remote_home}/{REMOTE_REPO_RELATIVE}"
@@ -186,7 +188,12 @@ def deploy_one(host, archive_path, commit_sha, ref, dirty, *, force=False,
 
         update_cmd = f"bash '{remote_repo}/{UPDATE_SCRIPT_RELATIVE}'"
         if rebuild_camera:
-            update_cmd += " --rebuild-camera"
+            try:
+                tunnel = proxy.open_tunnel(host, proxy_remote_port, local_http_port)
+            except Exception as exc:
+                return DeployResult(host=host, ok=False, stage="proxy", commit=commit_sha, error=str(exc))
+            proxy_url = f"http://127.0.0.1:{proxy_remote_port}"
+            update_cmd = f"http_proxy={proxy_url} https_proxy={proxy_url} {update_cmd} --rebuild-camera"
         update_result = ssh.run(client, update_cmd, timeout=300.0)
         if not update_result.ok:
             return DeployResult(host=host, ok=False, stage="build", commit=commit_sha,
@@ -209,26 +216,41 @@ def deploy_one(host, archive_path, commit_sha, ref, dirty, *, force=False,
 
         return DeployResult(host=host, ok=True, stage="done", commit=commit_sha, warning=warning)
     finally:
+        if tunnel is not None:
+            tunnel.close()
         client.close()
 
 
 def deploy_fleet(hosts, *, ref="HEAD", allow_dirty=False, force=False,
                   rebuild_camera=False, repo_dir=None, max_workers=8):
     archive_path, commit_sha, dirty = build_archive(ref, allow_dirty, repo_dir)
-    results = []
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(
-                deploy_one, host, archive_path, commit_sha, ref, dirty,
-                force=force, rebuild_camera=rebuild_camera, repo_dir=repo_dir,
-            ): host
-            for host in hosts
-        }
-        for future in as_completed(futures):
-            host = futures[future]
-            try:
-                results.append(future.result())
-            except Exception as exc:
-                results.append(DeployResult(host=host, ok=False, stage="unexpected",
-                                             commit=commit_sha, error=str(exc)))
-    return sorted(results, key=lambda r: r.host.ip)
+
+    # --rebuild-camera 時、PC 側の HTTP プロキシは全ホストで 1 つ共有する
+    # (デバイスごとに別プロセスを立てる必要はないため)。
+    local_proxy_server = None
+    local_http_port = None
+    if rebuild_camera:
+        local_proxy_server, local_http_port = proxy.start_local_proxy()
+
+    try:
+        results = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(
+                    deploy_one, host, archive_path, commit_sha, ref, dirty,
+                    force=force, rebuild_camera=rebuild_camera, repo_dir=repo_dir,
+                    local_http_port=local_http_port,
+                ): host
+                for host in hosts
+            }
+            for future in as_completed(futures):
+                host = futures[future]
+                try:
+                    results.append(future.result())
+                except Exception as exc:
+                    results.append(DeployResult(host=host, ok=False, stage="unexpected",
+                                                 commit=commit_sha, error=str(exc)))
+        return sorted(results, key=lambda r: r.host.ip)
+    finally:
+        if local_proxy_server is not None:
+            local_proxy_server.shutdown()

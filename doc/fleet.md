@@ -6,7 +6,7 @@
 
 - ロボット用 LAN (`192.168.20.0/24`) は**インターネットに到達できません**。そのため OTA はデバイス側 `git pull` ではなく、**ホスト PC から `git archive` で作った tarball を SFTP で直接転送する方式**です。
 - `cm4/bin/*.out`（C++ ブリッジ）は毎回デバイス上で再ビルドします。`g++` のみで完結し数秒、ネットワーク不要です。
-- `cm4/camera/dist/cam_server_v3`（PyInstaller ビルド）は**デフォルトで再ビルドしません**。`pip install pyinstaller` がネットワークを要求するためです。カメラコードを変更した場合のみ、デバイスに一時的なネット到達性を用意した上で `--rebuild-camera` を指定してください。
+- `cm4/camera/dist/cam_server_v3`（PyInstaller ビルド）は**デフォルトで再ビルドしません**。`pip install pyinstaller` がネットワークを要求するためです。カメラコードを変更した場合は `--rebuild-camera` を指定してください（`cm4-fleet deploy` が自動でオンデマンドの HTTP プロキシトンネルを張るため、手動でのネットワーク切り替えは不要です。詳細は [オンデマンドインターネット到達 (`cm4-fleet proxy`)](#オンデマンドインターネット到達-cm4-fleet-proxy) を参照）。
 - `cm4/runtime/*.json`（機体固有の HSV キャリブレーション等）は tar 展開でも `push-config` でも意図せず上書きされません。転送は既存ファイルへの上書き・追加のみで、明示的に指定しない限り削除・全体同期は行いません。
 
 ## 前提条件
@@ -68,7 +68,7 @@ uv run cm4-fleet deploy --all
 uv run cm4-fleet deploy --machines "0,1,5-8"
 uv run cm4-fleet deploy --ips 192.168.20.101 --ref v1.2.3   # 特定タグ/コミットへ
 uv run cm4-fleet deploy --ips 192.168.20.101 --force        # 稼働中でも上書き
-uv run cm4-fleet deploy --ips 192.168.20.101 --rebuild-camera  # カメラも再ビルド(要ネット到達性)
+uv run cm4-fleet deploy --ips 192.168.20.101 --rebuild-camera  # カメラも再ビルド(ネット到達は自動)
 ```
 
 処理内容:
@@ -87,6 +87,32 @@ uv run cm4-fleet deploy --ips 192.168.20.101 --ref <過去のコミットやタ�
 ```
 
 ブリッジは毎回再ビルドするため数秒〜十数秒で戻せます。カメラコードを含む変更を跨ぐ場合のみ `--rebuild-camera` が必要です。
+
+## オンデマンドインターネット到達 (`cm4-fleet proxy`)
+
+ロボット用 LAN は常時インターネットに到達できません。デバッグ用に一時的にインターネットへ出たい場合、`cm4-fleet proxy` でこの PC 経由の HTTP プロキシトンネルを張れます。
+
+```powershell
+uv run cm4-fleet proxy --ips 192.168.20.101
+uv run cm4-fleet proxy --all --port 18080   # ポート番号を変える場合
+```
+
+- 実現方式は SSH のリバースポートフォワードです。PC 側で軽量な HTTP フォワードプロキシ(`host/lib/fleet/http_proxy.py`)を起動し、paramiko の固定リバースポートフォワード(`ssh -R` 相当、SOCKS 等の追加プロトコル実装は無し)でデバイス側の `127.0.0.1:<port>` へ中継します。外部の `ssh` バイナリには依存しません。
+- **オンデマンド専用です。「常時」インターネットに出られるわけではありません。** このコマンドを実行している間・対象デバイスへの SSH セッションが生きている間だけ有効です。PC がスリープ・ネットワーク切断・シャットダウンするとトンネルは切れます。常時稼働のゲートウェイが必要な用途には向きません。
+- 前面で動作し続けます。Ctrl+C で全台のトンネルを閉じて終了します。
+- デバイス側で使う場合は `http_proxy` / `https_proxy` 環境変数にこのプロキシを指定します:
+  ```bash
+  https_proxy=http://127.0.0.1:18080 curl -sS https://pypi.org/simple/
+  https_proxy=http://127.0.0.1:18080 http_proxy=http://127.0.0.1:18080 python3 -m pip install --user --break-system-packages <package>
+  ```
+- `apt` は `Acquire::http::Proxy` / `Acquire::https::Proxy` を設定すればこのプロキシ経由で使えます(実機で `apt-get update` の到達を確認済み)。`http_proxy`/`https_proxy` 環境変数だけでは apt には効かないため、`/etc/apt/apt.conf.d/` に設定ファイルを置く必要がある点に注意してください:
+  ```bash
+  echo 'Acquire::http::Proxy "http://127.0.0.1:18080";'  | sudo tee /etc/apt/apt.conf.d/99-orion-fleet-proxy.conf
+  echo 'Acquire::https::Proxy "http://127.0.0.1:18080";' | sudo tee -a /etc/apt/apt.conf.d/99-orion-fleet-proxy.conf
+  ```
+  (SOCKS はサポート対象外です。`/usr/lib/apt/methods/` に SOCKS 用メソッドが無く、`apt-transport-*` 系パッケージも未導入のため、reverse dynamic forwarding 方式は使えません。今回 HTTP プロキシ方式を採用したのはこのためです。)
+- `pip`・`curl`・`git`(`http.proxy=http://127.0.0.1:<port>`)は `http_proxy`/`https_proxy` 環境変数だけで標準の HTTP プロキシとして問題なく使えます(追加パッケージ不要)。
+- `cm4-fleet deploy --rebuild-camera` は内部でこの仕組みを自動的に使い、`cm4/update.sh` の `pip install pyinstaller` にプロキシ環境変数を渡します。手動で `cm4-fleet proxy` を先に実行しておく必要はありません。
 
 ## 設定配布
 
@@ -118,9 +144,11 @@ uv run cm4-fleet status --all
 - dry-run/diff プレビューは未実装です。
 - `host/robot-manager` Web UI からの in-process 統合(「OTA 実行」ボタン等)は未実装です。`host/lib/fleet` の各関数は CLI から薄く呼ばれる設計のため、統合コストは小さいはずです。
 - 対象デバイスの `sudo` がパスワードを要求する設定になっている場合、`cm4-fleet deploy`(`cm4/update.sh` 内の `systemctl` 呼び出し)は失敗します。sudoers の自動生成は行わないため、その場合は手動で NOPASSWD 設定を行ってください。
+- `cm4-fleet proxy` は常時稼働のインターネットゲートウェイではありません(前述)。デバイスを恒常的にインターネットへ出したい場合は本ツールの対象外です。
+- `cm4-fleet proxy` 経由で `apt` を使うには `Acquire::http::Proxy` の設定が必要です(前述)。`http_proxy`/`https_proxy` 環境変数だけでは効きません。
 
 ## トラブルシューティング
 
 - `stage=connect` で `Server not found in known_hosts` のようなエラー: その機体に対して `cm4-fleet bootstrap` を先に実行してください。
 - `stage=build` で `そのようなファイルやディレクトリはありません`: `git archive` は git に追跡されているファイルのみを含みます。新規ファイルを追加した場合は `git add` してから(コミット前でも `--allow-dirty` で)デプロイしてください。
-- `--rebuild-camera` 時に `pip install pyinstaller` が失敗する: デバイスがロボット用 LAN のみに接続されている場合、一時的にインターネット到達可能なネットワークへ切り替えてから実行してください。
+- `--rebuild-camera` 時に `pip install pyinstaller` が失敗する: `cm4-fleet deploy` は自動でオンデマンドの HTTP プロキシトンネルを張りますが、この PC 自体がインターネットに到達できていることが前提です(PC のネットワーク接続を確認してください)。`stage=proxy` で失敗する場合はリバースフォワード自体の確立に失敗しています。デバイス側で既に `127.0.0.1:18080` を使う別プロセスが動いていないか確認してください。

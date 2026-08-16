@@ -48,7 +48,7 @@ build_camera_server() {
     return
   fi
 
-  log "カメラサーバーを PyInstaller でビルドします(このデバイスに一時的なネットワーク到達性が必要です)"
+  log "カメラサーバーを PyInstaller でビルドします(ネットワーク到達が必要です。cm4-fleet deploy 経由の場合は http_proxy/https_proxy が自動設定されます)"
   python3 -m pip install --user --break-system-packages pyinstaller
   (
     cd "${CAMERA_DIR}"
