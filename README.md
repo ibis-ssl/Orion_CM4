@@ -56,6 +56,19 @@ uv run python -m host.apps.cm4_control_cli scan
 uv run python -m host.apps.cm4_camera_cli config --machine-no 10
 ```
 
+## フリート管理 (OTA・複数台一括設定)
+
+複数台の CM4 へ、ホスト PC から一括で OTA アップデート・SSH 鍵配布・設定配布を行うツールです。
+
+```powershell
+uv sync --extra fleet
+uv run cm4-fleet bootstrap --all
+uv run cm4-fleet deploy --all
+uv run cm4-fleet status --all
+```
+
+詳細は [フリート管理](doc/fleet.md) を参照してください。
+
 ## Web 管理 UI
 
 ```powershell
@@ -78,6 +91,7 @@ Docker build context は `host/robot-manager/` です。
 - [概要](doc/overview.md)
 - [CM4 セットアップ](SETUP.md)
 - [ホスト PC 側ツール](doc/host_tools.md)
+- [フリート管理(OTA・複数台一括設定)](doc/fleet.md)
 - [カメラ制御・デバッグ](doc/camera.md)
 - [制御パケット](doc/control_packet.md)
 - [フィードバックパケット](doc/feedback_packet.md)
