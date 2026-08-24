@@ -1,5 +1,27 @@
 # STM32 FW更新機能 開発・実機試験手順
 
+## 2026-08-25 Sub高速CAN更新
+
+CM4→Main→Sub経路を、896-byte chunkのv2方式へ更新した。Mainは既存72-byte要求で更新モードへ移行した後、`OFW2`可変長UART frameを受信し、最大128枚のCAN data frameへ展開する。Sub bootloaderは32 frame software FIFO、896-byte buffer、128-bit bitmapを使用する。
+
+実機結果:
+
+- 65,168 byte、CRC32C `0xF692FBA9`
+- 正常更新8.287～10.437秒（旧方式約103秒）
+- UART CRC破損、CAN欠落、重複、逆順、payload破損から自動回復
+- 複合故障注入を含む全量更新14.186秒
+- ST-Link readback CRC32C一致、VTOR=`0x08004000`
+- COM167で状態ログとCAN受信カウンタ更新を確認
+
+実行例:
+
+```bash
+python3 /tmp/sub_can_updater_v2.py /tmp/Orion_F303_sub_app.bin --port /dev/ttyS0
+python3 /tmp/sub_can_updater_v2.py /tmp/Orion_F303_sub_app.bin --port /dev/ttyS0 \
+  --inject-uart-crc-once --inject-can-drop-once \
+  --inject-can-duplicate-once --inject-can-reorder-once --inject-can-corrupt-once
+```
+
 ## 1. 目的
 
 FW更新仕様を一度に全基板へ実装せず、最初は次の2台だけでG474のアプリケーションブートローダー、A/B更新、CM4更新クライアントを成立させる。
@@ -33,6 +55,55 @@ Mainでprotocol、Flash journal、A/B起動、UART排他、安全IOの方式を�
   - `.bin` 74,536 byte
 
 現状はA/B配置の前提を満たしている。`BFB2`によるbank swapは使用せず、ブートローダーが選択したslotへ`SCB->VTOR`とMSPを設定してjumpする。
+
+### 2.3 M1実装結果
+
+`G474_Orion_main`リポジトリへ、次の最小構成を実装した。
+
+- 先頭32 KBの常駐bootloaderと、reset直後に全GPIOを安全状態へ設定する`board_io_init_safe()`
+- Slot A（`0x08008000`、224 KB）へ再配置した通常アプリ
+- 確定済みメタデータ、vector、image範囲、CRC32Cを検証してSlot Aへjumpする処理
+- Slot B（`0x08040000`、224 KB）とmetadata（`0x08078000`、32 KB）の予約
+- bootloader、Slot A、metadataの生成スクリプト
+- 初回導入前にFlash全体とOption Bytesを退避する、既定dry-runのST-Link導入スクリプト
+- bootloader導入済みを明示しない限り、再配置済みアプリを書き込まない誤操作防止
+
+2026-08-24の検証結果は次の通り。
+
+- bootloader: Flash 1,536 byte、link address `0x08000000`（TIM5明示停止とjump時CPU状態復元を含む）
+- Slot A Debug: image 74,536 byte、vector `0x08008000`
+- Slot A image CRC32C: `0xB3CF7115`（2026-08-24のDebug clean build）
+- metadata record CRC32C: `0xEFB32984`
+- CRC32C既知ベクトル`123456789`: `0xE3069283`で一致
+- dry-runで512 KBのFlash backupとOption Bytes保存に成功
+- backup CRC32C: `0xB84B86CB`
+
+未使用IOは現行`MX_GPIO_Init()`の初期値を安全値として採用し、2026-08-24に初回導入の`-Execute`を実施した。
+
+- bootloader、Slot A、metadataの書込みとProgrammer verifyに成功
+- 3領域のreadbackがローカル成果物とSHA-256一致
+- VTOR=`0x08008000`
+- 10回連続reset後、毎回Slot A内でcore running
+- TIM5明示停止版ではmetadata sectorを一時消去するとPC=`0x08000260`でbootloader待機
+- 待機中はPC12がGPIO Output Low、TIM5 CR1.CEN=`0`でブザーPWM停止
+- metadataを書き戻してverify/reset後、Slot Aへ正常復帰
+
+以後の全更新工程では、更新開始から通常アプリ復帰までTIM5を停止しPC12 Lowを維持する。F303更新をMainが中継している間も同じ条件を適用する。
+
+初回導入後、Slot Aへjumpしても`PRIMASK=1`が残り、TIM7、USART2割り込み、UART DMAが動かない不具合を実機で確認した。bootloaderのjump直前に`CONTROL`、`BASEPRI`、`FAULTMASK`、`PRIMASK`をreset相当の0へ戻すよう修正した。
+
+修正後のUART試験結果:
+
+- CPUはSlot A内でrunning、上記4レジスタはすべて0
+- CM4 `/dev/ttyS0`、1 Mbpsで3秒間に128-byte frameを372個受信
+- 全372 frameでheader `AB EA`、checksum、送信連番が正常
+- 再reset後の2秒取得でも完全frame 248個が連続し、checksum正常
+- COM167、LPUART1 2 Mbpsで起動banner、IMU初期化完了、CAN1/CAN2開始を確認
+- 試験終了後、CM4の`/dev/ttyS0` ownerなし
+
+2026-08-25にMainの導入後更新を10回連続実施した。各回でSlot A application、metadataの書込み・verify・resetを行い、全10回でCPUがSlot A内でrunning、例外maskが全て0、CM4 USART2の128-byte frameがchecksum正常かつ送信連番連続であることを確認した。
+
+同日、F303 sub向けM1を実装した。16 KB bootloader、110 KB application、末尾2 KB metadataの単一slot構成で、更新中はTIM3停止、PB0/PB1 LowとしてESC/servo PWMを停止する。接続先スワップ後のsub側ST-Linkは`002D00373033510635393935`、Device IDは`0x422`である。128 KB FlashとOption Bytesを退避して初回導入に成功し、通常更新スクリプトによるmetadata無効化、application page個別消去、application/metadataのprogram、verify、resetにも成功した。更新後はPCがapplication内、VTOR=`0x08004000`、例外mask全解除、USART1 2 Mbpsログ連続、CAN受信カウンタ更新を確認した。STM32CubeProgrammer 2.22.0では複数page範囲消去と128 KB統合BINが不安定だったため、初回導入と通常更新のどちらもapplication page 8～39を個別消去してから有効領域を個別program/verifyする。
 
 ### 2.2 CM4_108
 
@@ -98,7 +169,7 @@ bootloaderは通常アプリと別のSTM32CubeIDE projectにする。Main固有�
 $programmer = "C:\ST\STM32CubeCLT_1.21.0\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe"
 & $programmer -l stlink
 & $programmer -c "port=SWD mode=HOTPLUG" -ob displ
-& $programmer -c "port=SWD mode=HOTPLUG" -r8 main_flash_before_bootloader.bin 0x08000000 0x80000
+& $programmer -c "port=SWD mode=HOTPLUG" -u 0x08000000 0x80000 main_flash_before_bootloader.bin
 ```
 
 完了条件:
@@ -271,4 +342,3 @@ F303は単一slotのため、G474より先に電源断resumeを重点試験す�
 6. build size checkとST-Link初回導入script
 
 OFW-UART、Flash更新、CM4 clientはM1の安全IOとjumpが実機で合格した後の別変更とする。
-

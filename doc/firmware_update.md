@@ -76,7 +76,7 @@ bootloader/
 
 | 基板 | ブートローダー中の必須状態 |
 | --- | --- |
-| G474 main | buzzer PWM停止、通常制御CAN送信停止、未使用出力を既定安全値、USART2とFDCAN1/2のみ動作 |
+| G474 main | 更新開始から全対象MCUの更新完了までbuzzer PWMを停止（TIM5停止、PC12 Low）、通常制御CAN送信停止、未使用出力を既定安全値、USART2とFDCAN1/2のみ動作 |
 | F303 BLDC | TIM1/TIM8等のPWMとMOE停止、motor driverをdisable/free-wheel、PB6/PB7等の制御出力を安全値、CANのみ動作 |
 | F303 sub | dribbler出力停止、servo pulse停止、PHOTO/拡張出力を安全値、CANのみ動作 |
 | F303 power | `POWER_SW_EN=Low`、boost PWM停止、`KICK_1/KICK_2=Low`、gate-driver PWM停止、CANと必要なIWDGのみ動作 |
