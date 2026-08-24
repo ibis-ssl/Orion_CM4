@@ -320,3 +320,5 @@ bootloader 自身の OTA 更新は初期スコープ外とする。bootloader �
 - 基板ごとの HW revision の取得方法
 - update を許可する最低入力電圧と安全なコンデンサ電圧
 - G474 bootloader 32 KB、F303 bootloader 16 KB に実装が収まることの試作 build 確認
+
+開発の段階分け、ST-Link接続済みMainと`CM4_108`を使った初回導入、実機試験、復旧手順は[STM32 FW更新機能 開発・実機試験手順](firmware_update_development.md)を参照する。

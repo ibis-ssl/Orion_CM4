@@ -135,6 +135,7 @@ docker compose up --build
 - [ホスト PC 側ツール](host_tools.md)
 - [フリート管理(OTA・複数台一括設定)](fleet.md)
 - [STM32 ファームウェア更新仕様案](firmware_update.md)
+- [STM32 FW更新機能 開発・実機試験手順](firmware_update_development.md)
 - [カメラ制御・デバッグ](camera.md)
 - [制御パケット](control_packet.md)
 - [フィードバックパケット](feedback_packet.md)
