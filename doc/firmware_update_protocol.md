@@ -2,11 +2,11 @@
 
 ## 実装状況
 
-2026-08-25時点で、CM4→Main→Subについて本仕様のv2転送を実装し、実機確認済みである。BLDC、電源基板と2バス同時スケジューラは次段階とする。
+2026-08-25時点で、CM4→Main→Subは実機確認済みである。BLDC、電源基板、2バス並列配信は実装・ビルド・ホスト模擬試験済みだが、対象基板の電源が使用できないため実機確認は未実施である。
 
 - CM4: `cm4/firmware/sub_can_updater_v2.py`
 - Main: `Core/Src/fw_update_gateway.c`
-- Sub bootloader: `Bootloader/Src/boot_can_update.c`
+- Sub、BLDC、電源bootloader: 各リポジトリの`Bootloader/Src/boot_can_update.c`
 - UART payload最大907 byte、FW chunk最大896 byte
 - CAN dataは128 IDをsequenceとして使用し、各frameで7 byteを運ぶ
 - Subは896 byte buffer、128 bit bitmap、32 frame software FIFOを持つ
@@ -34,7 +34,11 @@ CM4は1回の更新を`update_id`（32 bit乱数）で識別し、次のmanifest
 - 同じimageを共有するノードのbus mask
 - アプリケーション先頭、最大サイズ、metadata/config領域
 
-ノード応答は`bus + node_id`で一意にする。BLDCの左右設定値やCAN IDはアプリ領域とは別のconfig pageに残し、更新対象に含めない。Subと電源は固定node ID、BLDCはconfig pageのboard IDからnode IDを決定する。電源基板が両バスへ物理接続されている場合も、manifestで指定したprimary busだけを更新経路にする。
+ノード応答は`bus + node_id`で一意にする。OTA node IDはSubが4、BLDCが`16 + board_id`、電源が100である。BLDCのCAN IDと校正値を置く`0x0801F000`～`0x0801FFFF`は更新・初回導入時とも消去しない。電源基板が両バスへ物理接続されている場合も、manifestで指定したprimary busだけを更新経路にする。
+
+Mainへの`ENTER` payloadは`session, CAN1 node, CAN2 node, reserved`の4 byteである。未使用バスはnode `0xFF`とする。左右BLDC更新ではCAN1=16、CAN2=17を指定し、commandは各node宛、同一data frameは両FDCANへ投入する。各バスの応答IDは`0x650 + node_id`であり、両応答のstatusとcommit offsetが一致した場合だけ成功とする。
+
+全ノード更新ツールは、Sub、左右BLDC、電源の順に`ENTER`して全出力を停止した後、各imageを転送する。すべての`FINALIZE`が成功するまでどのnodeも再起動せず、最後に対象群ごとに`REBOOT`する。
 
 ## CM4－Main間
 

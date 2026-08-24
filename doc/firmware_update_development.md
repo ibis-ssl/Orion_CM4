@@ -4,6 +4,32 @@
 
 CM4→Main→Sub経路を、896-byte chunkのv2方式へ更新した。Mainは既存72-byte要求で更新モードへ移行した後、`OFW2`可変長UART frameを受信し、最大128枚のCAN data frameへ展開する。Sub bootloaderは32 frame software FIFO、896-byte buffer、128-bit bitmapを使用する。
 
+## 2026-08-25 BLDC・電源・全ノード更新
+
+作業ブランチはCM4、Main、Sub、BLDC、電源の全リポジトリで`dev/fw_ota`とする。BLDCと電源の初回導入物は各リポジトリで次のように生成する。
+
+```powershell
+.\Script\build_bootloader.ps1
+.\Script\build_application.ps1 -Configuration Debug
+.\Script\install_bootloader.ps1
+```
+
+`install_bootloader.ps1`は既定でFlashバックアップだけを行い、`-Execute`指定時だけ書き込む。BLDC版はpage 62/63を消去せず、`0x0801F000`以降のCAN IDと校正値を保存する。電源版を実行する前には高電圧部を放電し、PB2、PA3、PA6、PA7、PB7が安全状態であることを測定する。
+
+全ノード更新のCM4コマンド例は次のとおり。左右BLDCは同一binをCAN1/CAN2へ同時配信する。
+
+```bash
+python3 cm4/firmware/all_can_updater.py \
+  --sub Orion_F303_sub_app.bin \
+  --bldc Orion_F303_BLDC_app.bin \
+  --power F303_boost_app.bin \
+  --port /dev/ttyS0
+```
+
+既定トポロジはSub=node 4/CAN1、BLDC=node 16/CAN1とnode 17/CAN2、電源=node 100/CAN1である。配線が異なる場合は`--sub-can1`、`--bldc-can1`、`--bldc-can2`、`--power-can1`で変更する。未使用側は内部で`0xFF`として扱う。
+
+対象基板の電源が使用できない間は、初回書込み、電力出力の実測、CAN HELLO、全image転送、再起動後UART/CAN確認を実施しない。電源復帰後は、まず電源基板を高電圧源から切り離し、BLDC一台、左右BLDC、電源、全ノードの順で確認する。
+
 実機結果:
 
 - 65,168 byte、CRC32C `0xF692FBA9`

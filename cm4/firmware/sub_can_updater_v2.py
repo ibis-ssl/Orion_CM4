@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CM4からMainの高速ゲートウェイを介してSubアプリをCAN更新する。"""
+"""CM4からMainの高速ゲートウェイを介して任意のCANノード群を更新する。"""
 
 from __future__ import annotations
 
@@ -64,6 +64,7 @@ class Gateway:
         self.rx = bytearray()
         self.sequence = secrets.randbelow(0x10000)
         self.inject_uart_crc_once = inject_uart_crc_once
+        self.expected_nodes = {4}
 
     def close(self) -> None:
         self.serial.close()
@@ -150,13 +151,21 @@ class Gateway:
             if len(response) != 8:
                 raise UpdateError("invalid gateway response length")
             gateway_status, node_status, node_id, token, value = struct.unpack("<BBBBI", response)
-            if gateway_status != 0 or node_status != 0 or node_id != 4:
+            if gateway_status != 0 or node_status != 0 or node_id not in self.expected_nodes:
                 raise GatewayResponseError(gateway_status, node_status, node_id, token, value)
             return response
         raise UpdateError("unexpected response sequence")
 
 
-def update(port: str, image_path: str, injection: int, inject_uart_crc_once: bool) -> float:
+    def select_targets(self, session: int, node_can1: int, node_can2: int) -> bytes:
+        """CAN1/CAN2の対象を選択し、アプリまたはbootloaderの応答を確認する。"""
+        self.expected_nodes = {node for node in (node_can1, node_can2) if node != 0xFF}
+        if not self.expected_nodes:
+            raise ValueError("at least one CAN target is required")
+        return self.request(MSG_ENTER, bytes([session, node_can1, node_can2, 0]), timeout=2.0)
+
+
+def update(port: str, image_path: str, injection: int, inject_uart_crc_once: bool, node_can1: int, node_can2: int) -> float:
     with open(image_path, "rb") as file:
         image = file.read()
     image_crc = crc32c(image)
@@ -166,8 +175,8 @@ def update(port: str, image_path: str, injection: int, inject_uart_crc_once: boo
     try:
         print("stage=legacy_gateway", flush=True)
         gateway.enter_gateway(session)
-        print("stage=enter_sub_boot", flush=True)
-        gateway.request(MSG_ENTER, struct.pack("<I", session), timeout=2.0)
+        print(f"stage=enter_can_boot can1={node_can1} can2={node_can2}", flush=True)
+        gateway.select_targets(session, node_can1, node_can2)
         print("stage=erase_begin", flush=True)
         gateway.request(MSG_BEGIN, bytes([session, 0, 0, 0]) + struct.pack("<II", len(image), image_crc), timeout=12.0)
         print("stage=transfer", flush=True)
@@ -199,7 +208,7 @@ def update(port: str, image_path: str, injection: int, inject_uart_crc_once: boo
     finally:
         gateway.close()
     elapsed = time.monotonic() - started
-    print(f"SUB_CAN_UPDATE_V2_OK size={len(image)} crc32c=0x{image_crc:08X} elapsed={elapsed:.3f}s", flush=True)
+    print(f"CAN_UPDATE_V2_OK nodes={sorted(gateway.expected_nodes)} size={len(image)} crc32c=0x{image_crc:08X} elapsed={elapsed:.3f}s", flush=True)
     return elapsed
 
 
@@ -207,6 +216,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("image")
     parser.add_argument("--port", default="/dev/ttyS0")
+    parser.add_argument("--node-can1", type=lambda value: int(value, 0), default=4)
+    parser.add_argument("--node-can2", type=lambda value: int(value, 0), default=0xFF)
     parser.add_argument("--inject-uart-crc-once", action="store_true")
     parser.add_argument("--inject-can-drop-once", action="store_true")
     parser.add_argument("--inject-can-duplicate-once", action="store_true")
@@ -221,7 +232,10 @@ def main() -> None:
         | (int(args.inject_can_reorder_once) << 2)
         | (int(args.inject_can_corrupt_once) << 3)
     )
-    update(args.port, args.image, injection, args.inject_uart_crc_once)
+    for node in (args.node_can1, args.node_can2):
+        if not 0 <= node <= 0xFF:
+            parser.error("node ID must be 0..255")
+    update(args.port, args.image, injection, args.inject_uart_crc_once, args.node_can1, args.node_can2)
 
 
 if __name__ == "__main__":
