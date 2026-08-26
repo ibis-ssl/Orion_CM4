@@ -6,8 +6,11 @@
 - 全CANノードを先に安全な更新状態へ移し、MainのFDCAN1/FDCAN2を並行使用する。Main自身はゲートウェイ処理完了後に最後に更新する。
 - 更新データは約896 byte単位で扱い、欠落・重複・順序ずれ・FIFO overflow・再接続を検出してchunk単位で回復する。
 - CM4→Main→Subのv2経路は実装・実機確認済み。65,168 byteを正常時約8～10秒で更新し、UART CRC破損、CAN欠落・重複・逆順・payload破損からの回復を確認した。
-- BLDC・電源基板にも同じアプリケーションブートローダーを実装した。OTA node IDはSub=4、BLDC=16/17（Flashのboard ID 0/1に対応）、電源=100とする。実機電源が使用できないため、BLDC・電源はビルドとホスト模擬試験まで完了し、実機試験は未実施である。
+- BLDC・電源基板にも同じアプリケーションブートローダーを実装した。OTA node IDはSub=4、BLDC=16/17（Flashのboard ID 0/1に対応）、電源=100とする。BLDC 2台はCM4→Main→CAN1/CAN2の並列更新を実機確認済み。電源基板は実機電源が使用できないため、ビルドとホスト模擬試験まで完了している。
 - `cm4/firmware/all_can_updater.py`は全ノードを先に更新状態へ移し、左右BLDCをCAN1/CAN2へ並列配信し、全image確定後に一括再起動する。
+- BLDC実機試験では63,592 byteを通常13.965秒、UART CRC破損とCAN欠落・重複・逆順・payload破損の複合注入時14.047秒で更新した。両台のreadback SHA-256・CRC32C `0xC22DAE9C`・metadata一致、board ID 0/1保持、2 Mbps UARTとCAN受信復帰を確認した。
+- 2026-08-27、左右BLDCの同時更新を10回連続実施し10/10成功した。各回14.885～19.591秒、全回CRC32C `0xC22DAE9C`一致。UART応答欠落によるchunk再送88回もすべて回復し、両基板のmetadata CONFIRMED、VTOR `0x08004000`、board ID 0/1保持をST-Linkで確認した。
+- MainはCM4経由のA/B更新を実装・実機確認済み。最終往復ではB→Aが9.808秒、A→Bが9.796秒で、Slot A generation 8、Slot B generation 9がともにCONFIRMED、boot attempts 0となった。通常USART2受信はIRQでRX FIFOを全量drainし、FWUP入口の72-byte要求取りこぼしを防ぐ。
 
 ## 全体方針
 
@@ -157,7 +160,7 @@ CM4 から UART 接続の STM32G474 と、その配下の 2 系統の CAN に接
 - STM32内蔵System Memoryブートローダーは使わず、各基板の全GPIOを安全状態へ初期化する自作アプリケーションブートローダーを使います。
 - G474 ブートローダーを UART/CAN 更新ゲートウェイとし、CRC・対象基板・書込範囲を検証します。暗号署名や証明書は使用しません。
 - G474 は 512 KB Flash を利用した A/B 更新と自動 rollback、F303 は単一アプリ領域と中断後の再送復旧を採用します。
-- 更新中は全アクチュエータを無効化し、MainのブザーPWMも停止します。F303 は 1 台ずつ、G474 は最後に更新します。
+- 更新中は全アクチュエータを無効化し、MainのブザーPWMも停止します。同一imageの左右BLDCはCAN1/CAN2へ並列配信し、G474は最後に更新します。
 - BLDC の CAN ID とキャリブレーションを保持する Flash 領域は、アプリ更新領域から分離して消去禁止にします。
 - CM4更新ツールだけでなく、G474/F303の基板別ブートローダーと全通常アプリFWの変更も開発範囲に含めます。
 - 初回導入時だけ、全アプリの再配置と常駐ブートローダ書込のため SWD 作業が必要です。
@@ -169,3 +172,19 @@ Flash 配置、OFW-UART/OFW-CAN、bundle、状態遷移、障害復旧、受入�
 初回実機試験でbootloaderの割り込み禁止状態がSlot Aへ残る問題を修正済みです。修正後はCM4向けUSART2の128-byte frameを約124 Hzで連続受信し、デバッグLPUART1でも起動・IMU・CAN初期化ログを確認しています。
 
 2026-08-25にMainの導入後更新を10回連続実施し、全回成功しました。F303 subも接続先スワップ後のST-Link（`002D00373033510635393935`、Device ID `0x422`）へbootloaderを初回導入済みです。通常更新のprogram/verify/reset後、VTOR=`0x08004000`、例外mask全解除、USART1 2 Mbpsログ、CAN受信カウンタ更新を実機確認しました。
+
+## 開発用FWバージョン確認
+
+- 各アプリの先頭から`0x400`に、magic `FWVR`とUnix秒のbuild IDを8 byteで配置する。製品用の署名・SemVer・互換性判定は行わない。
+- MainはCM4から72 byte UART要求`FWVR`を受け、Main A/B、Sub、CAN1 BLDC、CAN2 BLDC、Powerのbuild IDとimage CRC32Cを60 byteで返す。CAN照会IDは`0x611`。
+- `cm4/firmware/fw_version_reader.py`は現在値を一覧表示し、任意の期待バイナリを渡した場合は`SAME`、`OLDER`、`NEWER`、`CRC_MISMATCH`を表示する。
+- STM32のアプリおよびブートローダー用PowerShellビルドスクリプトは、`Script/Logs/Build/`へbuild ID、UTC時刻、Git hash、dirty状態をJSON保存する。
+- 2026-08-27の実機確認ではMain A/B、Sub、BLDC 2台がすべて期待バイナリと`SAME`になった。Powerは実装・ビルドのみで、未接続のため`UNREACHABLE`を確認した。
+
+実行例:
+
+```bash
+python3 cm4/firmware/fw_version_reader.py \
+  --main-a main_a.bin --main-b main_b.bin --sub sub.bin \
+  --bldc-can1 bldc.bin --bldc-can2 bldc.bin
+```

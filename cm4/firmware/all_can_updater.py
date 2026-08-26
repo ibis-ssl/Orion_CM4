@@ -66,17 +66,20 @@ def update_all(port: str, targets: list[TargetImage]) -> None:
     started = time.monotonic()
     try:
         gateway.enter_gateway(session)
-        # 全ノードを先にbootloaderへ入れ、通常制御へ戻るノードを残さない。
+        # Powerを最初に通常コマンドで停止確認してからbootloaderへ入れる。
+        # 続いて全ノードを更新待機へ移し、通常制御へ戻るノードを残さない。
         for target in targets:
             print(f"stage=enter target={target.name}", flush=True)
             gateway.select_targets(session, target.node_can1, target.node_can2)
         for target in targets:
             print(f"stage=transfer target={target.name}", flush=True)
             transfer(gateway, target, session)
-        # 全image確定後にまとめて再起動する。
-        for target in targets:
+        # 全image確定後にまとめて再起動する。最後のnodeまでMainを
+        # gateway状態に保ち、通常の昇圧有効コマンドを再開させない。
+        for index, target in enumerate(targets):
             gateway.select_targets(session, target.node_can1, target.node_can2)
-            gateway.request(MSG_REBOOT, timeout=3.0)
+            keep_gateway = index != len(targets) - 1
+            gateway.request(MSG_REBOOT, bytes([int(keep_gateway)]), timeout=3.0)
     finally:
         gateway.close()
     print(f"ALL_CAN_UPDATE_OK targets={len(targets)} elapsed={time.monotonic() - started:.3f}s", flush=True)
@@ -101,9 +104,9 @@ def main() -> None:
     parser.add_argument("--bldc-can2", type=node_id, default=17)
     args = parser.parse_args()
     targets = [
+        TargetImage("power", args.power, args.power_can1, 0xFF),
         TargetImage("sub", args.sub, args.sub_can1, 0xFF),
         TargetImage("bldc", args.bldc, args.bldc_can1, args.bldc_can2),
-        TargetImage("power", args.power, args.power_can1, 0xFF),
     ]
     missing = [str(target.path) for target in targets if not target.path.is_file()]
     if missing:

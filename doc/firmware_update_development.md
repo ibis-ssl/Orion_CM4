@@ -1,5 +1,32 @@
 # STM32 FW更新機能 開発・実機試験手順
 
+## 2026-08-26 BLDC 2台並列更新
+
+ST-Link接続はMain=`004500293033510735393935`、BLDC node 16（board ID 0、CAN1）=`002D00373033510635393935`、node 17（board ID 1、CAN2）=`003300343033510735393935`。VCPは順にCOM57、COM167、COM56である。
+
+BLDC初回導入スクリプトはSTM32CubeProgrammerの一括ページ番号数制限と一時的なSWD失敗に対応するため、page 0～61を8ページ単位で消去し、各Programmer操作を最大3回再試行する。page 62/63のboard ID・校正領域は消去しない。
+
+CM4で更新する際は、UART競合を避けるため次のようにsystemdサービスを停止・復帰する。`lancher.py`だけをkillするとsystemdが再起動するため使用しない。
+
+```bash
+sudo systemctl stop control_server.service
+python3 /tmp/sub_can_updater_v2.py /tmp/Orion_F303_BLDC_app.bin \
+  --port /dev/ttyS0 --node-can1 16 --node-can2 17
+sudo systemctl start control_server.service
+```
+
+Main gatewayは同じchunkをCAN1/CAN2へ並列送信するが、BLOCK_BEGIN、BLOCK_END、HELLOの応答と再送対象はバスごとに管理する。片方だけ書込み済み、片方が欠落・CRCエラーという進捗差を正常に吸収し、成功済み側を再送対象から外す。
+
+実機結果は次の通り。
+
+- Debug image: 63,592 byte、CRC32C `0xC22DAE9C`
+- 通常並列更新: 13.965秒、node 16/17とも成功
+- UART CRC破損とCAN欠落・重複・逆順・payload破損の複合注入: 14.047秒、chunk再送で成功
+- node 16/17のapplicationとmetadataをST-Linkでreadbackし、生成物とのSHA-256完全一致を確認
+- board ID 0/1を保持し、両台とも`0x08004000`のアプリを起動
+- USART1 2 Mbpsで起動シーケンス、エンコーダCRC正常、CAN受信カウンタ更新を確認
+- MainのLPUART1 2 Mbps出力と、CM4の`control_server.service`復帰（`active`、再起動回数0）を確認
+
 ## 2026-08-25 Sub高速CAN更新
 
 CM4→Main→Sub経路を、896-byte chunkのv2方式へ更新した。Mainは既存72-byte要求で更新モードへ移行した後、`OFW2`可変長UART frameを受信し、最大128枚のCAN data frameへ展開する。Sub bootloaderは32 frame software FIFO、896-byte buffer、128-bit bitmapを使用する。

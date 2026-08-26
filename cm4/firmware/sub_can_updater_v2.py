@@ -81,8 +81,15 @@ class Gateway:
     def enter_gateway(self, session: int) -> None:
         """既存72-byte parserを更新モードへ切り替え、v2応答で成立を確認する。"""
         self.serial.reset_input_buffer()
-        self.serial.write(self._legacy_packet(session))
-        self.serial.flush()
+        packet = self._legacy_packet(session)
+        # Mainの通常UART受信は1 byte割込みのため、開始要求だけは小分けして
+        # 高負荷時のOREを防ぐ。本体のOFW2転送速度には影響しない。
+        for _ in range(3):
+            for offset in range(0, len(packet), 4):
+                self.serial.write(packet[offset : offset + 4])
+                self.serial.flush()
+                time.sleep(0.001)
+            time.sleep(0.05)
         time.sleep(0.2)
         self.serial.reset_input_buffer()
         self.rx.clear()
@@ -162,7 +169,10 @@ class Gateway:
         self.expected_nodes = {node for node in (node_can1, node_can2) if node != 0xFF}
         if not self.expected_nodes:
             raise ValueError("at least one CAN target is required")
-        return self.request(MSG_ENTER, bytes([session, node_can1, node_can2, 0]), timeout=2.0)
+        response = self.request(MSG_ENTER, bytes([session, node_can1, node_can2, 0]), timeout=2.0)
+        if 100 in self.expected_nodes:
+            print("power_safe_state=confirmed", flush=True)
+        return response
 
 
 def update(port: str, image_path: str, injection: int, inject_uart_crc_once: bool, node_can1: int, node_can2: int) -> float:
@@ -205,6 +215,13 @@ def update(port: str, image_path: str, injection: int, inject_uart_crc_once: boo
         if struct.unpack_from("<I", response, 4)[0] != len(image):
             raise UpdateError("FINALIZE size mismatch")
         gateway.request(MSG_REBOOT, timeout=3.0)
+        # Mainもゲートウェイ終了時にリセットされる。通常テレメトリが再開するまで
+        # 待ってから成功を返し、連続更新時に次のFWUP要求を取りこぼさないようにする。
+        gateway.serial.reset_input_buffer()
+        gateway.rx.clear()
+        # Mainブートローダーの2スロットCRC検証完了まで待ち、次回のFWUP開始要求が
+        # アプリケーション起動前に送られないようにする。
+        time.sleep(2.0)
     finally:
         gateway.close()
     elapsed = time.monotonic() - started
