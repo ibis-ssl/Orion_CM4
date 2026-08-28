@@ -11,7 +11,7 @@ CM4で更新する際は、UART競合を避けるため次のようにsystemdサ
 ```bash
 sudo systemctl stop control_server.service
 python3 /tmp/sub_can_updater_v2.py /tmp/Orion_F303_BLDC_app.bin \
-  --port /dev/ttyS0 --node-can1 16 --node-can2 17
+  --port /dev/serial0 --node-can1 16 --node-can2 17
 sudo systemctl start control_server.service
 ```
 
@@ -50,7 +50,7 @@ python3 cm4/firmware/all_can_updater.py \
   --sub Orion_F303_sub_app.bin \
   --bldc Orion_F303_BLDC_app.bin \
   --power F303_boost_app.bin \
-  --port /dev/ttyS0
+  --port /dev/serial0
 ```
 
 既定トポロジはSub=node 4/CAN1、BLDC=node 16/CAN1とnode 17/CAN2、電源=node 100/CAN1である。配線が異なる場合は`--sub-can1`、`--bldc-can1`、`--bldc-can2`、`--power-can1`で変更する。未使用側は内部で`0xFF`として扱う。
@@ -69,8 +69,8 @@ python3 cm4/firmware/all_can_updater.py \
 実行例:
 
 ```bash
-python3 /tmp/sub_can_updater_v2.py /tmp/Orion_F303_sub_app.bin --port /dev/ttyS0
-python3 /tmp/sub_can_updater_v2.py /tmp/Orion_F303_sub_app.bin --port /dev/ttyS0 \
+python3 /tmp/sub_can_updater_v2.py /tmp/Orion_F303_sub_app.bin --port /dev/serial0
+python3 /tmp/sub_can_updater_v2.py /tmp/Orion_F303_sub_app.bin --port /dev/serial0 \
   --inject-uart-crc-once --inject-can-drop-once \
   --inject-can-duplicate-once --inject-can-reorder-once --inject-can-corrupt-once
 ```
@@ -148,11 +148,11 @@ Mainでprotocol、Flash journal、A/B起動、UART排他、安全IOの方式を�
 修正後のUART試験結果:
 
 - CPUはSlot A内でrunning、上記4レジスタはすべて0
-- CM4 `/dev/ttyS0`、1 Mbpsで3秒間に128-byte frameを372個受信
+- CM4 `/dev/serial0`、1 Mbpsで3秒間に128-byte frameを372個受信
 - 全372 frameでheader `AB EA`、checksum、送信連番が正常
 - 再reset後の2秒取得でも完全frame 248個が連続し、checksum正常
 - COM167、LPUART1 2 Mbpsで起動banner、IMU初期化完了、CAN1/CAN2開始を確認
-- 試験終了後、CM4の`/dev/ttyS0` ownerなし
+- 試験終了後、CM4の`/dev/serial0` ownerなし
 
 2026-08-25にMainの導入後更新を10回連続実施した。各回でSlot A application、metadataの書込み・verify・resetを行い、全10回でCPUがSlot A内でrunning、例外maskが全て0、CM4 USART2の128-byte frameがchecksum正常かつ送信連番連続であることを確認した。
 
@@ -162,14 +162,14 @@ Mainでprotocol、Flash journal、A/B起動、UART排他、安全IOの方式を�
 
 - SSH alias `CM4_108`は`ibis@192.168.20.108:22`
 - OS: Linux 6.12.75+rpt-rpi-v8、aarch64
-- `/dev/serial0 -> /dev/ttyS0`
-- `/dev/ttyS0`は`root:dialout`、`ibis`は`dialout` group所属
+- 2026-08-28以降は`/dev/serial0 -> /dev/ttyAMA0`（PL011）。`dtoverlay=disable-bt`でGPIO14/15へ割り当てる。
+- `/dev/serial0`は`root:dialout`、`ibis`は`dialout` group所属
 - `enable_uart=1`
 - kernel cmdlineにserial consoleなし
 - `serial-getty@ttyS0.service`はdisabled/inactive
 - `control_server.service`はenabled/active
 - `GET /status`は`{"running":false}`
-- `ai_cmd_v2.out`と`robot_feedback.out`は停止中で、`/dev/ttyS0`のownerなし
+- `ai_cmd_v2.out`と`robot_feedback.out`は停止中で、`/dev/serial0`のownerなし
 - CM4上の`/home/ibis/Orion_CM4`には既存の未commit変更がある
   - `cm4/setup.sh`変更済み
   - `cm4_cam/`未追跡
@@ -183,7 +183,7 @@ CM4上の既存worktreeは上書き、reset、clean、pullしない。初期試�
 - 開発中はRDP Level 0、WRPなしを維持する。bootloader保護は更新経路とSWD復旧試験が完了した最後に設定する。
 - 現行Flash 512 KBとOption Bytes表示結果を退避してから最初の書込みを行う。
 - UART updaterは単一processだけが所有する。`control_server`自体は稼働してよいが、`/start`で起動する2つのbridgeとupdaterを同時に動かさない。
-- `/run/lock/orion-uart.lock`を全UART利用processの共通lockとする。既存bridgeがlock対応するまでは、`/status == false`と`fuser /dev/ttyS0`の両方を確認する。
+- `/run/lock/orion-uart.lock`を全UART利用processの共通lockとする。既存bridgeがlock対応するまでは、`/status == false`と`fuser /dev/serial0`の両方を確認する。
 - timeout、CRC error、想定外resetではアクチュエータを有効化せず、ST-Linkで復旧できる状態を保つ。
 
 ## 4. ソースとbuild構成
@@ -272,8 +272,8 @@ CM4にはservice化前の`orion_fw_client.py`を`/home/ibis/orion-fw-dev/`へcop
 
 ```bash
 curl -sS http://192.168.20.108:8000/status
-fuser -v /dev/ttyS0
-ls -l /dev/serial0 /dev/ttyS0
+fuser -v /dev/serial0
+ls -l /dev/serial0 /dev/ttyAMA0
 ```
 
 `running:false`かつownerなしの場合だけUARTをopenする。開発clientは終了時にtermiosをcloseし、例外時にもlockを解放する。
@@ -371,7 +371,7 @@ F303は単一slotのため、G474より先に電源断resumeを重点試験す�
 - MainへのST-Link接続とtarget voltageが正常。
 - Main以外の電力段が動作しない構成。
 - CM4 `/status`が`running:false`。
-- `/dev/ttyS0` ownerなし。
+- `/dev/serial0` ownerなし。
 - Flash backupと復旧用ELFがある。
 - erase範囲がbootloader、active slot、metadataと重ならない。
 

@@ -89,7 +89,7 @@ def build_time(build_id: int) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", default="/dev/ttyS0")
+    parser.add_argument("--port", default="/dev/serial0")
     for target in TARGETS:
         parser.add_argument(f"--{target.replace('_', '-')}", type=Path)
     args = parser.parse_args()

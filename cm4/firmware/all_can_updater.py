@@ -97,7 +97,7 @@ def main() -> None:
     parser.add_argument("--sub", required=True, type=Path)
     parser.add_argument("--bldc", required=True, type=Path)
     parser.add_argument("--power", required=True, type=Path)
-    parser.add_argument("--port", default="/dev/ttyS0")
+    parser.add_argument("--port", default="/dev/serial0")
     parser.add_argument("--sub-can1", type=node_id, default=4)
     parser.add_argument("--power-can1", type=node_id, default=100)
     parser.add_argument("--bldc-can1", type=node_id, default=16)

@@ -119,7 +119,7 @@
 
 ### UART 送信
 
-- UART port: `/dev/ttyS0`
+- UART port: `/dev/serial0`（CM4_108ではPL011の`ttyAMA0`）
 - 既定 baudrate: `1000000`
 - `-s` で baudrate を変更できます。
 - 送信サイズは `AI_CMD_V2_SIZE + CAM_BUF_SIZE + 1`、つまり `72` バイトです。

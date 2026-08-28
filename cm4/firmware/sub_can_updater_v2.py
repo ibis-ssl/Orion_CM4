@@ -25,6 +25,8 @@ MSG_CHUNK = 3
 MSG_FINALIZE = 4
 MSG_REBOOT = 5
 MSG_STATUS = 6
+MSG_GATEWAY_PROBE = 0x40
+GATEWAY_FRAME_ERROR = 1
 
 
 def crc16_ccitt(data: bytes) -> int:
@@ -80,19 +82,26 @@ class Gateway:
 
     def enter_gateway(self, session: int) -> None:
         """既存72-byte parserを更新モードへ切り替え、v2応答で成立を確認する。"""
-        self.serial.reset_input_buffer()
         packet = self._legacy_packet(session)
-        # Mainの通常UART受信は1 byte割込みのため、開始要求だけは小分けして
-        # 高負荷時のOREを防ぐ。本体のOFW2転送速度には影響しない。
         for _ in range(3):
+            self.serial.reset_input_buffer()
             for offset in range(0, len(packet), 4):
                 self.serial.write(packet[offset : offset + 4])
                 self.serial.flush()
                 time.sleep(0.001)
             time.sleep(0.05)
-        time.sleep(0.2)
-        self.serial.reset_input_buffer()
-        self.rx.clear()
+            self.serial.reset_input_buffer()
+            self.rx.clear()
+            try:
+                # 未定義typeへのFRAME_ERROR応答が返れば、通常UART処理ではなく
+                # OFW2ゲートウェイが確実に動作中と判断できる。CANノードには触れない。
+                self.request(MSG_GATEWAY_PROBE, timeout=0.3)
+            except GatewayResponseError as error:
+                if error.gateway_status == GATEWAY_FRAME_ERROR:
+                    return
+            except TimeoutError:
+                continue
+        raise TimeoutError("Main gateway entry verification failed")
 
     def _frame(self, message_type: int, sequence: int, payload: bytes) -> bytes:
         if len(payload) > MAX_PAYLOAD:
@@ -232,7 +241,7 @@ def update(port: str, image_path: str, injection: int, inject_uart_crc_once: boo
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("image")
-    parser.add_argument("--port", default="/dev/ttyS0")
+    parser.add_argument("--port", default="/dev/serial0")
     parser.add_argument("--node-can1", type=lambda value: int(value, 0), default=4)
     parser.add_argument("--node-can2", type=lambda value: int(value, 0), default=0xFF)
     parser.add_argument("--inject-uart-crc-once", action="store_true")

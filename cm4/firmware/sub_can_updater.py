@@ -209,7 +209,7 @@ def update(port: str, image_path: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("image")
-    parser.add_argument("--port", default="/dev/ttyS0")
+    parser.add_argument("--port", default="/dev/serial0")
     parser.add_argument("--repeat", type=int, default=1)
     args = parser.parse_args()
     if not os.path.isfile(args.image):

@@ -136,7 +136,7 @@ G474 の Option Bytes は dual-bank (`DBANK`) を有効にした状態を製造�
 
 ## 6. 更新モードへの遷移
 
-1. CM4 は制御ブリッジを停止し、`/dev/ttyS0` の排他 lock を取得する。
+1. CM4 は制御ブリッジを停止し、`/dev/serial0` の排他 lock を取得する。
 2. G474 アプリへ maintenance request を送る。要求には固定 magic だけでなく、乱数 challenge に対する応答と連番を含め、通常の 72 byte 制御パケットで偶然成立しない形式にする。
 3. G474 アプリは走行、ドリブラ、サーボ、昇圧、キッカーを停止し、停止状態を telemetry で確認する。
 4. G474 アプリは両 CAN バスへ `ENTER_BOOT` を送る。対象 F303 アプリは基板固有の `board_io_init_safe()` 相当の安全停止処理を実行して boot request を設定し、system reset する。

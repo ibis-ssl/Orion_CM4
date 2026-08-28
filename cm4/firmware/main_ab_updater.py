@@ -190,7 +190,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--slot-a", type=Path)
     parser.add_argument("--slot-b", type=Path)
-    parser.add_argument("--port", default="/dev/ttyS0")
+    parser.add_argument("--port", default="/dev/serial0")
     parser.add_argument("--confirm-only", action="store_true")
     args = parser.parse_args()
     if args.confirm_only:

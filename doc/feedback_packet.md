@@ -19,7 +19,7 @@
 
 ```text
 STM32
-  -> UART /dev/ttyS0
+  -> UART /dev/serial0
   -> cm4/bridge/forward_robot_feedback.cpp
   -> UDP multicast
   -> host/lib/feedback/receiver.py

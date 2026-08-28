@@ -19,7 +19,8 @@
 #include <boost/asio.hpp>
 #include <cstring>
 
-#define SERIAL_PORT "/dev/ttyS0"
+// CM4のprimary UARTを示す安定名。現在はPL011 (/dev/ttyAMA0) に割り当てる。
+#define SERIAL_PORT "/dev/serial0"
 constexpr int PACKET_SIZE = 128;
 
 #pragma pack(push, 1)
