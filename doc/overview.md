@@ -235,3 +235,9 @@ python3 cm4/firmware/fw_version_reader.py \
 - CM4期待列、Main ISR、リング取り出し列のcountとrolling hashが一致する診断を追加し、UART線上とリングのbyte欠落・並び替わりがないことを確認した。parser timeout、header/CRC、queue overflow、UART ORE/FE/NE/PEもST-Linkから参照できる。
 - 最大payload 907 byte（総frame 923 byte）の初回応答試験は、修正前に約8～12%失敗していた。修正後は3,000/3,000成功（60.028秒、median 14.891 ms、p95 16.937 ms、max 17.832 ms）、Main A/BをCM4経由更新した後も1,000/1,000成功した。
 - Main A/Bは同一build ID `1787928269`へ更新済みで、A=`23F1D426`、B=`CF4FCD66`のCRC32C一致を確認した。現在のactive slotはA。
+
+コミット後の最終実機確認（2026-08-29）:
+
+- Mainコミット`d050c6a`をdirtyなしでbuild ID `1787929548`としてA/Bビルドした。A→Bは84,444 byteを9.807秒（プロセス全体11.120秒）、B→Aは9.956秒（全体11.311秒）で更新し、双方のCRC32C一致とactive slot Aを確認した。
+- 更新後のMainで最大payload 907 byte（総frame 923 byte）を3,000回連続送信し、3,000/3,000成功した。所要60.000秒、median 14.904 ms、p95 16.959 ms、max 17.108 msである。
+- CM4→Main→CAN1のSub更新は65,912 byteを9.800秒（全体10.206秒）で完了した。試験終了後、Main A/B、Sub、BLDC 2台、Powerの全基板からbuild IDとCRC32Cを読出せることを確認した。
