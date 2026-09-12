@@ -6,6 +6,9 @@
 
 - `cm4/bridge/forward_robot_feedback.cpp`
   - STM32 から UART で受信した 128 バイトの状態パケットを UDP multicast へ転送します。
+    あわせて同一 CM4 上の `ai_cmd_v2.out` へ loopback unicast でも渡します。
+- `cm4/bridge/forward_ai_cmd_v2.cpp`
+  - loopback unicast で受けた位置（byte 44..51）で位置制御ループを閉じます。
 - `host/lib/feedback/packet.py`
   - 128 バイトのフィードバックパケットを Python でデコードします。
 - `host/lib/feedback/receiver.py`
@@ -21,10 +24,26 @@
 STM32
   -> UART /dev/serial0
   -> cm4/bridge/forward_robot_feedback.cpp
-  -> UDP multicast
-  -> host/lib/feedback/receiver.py
-  -> host/lib/feedback/packet.py
+       |-> UDP multicast -> host/lib/feedback/receiver.py -> host/lib/feedback/packet.py
+       `-> UDP unicast 127.0.0.1:(50000 + 機体番号) -> cm4/bridge/forward_ai_cmd_v2.cpp
 ```
+
+## loopback unicast（位置制御ループ用）
+
+`ai_cmd_v2.out` は mode 4 を受けたとき位置制御ループを閉じるため、ロボットの現在位置
+（byte 44..51）を必要とします。しかし **`/dev/serial0` の読み手は増やしません**。
+2 プロセスで読むと取り合いになるためです。
+
+`forward_robot_feedback.cpp` が multicast 再配信と同時に
+`127.0.0.1:(50000 + 機体番号)` へ unicast でも投げ、`ai_cmd_v2.out` がそれを bind します。
+
+- `ai_cmd_v2.out` の bind は **`127.0.0.1` で行います**（`INADDR_ANY` ではありません）。
+  ポート番号が multicast 再配信と同じなので、`INADDR_ANY` だと構成によっては
+  自分の再配信のコピーまで位置制御の入力に混ざります。
+- unicast は unicast ソケットへ、multicast は multicast ソケットへしか配送されないので、
+  同じポート番号でも取り違えは起きません。
+- シミュレータ（`cm4_sim.out`）も同じポートを同じ方法で bind します。制御プロセスの
+  feedback 受信コードとポート番号が実機と sim で完全に同一になります。
 
 ## UDP multicast
 
@@ -46,16 +65,24 @@ STM32
 
 - `0`: 同期バイト `0xAB`
 - `1`: 同期バイト `0xEA`
-- `2`: チェックサム
-- `3`: `check_counter`
+- `2`: **定数 `10`**（`ai_comm.c` に `// CRC, 10:dummy` とある通り、チェックサムは未実装）
+- `3`: `check_counter`（AI から受けた指令の `check_counter` をそのまま返す）
 
-チェックサムは `data[3:]` の総和の下位 8 bit です。
+> **byte 2 はチェックサムではありません。** 現行の G474 ファームウェア
+> (`Core/Src/ai_comm.c` の `sendRobotInfo()`) は `buf[2] = 10;` を書きます。
+> `host/lib/feedback/packet.py` の `is_checksum_valid()` は `data[3:]` の総和と比較するので
+> **常に false になります**。受信側でこの判定を有効にしてはいけません。
+
+byte 3 は指令の `check_counter` の反射です。新構成では **CM4 が `check_counter` を採番する**
+ので、ここを見れば「CM4 が出した指令がどこまで G474 に届いたか」が分かります
+（詳細は [制御パケット](control_packet.md) の CHECK_COUNTER を参照）。
 
 ### ペイロード
 
 - `4..7`: `imu_yaw_deg`、little-endian IEEE754 float
 - `8..11`: `battery_voltage_bldc_right`、little-endian IEEE754 float
-- `12..14`: `ball_detection`
+- `12..13`: `ball_detection`
+- `14`: `tx_cycle_count`（feedback 送信ごとにインクリメントする 1 バイトのカウンタ）
 - `15`: `kick_state_div10`
 - `16..17`: `current_error_id`、little-endian `uint16_t`
 - `18..19`: `current_error_info`、little-endian `uint16_t`
@@ -199,6 +226,34 @@ GUI フロントエンドや Rerun には依存しないため、通信とパー
   - `uv run robot-feedback-rerun --machine-no 3 --max-packets 10`
 - 5 秒だけ待って受信が無ければ終了
   - `uv run robot-feedback-rerun --machine-no 3 --max-packets 1 --receive-timeout 5`
+
+## シミュレータとの一致
+
+`framework` の `simulator-cli` も同じ 128 バイトを出します。2026-09-13 時点で
+framework 側 (PR #4) が実機の `sendRobotInfo()` と突き合わせて修正済みで、
+byte 2 / 4..7 / 14 / 60 の食い違いは解消しています。
+
+以前は次のようにずれていました。`cm4_sim` と `ai_cmd_v2.out` が
+**byte 44..51 の位置しか使わない**のは、この種の食い違いを制御ループへ持ち込まない
+ためでもあります（yaw は 180/π 倍ずれていました）。
+
+| byte | 実機 | 旧シミュレータ |
+|---|---|---|
+| 2 | 定数 `10` | `robotId` |
+| 4..7 | `imu_yaw_deg`（**度**） | yaw（**ラジアン**） |
+| 14 | `tx_cycle_count` | `ball_detection` の 3 つ目 |
+| 60 | `camera_pos_x_div2` | `0x01`（シミュレータ識別マーカ） |
+
+byte 60 の識別マーカは削除されました。実機フォーマットに空きバイトが無いため、
+「シミュレータかどうか」をパケット内で示す場所は用意できないという結論です。
+
+## 既知の不整合（host 側デコーダ）
+
+`host/lib/feedback/packet.py` は次の 2 点が現行ファームウェアと食い違っています。
+このドキュメントの記載（上記）が正です。
+
+- `ball_detection=(data[12], data[13], data[14])` — `data[14]` は `tx_cycle_count` です。
+- `is_checksum_valid()` — byte 2 は定数 `10` なので常に false になります。
 
 ## 補足
 

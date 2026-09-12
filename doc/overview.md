@@ -89,12 +89,23 @@ Orion_CM4/
 
   cm4/
     lancher.py
+    build.sh
     setup.sh
+    update.sh
     control_server.service
     bridge/
       forward_ai_cmd_v2.cpp
       forward_robot_feedback.cpp
       robot_packet.h
+      robot_packet_layout_test.cpp
+      cm4_sim.cpp
+      test_cm4_sim.py
+      test_cm4_sim_chain.py
+      test_forward_ai_cmd_v2.py
+    control/
+      position_controller.h
+      position_controller.cpp
+      test_position_controller.cpp
     camera/
       cam_server_v3.py
       cam_server_v3.spec
@@ -102,6 +113,9 @@ Orion_CM4/
     bin/
       ai_cmd_v2.out
       robot_feedback.out
+      cm4_sim.out                  (ホスト PC 専用)
+      robot_packet_layout_test.out
+      test_position_controller.out
     runtime/
       cam_server_v3_hsv.json
 
@@ -123,11 +137,21 @@ Orion_CM4/
 - `/status`
   - 制御ブリッジの起動状態を返します。
 
+`cm4/build.sh` は C++ バイナリの**唯一のビルド定義**です。`setup.sh` と `update.sh`
+（`cm4-fleet deploy` から呼ばれる）の両方がこれを呼びます。sudo も apt も使わないので、
+ホスト PC (x86_64) でもそのまま走ります。末尾でテスト一式を実行します
+（`--no-tests` でスキップ）。
+
+```bash
+./cm4/build.sh            # ビルド + テスト
+./cm4/build.sh --no-tests # ビルドのみ
+```
+
 `cm4/setup.sh` は CM4 側の初期セットアップ用スクリプトです。
 
 - APT パッケージを導入します。
 - `pip install -e .` で Python 依存を導入します。
-- `cm4/bridge/*.cpp` をビルドし、`cm4/bin/` に出力します。
+- `cm4/build.sh` を呼び、`cm4/bin/` に出力します。
 - `cm4/camera/cam_server_v3.py` を PyInstaller で `cm4/camera/dist/cam_server_v3` にビルドします。
 - `cm4/control_server.service` を `/etc/systemd/system/` に配置します。
 
@@ -187,6 +211,7 @@ docker compose up --build
 - [カメラ制御・デバッグ](camera.md)
 - [制御パケット](control_packet.md)
 - [フィードバックパケット](feedback_packet.md)
+- 統合仕様の正本（framework 側）: `framework/docs/robot-side-position-control.md`
 
 ## STM32 ファームウェア更新
 
@@ -241,3 +266,151 @@ python3 cm4/firmware/fw_version_reader.py \
 - Mainコミット`d050c6a`をdirtyなしでbuild ID `1787929548`としてA/Bビルドした。A→Bは84,444 byteを9.807秒（プロセス全体11.120秒）、B→Aは9.956秒（全体11.311秒）で更新し、双方のCRC32C一致とactive slot Aを確認した。
 - 更新後のMainで最大payload 907 byte（総frame 923 byte）を3,000回連続送信し、3,000/3,000成功した。所要60.000秒、median 14.904 ms、p95 16.959 ms、max 17.108 msである。
 - CM4→Main→CAN1のSub更新は65,912 byteを9.800秒（全体10.206秒）で完了した。試験終了後、Main A/B、Sub、BLDC 2台、Powerの全基板からbuild IDとCRC32Cを読出せることを確認した。
+
+## ロボット側位置制御（CM4 で位置ループを閉じる）（2026-09-13）
+
+### 何を変えたか
+
+位置制御ループを crane（AI）側から CM4 側へ移した。crane は **位置指令（mode 4）** を送り、
+CM4 が位置制御ループを閉じて **速度指令（mode 3）** を G474 へ渡す。
+
+これまでは crane がループを閉じて速度指令を無線で送っていたため、
+**不安定で遅延の乗る無線経路が位置制御ループの内側**に入っていた。新構成では無線経路が
+ループの外側（目標値の更新経路）へ移る。
+
+```text
+旧: crane [位置ループ] --UDP 速度指令--> CM4 --UART--> G474
+新: crane --UDP 位置指令--> CM4 [位置ループ] --UART 速度指令--> G474
+```
+
+### 構成
+
+```text
+実機: crane --UDP:12345 mode4--> ai_cmd_v2.out --UART mode3--> G474
+                                      ^
+                                      | UDP 127.0.0.1:(50000+機体番号) 128B feedback
+                                 robot_feedback.out <--UART-- G474
+
+sim : crane --UDP:12345 mode4--> cm4_sim.out --UDP:12346 mode3--> simulator-cli
+                                      ^                                 |
+                                      +---- UDP 127.0.0.1:(50100+id) ---+
+```
+
+`simulator-cli`（framework）は **G474 とロボット物理**を担当し、位置制御は行わない。
+CM4 の位置制御は `cm4_sim.out` が担当し、**実機と同一のソース**
+（`cm4/control/position_controller.cpp`）をリンクする。コピーを作らないことが、
+実機とシミュレータの挙動が一致することの唯一の保証である。
+
+### `check_counter` の採番者が CM4 に移った
+
+mode 4 を受けて位置制御を回す経路では、**CM4 が `check_counter` を採番する**。
+
+その結果 **G474 の `connected_ai` は crane の生存を意味しなくなる**。CM4 が生きていれば
+crane が死んでいても `check_counter` は変化し続けるからである。
+crane 断の安全停止は CM4 側で明示的に行う（`--command-timeout-ms`、既定 100 ms）。
+判定は `position_controller` の中にあるので実機と `cm4_sim` が必ず同じ判定を通る。
+
+mode 3 の素通し経路（`--passthrough` を含む）では従来どおり crane 由来の値を流すので、
+`connected_ai` の意味も従来どおりである。
+
+### UART 送信レート
+
+位置制御経路は `--tx-rate-hz`、**既定 100 Hz**（UART 占有率 7.2%）で送る。
+
+- crane レート追随（旧構成と同じ `check_counter` 変化ゲート）にはできない。crane 断で
+  送信そのものが止まり、`connected_ai` タイムアウト（250 ms）まで停止指令が届かない。
+- **500 Hz（G474 メインループ相当・占有率 36%）は既定にしていない。** 現行の約 9 倍の
+  UART 負荷を ST-Link での `ORE`/`FE`/`NE`/`PE` カウンタ確認なしに投入しないため。
+  `--tx-rate-hz 500` で opt-in できる。**実機で確認が取れたら既定を上げること。**
+
+### ゼロ埋め ≠ ゼロ値
+
+2 バイト固定小数（range 32.767）の未設定フィールドは `0.0` ではなく **`-32.767`** として
+復号される（encode が `0.0` を `0x7FFF` へ写すため）。実チェーンで crane 役が mode 4 の
+`terminal_velocity_x/y` を書き忘れただけで、フィードフォワードが `(-32.767, -32.767)` に
+なりロボットが目標と無関係な方向へ場外まで走った。
+
+`position_controller` は `|v| >= 32.0`（と NaN）を「未設定のシグネチャ」として扱う。
+終端速度は 0 とみなして P 制御を続け、目標位置・現在位置は `InvalidCommand` で停止する。
+テストを書くときは **使わないフィールドも明示的に `0.0` をエンコードして埋めること**。
+`bytearray(64)` のままだと全フィールドが `-32.767` になる。
+
+### cm4_sim の使い方（ホスト PC 専用）
+
+`cm4_sim.out` は実機では動かさないので `cm4/lancher.py` の起動対象に入れていない。
+
+```bash
+# 端末1: simulator-cli（framework、ibis ブランチ）
+/home/hans/workspace/framework/build/bin/simulator-cli \
+  -g 2020B --realism None --localhost \
+  --ibis-port 12396 --ibis-feedback-port-base 50100
+
+# 端末2: cm4_sim
+./cm4/bin/cm4_sim.out --robot-ids 0 \
+  --in-port 12345 --out-port 12346 --feedback-port-base 50100 \
+  --multicast-if 127.0.0.1
+
+# 端末3: crane を sim:=true feedback_sim_mode:=false で起動
+```
+
+起動順は **simulator-cli → cm4_sim → crane**。
+
+| 用途 | アドレス:ポート |
+|---|---|
+| crane からの mode 4 | bind `0.0.0.0:12345` |
+| simulator-cli への mode 3 | `127.0.0.1:12346`（`--ibis-port` と揃える） |
+| simulator-cli からの feedback | bind `127.0.0.1:50100+id` |
+| feedback 再配信 | `224.5.20.(100+id):50100+id`（実機と同じ） |
+
+注意点:
+
+- **crane には `feedback_sim_mode:=false` を渡すこと。** 素の `sim:=true` だと
+  `crane_robot_receiver` が `127.0.0.1:50100+id` を `SO_REUSEPORT` 付きで bind し、
+  cm4_sim と feedback を取り合う。`SO_REUSEPORT` は 4-tuple ハッシュで振り分けるため
+  **単一送信元からの feedback は必ずどちらか一方が全量取る**（実測: 200 発中 0 対 200）。
+  どちらが当たるかは実行ごとに変わり、再現性がない。
+- 再配信ポートは `--feedback-relay-port-base`（既定 50100）で入力ポートと独立に指定する。
+  crane の `crane_robot_receiver` は `robot_id = port - 50100` と直書きしているので、
+  再配信先は **50100 固定**である。
+- 出力パケットの `VISION_GLOBAL_X/Y` には feedback 由来の実位置を詰める。simulator-cli は
+  コマンドの `vision_global_pos` を実位置と 0.5 m 以内で照合してチーム判定し、外れると
+  コマンドを無言で捨てるため。**実機では crane 由来の値をそのまま流す**（G474 が vision
+  融合に使うので、CM4 の推定値を書き戻すと自己帰還になる）。
+- `simulator-cli` のログに `POSITION_TARGET` の警告が出たら mode 変換の失敗である。
+  デバッグの第一手掛かりにする。
+- 劣化注入（`--rx-delay-ms` / `--rx-jitter-ms` / `--rx-loss-rate` / `--seed`）は
+  **crane → CM4 の入力側にのみ**適用する。mode 3 素通しでも mode 4 位置制御でも同じように
+  かかるので、A/B 比較の独立変数が「位置ループをどこで閉じるか」だけになる。
+
+### A/B 比較で数値を読むときの前提
+
+- `cm4_sim` の mode 3 素通し経路は、crane 断のとき速度ゼロと `STOP_EMERGENCY` を出す。
+  旧構成では G474 の `connected_ai` タイムアウト（250 ms）が止めるが、simulator-cli は
+  それを模擬しない。代行しないと基準側だけが crane 断で走り続ける。
+  **タイムアウト値が実機 250 ms に対し cm4_sim 既定 100 ms である点に注意。**
+- シミュレータ側の G474 相当は **125 Hz** で、実機の G474（500 Hz）より粗い。
+  ゲインを詰めるときに影響する。
+
+### テスト
+
+`./cm4/build.sh` が次を実行する（CI も同じ）。実機 UART も STM32 も不要。
+
+- `robot_packet_layout_test.out` — crane 版正本からのパケットレイアウトのドリフト検出
+- `test_position_controller.out` — 位置制御則の単体テスト（crane 版テストからの移植を含む）
+- `test_cm4_sim.py` — cm4_sim の結合スモークテスト
+- `test_forward_ai_cmd_v2.py` — 実機ブリッジの結合スモークテスト（`--debug` + pty）
+
+`test_cm4_sim_chain.py` は実 `simulator-cli` が要るので CI では走らない。
+
+```bash
+SIMULATOR_CLI=/home/hans/workspace/framework/build/bin/simulator-cli \
+  python3 -m unittest discover -s cm4/bridge -p 'test_cm4_sim_chain.py'
+```
+
+### 未了（実機で確認すること）
+
+- `--passthrough` で旧構成と同じ挙動になること（ホストでは 72 バイトのバイト一致を確認済み）
+- crane を mode 4 送出に切り替えて `ai_cmd_v2.out` の表示に `mode 4` と `tarPos` が出ること
+- `--tx-rate-hz 500` での UART 占有率。G474 の `uart ORE/FE/NE/PE` と parser timeout
+  カウンタが増えないことを ST-Link で確認する
+- crane を止めて 100 ms 以内に車輪が止まること

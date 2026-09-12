@@ -28,6 +28,12 @@ byte 0..37 の全オフセット・`ControlMode`・`FlagAddress` を `static_ass
   - 上記のレイアウトが正本からドリフトしていないことを検査します。
 - `cm4/bridge/forward_ai_cmd_v2.cpp`
   - AI から受け取った制御パケットとローカルカメラ情報をまとめ、UART で STM32 へ送ります。
+    mode 4 を受けたときは位置制御ループを閉じて mode 3 へ変換します。
+- `cm4/control/position_controller.h` / `.cpp`
+  - 位置指令から速度指令を作る制御則と、通信途絶時の安全停止判定です。
+    transport 非依存で、実機ブリッジと `cm4_sim` が**同一ソースとして**リンクします。
+- `cm4/bridge/cm4_sim.cpp`
+  - シミュレータ用の CM4 相当プロセスです。ホスト PC 専用で、実機では動かしません。
 - `host/lib/cm4_control_client.py`
   - CM4 の制御 API サーバーへ `start` / `stop` / `status` を送るホスト側クライアントです。
 - `host/apps/host_lancher.py`
@@ -44,6 +50,9 @@ byte 0..37 の全オフセット・`ControlMode`・`FlagAddress` を `static_ass
 - `cm4/camera/dist/cam_server_v3`
 
 `/stop` は上記の関連プロセスを `pkill -f` で停止します。
+
+`cm4_sim.out` は**ホスト PC 専用**です。実機では起動しないので `cm4/lancher.py` の
+起動プロセス一覧と `/stop` の `pkill -f` パターンには入れていません。
 
 ## パケット全体（715 バイト）
 
@@ -175,10 +184,23 @@ CM4 では**上流（位置制御器）の解釈が先に勝ちます**。`linea
 
 - AI 制御パケット
   - UDP port: `12345`（`--ai-cmd-port` で変更可。ホスト PC でのテスト用）
-  - 715 バイト固定（`(64 + 1) * 11`）。
+  - 715 バイト固定（`(64 + 1) * 11`）。これ以外の長さは捨てます。
+    `recv()` には `MSG_TRUNC` を付けてデータグラムの実長を得ます。付けないと
+    716 バイトが 715 バイトに切り詰められ「正常な全ゼロパケット」に化けます。
+  - コマンド 64 バイトが全ゼロのスロットは指令とみなしません
+    （framework の `ibisSlotIsEmpty()` と同じ判定）。
 - ローカルカメラパケット
   - UDP port: `8890`（`--local-cam-port` で変更可）
   - `CAM_BUF_SIZE` は `7` バイトです。
+- G474 feedback（位置制御ループを閉じるため）
+  - UDP port: `127.0.0.1:(50000 + 100 + ロボット ID)`（`--feedback-port` で変更可）
+  - `robot_feedback.out` が UART から読んだ 128 バイトを loopback unicast で渡します。
+  - 詳細は [フィードバックパケット](feedback_packet.md) を参照。
+
+ロボット ID は `wlan0` の IPv4 最終オクテット `- 100` です。決定できないときは
+**0 号機として動かず終了します**。位置制御では ID が feedback の bind ポートも決めるので、
+黙って 0 に落ちると「自分の G474 へ送りながら 0 号機の feedback で位置ループを閉じる」
+機体跨ぎの制御になります。テスト時は `--robot-id` で明示指定できます。
 
 ### UART 送信
 
@@ -192,13 +214,37 @@ CM4 では**上流（位置制御器）の解釈が先に勝ちます**。`linea
 72 バイト x 10 bit / 1 Mbps = **720 us/パケット**です。送信レートを上げると UART 占有率が
 そのまま上がるので注意してください（500 Hz で 36%、1 kHz で 72%）。
 
-### 送信ゲートとポーリング
+### 2 つの経路
 
-メインループは `usleep(1000)` の **1 kHz ポーリング**です。UDP は非ブロッキングで読み、
+受信パケットの `CONTROL_MODE` で経路が分かれます。**この 2 つは意図的に統合していません。**
+
+| 受信 mode | 動作 | 送信ゲート |
+|---|---|---|
+| `3`、または `--passthrough` 指定時 | 64 バイトをそのまま転送（旧構成） | crane の `CHECK_COUNTER` が変化したとき |
+| `4` | 位置制御ループを閉じて mode 3 を生成 | `--tx-rate-hz`（既定 100 Hz）の時間ゲート |
+
+素通し経路は `check_counter` が crane 由来なので、既存の「変化したときだけ送る」ゲートが
+**そのまま正しい**です（crane 断で G474 の `connected_ai` が false になるのが旧構成の
+期待挙動）。位置制御経路は CM4 が `check_counter` を採番するのでそのゲートが成立せず
+（常に変化してしまう）、時間ベースのレートで送ります。
+
+`--passthrough` は mode 4 が来ても強制的に素通しします。旧構成との A/B 比較用です。
+
+### 送信レートとポーリング
+
+メインループは `usleep(1000)` の **1 kHz ポーリング**のままです。UDP は非ブロッキングで読み、
 受信が無ければ前回のバッファがそのまま残ります。
 
-UART へ実際に送るのは **`CHECK_COUNTER`(byte 1) が前回と変化したとき**だけです。
-つまり従来構成では crane の送出レート（約 60 Hz）でしか UART に流れません。
+位置制御経路の UART 送信レートは `--tx-rate-hz`、**既定 100 Hz** です。
+
+- crane レート追随（旧構成と同じゲート）にはできません。crane 断のときに送信そのものが
+  止まり、G474 の `connected_ai` タイムアウト（250 ms）まで停止指令が届かず、
+  「crane 断から 100 ms 以内に止まる」を満たせないためです。
+- 500 Hz（G474 メインループ相当・UART 占有率 36%）も既定にしていません。現行の約 9 倍の
+  UART 負荷を、ST-Link での `ORE`/`FE`/`NE`/`PE` カウンタ確認なしに投入しないためです。
+- 100 Hz は 720 us x 100 = **7.2%** で現行（約 55 Hz = 約 4%）の約 2 倍にとどまり、
+  crane 断から 10 ms 以内に停止指令を届けられます。
+- 実機で ST-Link 確認が取れたら `--tx-rate-hz 500` を既定に上げてください。
 
 ### CHECK_COUNTER
 
@@ -210,6 +256,54 @@ G474 の `checkConnect2AI()`（`Core/Src/ai_comm.c`）は
 `AI_CMD_TIMEOUT(0.5) * MAIN_LOOP_CYCLE(500)` = **250 ms** 変化が無いと `connected_ai = false` です。
 
 1 バイトなので値は周期的に一巡します。**ロス検出用のシーケンス番号としては使えません。**
+
+#### 新構成では採番者が CM4 に移ります
+
+mode 4 を受けて位置制御を回す経路では、**CM4 が `check_counter` を採番します**
+（送信ごとに `++c; if (c > 200) c = 0;`）。
+
+結果として **G474 の `connected_ai` は crane の生存を意味しなくなります**。
+CM4 が生きていれば crane が死んでいても `check_counter` は変化し続けるからです。
+crane 断の安全停止は CM4 側で明示的に行います（下記）。
+
+素通し経路では従来どおり crane 由来の値をそのまま流すので、`connected_ai` の意味も
+従来どおりです。
+
+### 位置制御と安全停止
+
+mode 4 を受けると `cm4/control/position_controller.cpp` を通します。制御則は crane の
+`sim_position_controller.cpp` の `calculateSimGlobalVelocity()` と同一で、既定ゲインは
+`position_gain = 2.0` / `deceleration = 3.0`（`--kp` / `--decel` で変更可）です。
+
+ロボットの現在位置は **G474 feedback の byte 44..51（`vision_based_position_x/y`）** を
+使います。crane のパケットに入っている `vision_global_pos` では閉じません。
+それは今回ループの外へ出そうとしている無線経路そのものだからです。
+
+`position_tolerance` は 715 バイトパケットに載らないので CM4 側の設定値です
+（既定 0.01 m、`--tolerance`）。
+
+次のいずれかで速度指令をゼロにし、`STOP_EMERGENCY`(byte 22 bit3) を立てます。
+
+| 条件 | 既定 |
+|---|---|
+| crane が `STOP_EMERGENCY` を立てた | — |
+| crane からのパケットが途絶 | `--command-timeout-ms 100` |
+| G474 feedback が途絶（起動直後の未受信を含む） | `--feedback-timeout-ms 100` |
+
+安全停止時は `KICK_POWER` / `DRIBBLE_POWER` / `ENABLE_CHIP` も落とします。
+古いキック指令を撃ち続けないためです。
+
+判定は `position_controller` の中にあるので、**実機バイナリと `cm4_sim` が必ず同じ判定を
+通ります**。
+
+出力パケットは受信した 64 バイトをコピーして `CHECK_COUNTER` / `CONTROL_MODE` /
+`CONTROL_MODE_ARGS` だけを差し替えて作ります。ゼロから組み立てると
+`target_global_theta` / `angular_velocity_limit` / `kick_power` / `dribble_power` / flags を
+取りこぼします（G474 も simulator-cli もこれらをすべて使います）。
+
+なお実機では `VISION_GLOBAL_X/Y`(2..5) は crane 由来のまま流します。G474 が vision 融合に
+使うので、CM4 の推定値を書き戻すと自己帰還になります。`cm4_sim` だけは simulator-cli の
+0.5 m 照合ゲートを通すために feedback 由来の実位置で上書きします。
 
 ### ローカルカメラ情報の挿入
 
