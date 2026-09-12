@@ -15,6 +15,7 @@ framework リポジトリに依存しない。実チェーンの検証は test_c
 実行: python3 -m unittest discover -s cm4/bridge -p 'test_cm4_sim.py'
 """
 
+import itertools
 import math
 import os
 import socket
@@ -38,9 +39,14 @@ MODE_POLAR_VELOCITY = 3
 MODE_POSITION_TARGET = 4
 
 # 既定 (12345 / 12346 / 50100) から離す
-IN_PORT = 12395
-OUT_PORT = 12396
-FEEDBACK_BASE = 50700
+# ポートはテストごとにずらし、さらにプロセスごとにもずらす。
+# 全テストで同じポートを使うと、前のテストの cm4_sim がまだ終了しきっていない
+# ときに bind が EADDRINUSE で失敗し（crane 入力ソケットには意図的に
+# SO_REUSEADDR を付けていない）、「起動したつもりで何も返ってこない」形で
+# 散発的に落ちる。落ちたテストが残したプロセスが次の実行まで生き残る例もあった。
+PORT_BASE = 20000 + (os.getpid() % 300) * 64
+FEEDBACK_BASE = 40000 + (os.getpid() % 90) * 256
+_port_slot = itertools.count()
 
 # robot_packet.h の enum Address
 CHECK_COUNTER = 1
@@ -121,11 +127,21 @@ def slot_of(packet, robot_id):
     return packet[off], packet[off + 1:off + 1 + CMD_SIZE]
 
 
+# 起動した cm4_sim を必ず後始末するための登録簿。テストが finally へ到達せずに
+# 落ちたとき、残ったプロセスが次のテスト・次の実行のポートを塞いでしまう。
+_live_sims = []
+
+
 class Cm4Sim:
     """cm4_sim.out を起動し、crane 側と simulator-cli 側の両方を演じるヘルパ。"""
 
-    def __init__(self, robot_ids="0", extra_args=(), out_port=OUT_PORT, in_port=IN_PORT,
-                 feedback_base=FEEDBACK_BASE, relay=False):
+    def __init__(self, robot_ids="0", extra_args=(), out_port=None, in_port=None,
+                 feedback_base=None, relay=False):
+        slot = next(_port_slot) % 16
+        in_port = PORT_BASE + slot * 4 if in_port is None else in_port
+        out_port = PORT_BASE + slot * 4 + 1 if out_port is None else out_port
+        feedback_base = FEEDBACK_BASE + slot * 16 if feedback_base is None else feedback_base
+        _live_sims.append(self)
         self.in_port = in_port
         self.feedback_base = feedback_base
         # simulator-cli 役: cm4_sim の出力を受ける
@@ -149,6 +165,11 @@ class Cm4Sim:
         self.log = open(self.log_path, "w+")
         self.proc = subprocess.Popen(args, stdout=self.log, stderr=subprocess.STDOUT)
         time.sleep(0.4)
+        # 起動失敗を「出力が来ない」ではなく起動時点で検出する。
+        if self.proc.poll() is not None:
+            self.log.flush()
+            self.log.seek(0)
+            raise RuntimeError("cm4_sim.out が起動直後に終了しました:\n" + self.log.read())
 
     def send_command(self, packet):
         self.tx.sendto(packet, ("127.0.0.1", self.in_port))
@@ -194,7 +215,10 @@ class Cm4Sim:
                 return
 
     def close(self):
-        self.proc.terminate()
+        if self in _live_sims:
+            _live_sims.remove(self)
+        if self.proc.poll() is None:
+            self.proc.terminate()
         try:
             self.proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
@@ -202,14 +226,26 @@ class Cm4Sim:
             self.proc.wait()
         self.out_rx.close()
         self.tx.close()
-        self.log.flush()
-        self.log.seek(0)
-        self.output = self.log.read()
-        self.log.close()
+        if not self.log.closed:
+            self.log.flush()
+            self.log.seek(0)
+            self.output = self.log.read()
+            self.log.close()
 
 
 @unittest.skipUnless(BINARY.exists(), f"{BINARY} が無い。先に ./cm4/build.sh を実行すること")
 class Cm4SimSmokeTest(unittest.TestCase):
+    def tearDown(self):
+        # finally へ到達せずに落ちたテストの cm4_sim を確実に始末する。
+        while _live_sims:
+            sim = _live_sims[-1]
+            try:
+                sim.close()
+            except Exception:
+                pass
+            if sim in _live_sims:
+                _live_sims.remove(sim)
+
 
     def test_mode4_in_mode3_out(self):
         """mode 4 を受けて mode 3 を出し、CHECK_COUNTER が毎回変化すること。"""
@@ -354,18 +390,19 @@ class Cm4SimSmokeTest(unittest.TestCase):
         実機の robot_feedback.out と同じ経路で、crane と host ツールがここを見る。
         開発 PC には 192.168.20.x が無いので送出 IF は loopback にする。
         """
+        # --no-feedback-relay を外し、送出 IF を loopback にする
+        sim = Cm4Sim(robot_ids="0", extra_args=["--multicast-if", "127.0.0.1"],
+                     relay=True)
+        # 再配信先はテストごとにずらした feedback_base から決まるので、
+        # 起動後の実ポートを見て join する（定数を直接使うとズレる）。
         group = f"224.5.20.{100 + 0}"
-        port = FEEDBACK_BASE + 0
+        port = sim.feedback_base + 0
 
         mc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         mc.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         mc.bind(("", port))
         mc.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
                       socket.inet_aton(group) + socket.inet_aton("127.0.0.1"))
-
-        # --no-feedback-relay を外し、送出 IF を loopback にする
-        sim = Cm4Sim(robot_ids="0", extra_args=["--multicast-if", "127.0.0.1"],
-                     relay=True)
         try:
             got = None
             for i in range(1, 40):

@@ -40,7 +40,9 @@ build_binaries() {
   # 実機ブリッジ (boost::asio で UART を扱うため CM4 上でのみ意味を持つが、
   # ビルド自体はホストでも通る)
   g++ "${CXXFLAGS[@]}" "${BRIDGE_DIR}/forward_robot_feedback.cpp" -o "${BIN_DIR}/robot_feedback.out"
-  g++ "${CXXFLAGS[@]}" "${BRIDGE_DIR}/forward_ai_cmd_v2.cpp" -o "${BIN_DIR}/ai_cmd_v2.out"
+  # ai_cmd_v2.out は position_controller.cpp を cm4_sim.out と同一ソースとしてリンクする。
+  # 実機とシミュレータで制御コードのコピーを作らないことが挙動一致の保証。
+  g++ "${CXXFLAGS[@]}" -I"${CONTROL_DIR}" "${BRIDGE_DIR}/forward_ai_cmd_v2.cpp" "${CONTROL_DIR}/position_controller.cpp" -o "${BIN_DIR}/ai_cmd_v2.out"
 
   # パケットレイアウトのドリフト検査
   g++ "${CXXFLAGS[@]}" "${BRIDGE_DIR}/robot_packet_layout_test.cpp" -o "${BIN_DIR}/robot_packet_layout_test.out"
@@ -73,6 +75,11 @@ run_tests() {
 
   log "cm4_sim の結合スモークテストを実行します"
   (cd "${BRIDGE_DIR}" && python3 -m unittest test_cm4_sim)
+
+  # ai_cmd_v2.out を --debug + pty で動かし、G474 へ送るはずの 72 バイトを検査する。
+  # 実機 UART も STM32 も要らない。
+  log "ai_cmd_v2 の結合スモークテストを実行します"
+  (cd "${BRIDGE_DIR}" && python3 -m unittest test_forward_ai_cmd_v2)
 }
 
 main() {
