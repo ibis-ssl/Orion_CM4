@@ -35,7 +35,11 @@ SIMULATOR_CLI = os.environ.get("SIMULATOR_CLI", "")
 # まだ入っていないことがあるので、起動前に --help で確認してスキップする。
 # (mode 3 以外を停止して警告する IbisCommandAdaptor は
 #  framework/docs/robot-side-position-control.md の構成が入ったビルドにのみある)
-REQUIRED_SIM_OPTIONS = ("--ibis-port", "--ibis-feedback-port-base", "--vision-port", "--tracker-port")
+# --vision-port / --tracker-port は廃止された lockstep ブランチ専用のオプションで、
+# ibis ブランチには来ない（TrackerAdaptor 自体が lockstep コミット由来のため、
+# ibis の simulator-cli は SSL tracker を出力しない）。能力判定には使わない。
+# vision の出力先を変えるオプションも無いので、既定の 224.5.23.2:10020 へ出る前提。
+REQUIRED_SIM_OPTIONS = ("--ibis-port", "--ibis-feedback-port-base")
 
 
 def missing_simulator_options():
@@ -64,8 +68,6 @@ MISSING_OPTIONS = missing_simulator_options()
 CRANE_TO_CM4_PORT = 12398   # crane -> cm4_sim (mode 4)
 CM4_TO_SIM_PORT = 12397     # cm4_sim -> simulator-cli (mode 3)
 FEEDBACK_BASE = 50800       # simulator-cli -> cm4_sim
-VISION_PORT = 10097
-TRACKER_PORT = 11097
 
 ROBOT_ID = 0
 MULTICAST_GROUP = f"224.5.20.{100 + ROBOT_ID}"
@@ -100,9 +102,7 @@ class Cm4SimChainTest(unittest.TestCase):
             ["stdbuf", "-oL", "-eL", SIMULATOR_CLI,
              "-g", "2020B", "--realism", "None", "--localhost",
              "--ibis-port", str(CM4_TO_SIM_PORT),
-             "--ibis-feedback-port-base", str(FEEDBACK_BASE),
-             "--vision-port", str(VISION_PORT),
-             "--tracker-port", str(TRACKER_PORT)],
+             "--ibis-feedback-port-base", str(FEEDBACK_BASE)],
             stdout=self.sim_log, stderr=subprocess.STDOUT)
 
         # feedback 再配信を loopback の multicast で受けるので --multicast-if 127.0.0.1。
@@ -113,6 +113,7 @@ class Cm4SimChainTest(unittest.TestCase):
              "--in-port", str(CRANE_TO_CM4_PORT),
              "--out-addr", "127.0.0.1", "--out-port", str(CM4_TO_SIM_PORT),
              "--feedback-port-base", str(FEEDBACK_BASE),
+             "--feedback-relay-port-base", str(FEEDBACK_BASE),
              "--multicast-if", "127.0.0.1"],
             stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
@@ -121,7 +122,7 @@ class Cm4SimChainTest(unittest.TestCase):
         # crane / host ツールが見る multicast 経路
         self.mc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.mc.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.mc.bind(("", MULTICAST_PORT))
+        self.mc.bind((MULTICAST_GROUP, MULTICAST_PORT))
         self.mc.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
                            socket.inet_aton(MULTICAST_GROUP) + socket.inet_aton("127.0.0.1"))
         time.sleep(1.5)

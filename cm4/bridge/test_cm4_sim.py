@@ -37,6 +37,8 @@ FEEDBACK_SIZE = 128
 
 MODE_POLAR_VELOCITY = 3
 MODE_POSITION_TARGET = 4
+KICK_POWER = 10
+DRIBBLE_POWER = 11
 
 # 既定 (12345 / 12346 / 50100) から離す
 # ポートはテストごとにずらし、さらにプロセスごとにもずらす。
@@ -136,11 +138,15 @@ class Cm4Sim:
     """cm4_sim.out を起動し、crane 側と simulator-cli 側の両方を演じるヘルパ。"""
 
     def __init__(self, robot_ids="0", extra_args=(), out_port=None, in_port=None,
-                 feedback_base=None, relay=False):
+                 feedback_base=None, relay=False, relay_port_base=None):
         slot = next(_port_slot) % 16
         in_port = PORT_BASE + slot * 4 if in_port is None else in_port
         out_port = PORT_BASE + slot * 4 + 1 if out_port is None else out_port
         feedback_base = FEEDBACK_BASE + slot * 16 if feedback_base is None else feedback_base
+        # 再配信先は入力ポートと独立 (crane の crane_robot_receiver は 50100+id 固定)。
+        # テストでは既定の 50100 を塞がないよう、入力と同じ値を明示指定する。
+        relay_port_base = feedback_base if relay_port_base is None else relay_port_base
+        self.feedback_relay_port_base = relay_port_base
         _live_sims.append(self)
         self.in_port = in_port
         self.feedback_base = feedback_base
@@ -159,6 +165,7 @@ class Cm4Sim:
                 "--in-port", str(in_port),
                 "--out-addr", "127.0.0.1", "--out-port", str(out_port),
                 "--feedback-port-base", str(feedback_base),
+                "--feedback-relay-port-base", str(relay_port_base),
                 *(() if relay else ("--no-feedback-relay",)),  # 既定ではテストで multicast を出さない
                 *extra_args]
         self.log_path = Path(tempfile.mkdtemp(prefix="cm4-sim-")) / "cm4_sim.log"
@@ -396,11 +403,11 @@ class Cm4SimSmokeTest(unittest.TestCase):
         # 再配信先はテストごとにずらした feedback_base から決まるので、
         # 起動後の実ポートを見て join する（定数を直接使うとズレる）。
         group = f"224.5.20.{100 + 0}"
-        port = sim.feedback_base + 0
+        port = sim.feedback_relay_port_base + 0
 
         mc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         mc.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        mc.bind(("", port))
+        mc.bind((group, port))
         mc.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
                       socket.inet_aton(group) + socket.inet_aton("127.0.0.1"))
         try:
@@ -422,45 +429,63 @@ class Cm4SimSmokeTest(unittest.TestCase):
             sim.close()
             mc.close()
 
-    def test_lockstep_waits_for_feedback_between_substeps(self):
-        """lockstep では crane 1 パケットにつき N 個の出力を出し、
-        substep ごとに feedback を待つこと。
+    def test_mode3_is_forwarded_without_position_control(self):
+        """mode 3 は位置制御せずそのまま転送すること（旧構成。A/B 比較の基準側）。
 
-        待たずに N 個連続送出すると N サブステップ全部が同じ古い feedback を使い、
-        crane 周期ぶん位置ループが開いてしまう（CM4 で閉じた意味が消える）。
-        ここではテスト側が simulator-cli 役を演じ、出力 1 個につき feedback 1 個を
-        返すことで 1:1 のゲートが成立していることを確かめる。
+        crane 由来の check_counter も触らない。simulator-cli は同じ check_counter を
+        無視するので、結果として「crane のレートでコマンドが適用される」という
+        旧構成そのものの挙動になる。
         """
-        substeps = 4
-        sim = Cm4Sim(robot_ids="0",
-                     extra_args=["--lockstep-substeps", str(substeps),
-                                 "--lockstep-step-ms", "4",
-                                 "--lockstep-feedback-timeout-ms", "500"])
+        sim = Cm4Sim(robot_ids="0")
         try:
-            # 自走しないこと: crane パケットを送る前は何も出力されない
-            self.assertIsNone(sim.recv_output(timeout=0.5),
-                              "lockstep なのに crane パケット無しで自走している")
+            command = build_command(7, mode=MODE_POLAR_VELOCITY,
+                                    terminal_velocity_xy=(1.25, -0.5), target=(9.0, 9.0))
+            got = None
+            for _ in range(40):
+                sim.send_command(build_packet(0, command))
+                sim.send_feedback(0, 1, 0.0, 0.0)
+                time.sleep(0.02)
+                out = sim.recv_latest_output(timeout=0.5)
+                if out is None:
+                    continue
+                _, cmd = slot_of(out, 0)
+                if cmd != bytes(CMD_SIZE):
+                    got = cmd
+                    break
+            self.assertIsNotNone(got, "mode 3 の出力が出ていない")
+            self.assertEqual(got[CONTROL_MODE], MODE_POLAR_VELOCITY)
+            self.assertEqual(got[CHECK_COUNTER], 7, "素通しでは crane の check_counter を変えない")
+            # mode 3 args は位置制御の出力で上書きされず、受信値のまま。
+            self.assertAlmostEqual(decode_two_byte(got, CONTROL_MODE_ARGS, 32.767), 1.25, delta=2e-3)
+            self.assertAlmostEqual(decode_two_byte(got, CONTROL_MODE_ARGS + 2, 32.767), -0.5, delta=2e-3)
+            # 目標位置 (9,9) に対して位置制御が走っていたら r は 0 のままではない。
+            self.assertEqual(bytes(got[28:32]), command[28:32], "予約領域まで素通しする")
+        finally:
+            sim.close()
 
-            fb_counter = 0
-            outputs_per_packet = []
-            for i in range(1, 11):
-                sim.send_command(build_packet(0, build_command(i, target=(1.0, 0.0))))
-                count = 0
-                for _ in range(substeps):
-                    out = sim.recv_output(timeout=2.0)
-                    if out is None:
-                        break
-                    count += 1
-                    # simulator-cli 役: 1 ステップにつき 1 feedback を返す
-                    fb_counter += 1
-                    sim.send_feedback(0, fb_counter, 0.01 * fb_counter, 0.0)
-                outputs_per_packet.append(count)
-                # 余分に出ていないこと
-                self.assertIsNone(sim.recv_output(timeout=0.2),
-                                  f"crane パケット {i} に対して {substeps} 個を超える出力が出ている")
+    def test_mode3_passthrough_stops_when_crane_goes_silent(self):
+        """素通し経路でも crane 断で止まること。
 
-            self.assertTrue(all(c == substeps for c in outputs_per_packet),
-                            f"crane 1 パケットにつき {substeps} 個の出力が出ていない: {outputs_per_packet}")
+        旧構成では G474 の connected_ai タイムアウトが拾って止めるが、
+        simulator-cli はそれを模擬しない。代行しないと A/B 比較の基準側だけが
+        crane 断で走り続けてしまう。
+        """
+        sim = Cm4Sim(robot_ids="0", extra_args=["--command-timeout-ms", "100"])
+        try:
+            command = build_command(7, mode=MODE_POLAR_VELOCITY, terminal_velocity_xy=(1.25, 0.0))
+            for _ in range(20):
+                sim.send_command(build_packet(0, command))
+                sim.send_feedback(0, 1, 0.0, 0.0)
+                time.sleep(0.02)
+            time.sleep(0.4)  # crane を止める
+            sim.drain_output()
+            time.sleep(0.05)
+            out = sim.recv_latest_output()
+            self.assertIsNotNone(out)
+            _, cmd = slot_of(out, 0)
+            self.assertEqual(cmd[CONTROL_MODE], MODE_POLAR_VELOCITY)
+            self.assertAlmostEqual(decode_two_byte(cmd, CONTROL_MODE_ARGS, 32.767), 0.0, delta=2e-3)
+            self.assertTrue(cmd[FLAGS] & (1 << STOP_EMERGENCY_BIT))
         finally:
             sim.close()
 
@@ -502,6 +527,11 @@ class Cm4SimSmokeTest(unittest.TestCase):
             if line.startswith("rx-degrader:"):
                 summary = line
         self.assertIsNotNone(summary, f"cm4_sim が劣化注入の要約を出していない:\n{sim.output}")
+        # 決定列は「受信した順番」で駆動されるので、受信数が送信数と食い違えば
+        # seed が同じでもハッシュはずれる。再現性の検証はここが前提になる。
+        pushed = int(summary.split("pushed=")[1].split()[0])
+        self.assertEqual(pushed, packets,
+                         f"受信パケット数が送信数と一致しない（他プロセスの混入か取りこぼし）: {summary}")
         return summary, targets
 
     def test_degradation_is_reproducible_with_seed(self):
