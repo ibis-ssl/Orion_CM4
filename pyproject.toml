@@ -28,6 +28,12 @@ cam-viewer = "host.apps.cam_viewer:main"
 robot-feedback-receiver = "host.apps.robot_feedback_receiver_cli:main"
 robot-feedback-viewer = "host.apps.robot_feedback_viewer:main"
 robot-feedback-rerun = "host.apps.robot_feedback_rerun:main"
+cm4-fleet = "host.apps.cm4_fleet_cli:main"
+
+[project.optional-dependencies]
+# ホスト専用の依存。cm4/setup.sh の `pip install -e .` は dependencies のみを見るため、
+# ここに入れるとネット到達性の無いロボット LAN 上のデバイスにはインストールされない。
+fleet = ["paramiko>=3.4"]
 
 [tool.setuptools.packages.find]
 include = ["host*", "cm4*"]

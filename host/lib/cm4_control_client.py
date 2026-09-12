@@ -4,9 +4,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 
+from host.lib.fleet.inventory import default_ip_list
+
 DEFAULT_PORT = 8000
 DEFAULT_TIMEOUT = 0.5
-DEFAULT_IP_LIST = [f"192.168.20.{i}" for i in range(100, 113)]
+DEFAULT_IP_LIST = default_ip_list()
 
 
 def build_base_url(ip, port=DEFAULT_PORT):

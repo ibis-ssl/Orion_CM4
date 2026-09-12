@@ -93,6 +93,19 @@ uv run robot-feedback-rerun --machine-no 3 --max-packets 1 --receive-timeout 5
 uv run robot-feedback-rerun --machine-no 3 --no-spawn
 ```
 
+## フリート管理ツール
+
+### `cm4-fleet`
+
+複数台の CM4 へ OTA アップデート・SSH 鍵配布・設定配布を一括で行う CLI です。詳細は [フリート管理](fleet.md) を参照してください。
+
+```powershell
+uv sync --extra fleet
+uv run cm4-fleet bootstrap --all
+uv run cm4-fleet deploy --all
+uv run cm4-fleet status --all
+```
+
 ## ファイル配置
 
 - `host/lib/cm4_control_client.py`
@@ -104,3 +117,5 @@ uv run robot-feedback-rerun --machine-no 3 --no-spawn
 - `host/apps/robot_feedback_receiver_cli.py`
 - `host/apps/robot_feedback_viewer.py`
 - `host/apps/robot_feedback_rerun.py`
+- `host/apps/cm4_fleet_cli.py`
+- `host/lib/fleet/`

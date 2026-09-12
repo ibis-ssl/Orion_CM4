@@ -67,6 +67,16 @@ journalctl -u control_server.service -f
 
 `cm4/control_server.service` は `/home/ibis/Orion_CM4/cm4/lancher.py` を起動します。
 
+## 2台目以降・以後の更新
+
+2台目以降のセットアップや、以後のコード更新は、この手順を1台ずつ手動で行う代わりに、ホスト PC から `cm4-fleet` で複数台へ一括デプロイできます。詳細は [フリート管理](doc/fleet.md) を参照してください。
+
+```powershell
+uv sync --extra fleet
+uv run cm4-fleet bootstrap --all
+uv run cm4-fleet deploy --all
+```
+
 ## HSV 設定
 
 カメラサーバーの HSV 設定は、`cm4/lancher.py` 経由で起動した場合に `cm4/runtime/cam_server_v3_hsv.json` に保存されます。

@@ -12,6 +12,8 @@
   - 生成される CM4 用実行ファイルは `cm4/bin/` に置きます。
 - `host/robot-manager/`
   - 複数台の CM4 をブラウザから操作する管理 Web UI です。
+- `host/lib/fleet/`
+  - ホスト PC から複数の CM4 へ OTA アップデート・SSH 鍵配布・設定配布を行うライブラリです(`cm4-fleet` CLI から利用)。詳細は [フリート管理](fleet.md)。
 - `host/templates/`
   - 旧 Web 表示用の静的 HTML テンプレートです。
 - `doc/`
@@ -131,6 +133,7 @@ docker compose up --build
 ## 関連ドキュメント
 
 - [ホスト PC 側ツール](host_tools.md)
+- [フリート管理(OTA・複数台一括設定)](fleet.md)
 - [カメラ制御・デバッグ](camera.md)
 - [制御パケット](control_packet.md)
 - [フィードバックパケット](feedback_packet.md)
