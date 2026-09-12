@@ -558,6 +558,8 @@ int main(int argc, char * argv[])
   uint8_t tx[kPacketSize];
   uint8_t fb[kFeedbackSize + 64];
   uint8_t check_counter = 0;
+  uint64_t ff_rejected_count = 0;
+  bool ff_rejected_warned = false;
 
   // --- crane からの受信を劣化キューへ積む（ノンブロッキング） ---
   auto drainCraneInput = [&]() {
@@ -684,6 +686,18 @@ int main(int argc, char * argv[])
 
       const orion::PositionControllerOutput out = computePositionControl(in, opt.control);
       st.last_reason = out.reason;
+      if (out.feedforward_rejected) {
+        // 2 バイト固定小数の未設定フィールドは 0.0 ではなく -32.767 として復号される。
+        // 黙って無視すると crane 側のフィールド書き忘れに誰も気付かない。
+        ff_rejected_count++;
+        if (!ff_rejected_warned) {
+          ff_rejected_warned = true;
+          fprintf(stderr,
+            "cm4_sim: robot %d の terminal_velocity_x/y が未設定です (-32.767 として復号されました)。"
+            "0 とみなして P 制御を継続します。crane 側が mode 4 の ARGS 24..27 を書いているか確認してください\n",
+            slot);
+        }
+      }
 
       out_slot[0] = static_cast<uint8_t>(slot);
       buildSlot(out_slot + 1, st, out, check_counter, opt.vision_echo_feedback);
@@ -708,6 +722,9 @@ int main(int argc, char * argv[])
   }
 
   printf("\ncm4_sim 終了: %llu 周期送出\n", static_cast<unsigned long long>(loop_count));
+  if (ff_rejected_count > 0) {
+    printf("terminal_velocity 未設定として無視した回数: %llu\n", static_cast<unsigned long long>(ff_rejected_count));
+  }
   if (degrader.enabled()) {
     // seed と受信パケット数が同じなら必ず同じ行になる。--seed の再現性検証に使う。
     printf("rx-degrader: seed=%u pushed=%llu dropped=%llu decision-hash=0x%016llx\n", opt.seed,

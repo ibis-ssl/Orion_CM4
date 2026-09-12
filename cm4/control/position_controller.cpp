@@ -44,6 +44,10 @@ uint64_t elapsedMs(uint64_t now, uint64_t since)
   return (now >= since) ? (now - since) : 0;
 }
 
+// 物理的にありえない大きさ（未設定フィールドの復号結果）か。
+// 否定形で書いてあるのは NaN も弾くため。
+bool implausible(float v) { return !(std::fabs(v) < kImplausibleMagnitude); }
+
 PositionControllerOutput stopped(PositionControllerReason reason, bool stop_emergency)
 {
   PositionControllerOutput out;
@@ -72,6 +76,14 @@ PositionControllerOutput computePositionControl(const PositionControllerInput & 
     return stopped(PositionControllerReason::FeedbackStale, true);
   }
 
+  // --- 未設定フィールドの防御（kImplausibleMagnitude の説明を参照） ---
+  //
+  // 位置は安全な代替値が無いので止める。目標が分からないまま動いてはならない。
+  if (implausible(input.target_global_pos[0]) || implausible(input.target_global_pos[1]) || implausible(input.current_pos[0]) ||
+      implausible(input.current_pos[1])) {
+    return stopped(PositionControllerReason::InvalidCommand, true);
+  }
+
   // --- 制御則（crane calculateSimGlobalVelocity と同一） ---
   const float error_x = input.target_global_pos[0] - input.current_pos[0];
   const float error_y = input.target_global_pos[1] - input.current_pos[1];
@@ -79,6 +91,14 @@ PositionControllerOutput computePositionControl(const PositionControllerInput & 
 
   float ff_x = input.terminal_velocity_xy[0];
   float ff_y = input.terminal_velocity_xy[1];
+  // 終端速度には安全な代替値がある。0 とみなせば素の P 制御で目標へ向かうので、
+  // 止めるより走らせたほうが正しい。呼び出し側がログに出せるよう印は残す。
+  bool feedforward_rejected = false;
+  if (implausible(ff_x) || implausible(ff_y)) {
+    ff_x = 0.f;
+    ff_y = 0.f;
+    feedforward_rejected = true;
+  }
   const float terminal_limit = std::max(0.f, input.terminal_velocity);
   if (terminal_limit > 0.f) {
     clampNorm(ff_x, ff_y, terminal_limit);
@@ -86,7 +106,9 @@ PositionControllerOutput computePositionControl(const PositionControllerInput & 
   const float ff_norm = std::hypot(ff_x, ff_y);
 
   if (error_norm <= config.position_tolerance && ff_norm < 1e-4f) {
-    return stopped(PositionControllerReason::AtTarget, false);
+    PositionControllerOutput at_target = stopped(PositionControllerReason::AtTarget, false);
+    at_target.feedforward_rejected = feedforward_rejected;
+    return at_target;
   }
 
   float vx = config.position_gain * error_x + ff_x;
@@ -103,6 +125,7 @@ PositionControllerOutput computePositionControl(const PositionControllerInput & 
   out.polar_velocity_theta = std::atan2(vy, vx);
   out.stop_emergency = false;
   out.reason = PositionControllerReason::Ok;
+  out.feedforward_rejected = feedforward_rejected;
   return out;
 }
 
@@ -119,6 +142,8 @@ const char * toString(PositionControllerReason reason)
       return "CommandStale";
     case PositionControllerReason::FeedbackStale:
       return "FeedbackStale";
+    case PositionControllerReason::InvalidCommand:
+      return "InvalidCommand";
   }
   return "Unknown";
 }

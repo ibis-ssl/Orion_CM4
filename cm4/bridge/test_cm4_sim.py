@@ -429,6 +429,72 @@ class Cm4SimSmokeTest(unittest.TestCase):
             sim.close()
             mc.close()
 
+    def test_unset_terminal_velocity_does_not_send_the_robot_off_field(self):
+        """mode 4 の終端速度が未設定でも、目標と無関係な方向へ走り出さないこと。
+
+        2 バイト固定小数 (range 32.767) の未設定フィールドは 0.0 ではなく -32.767 として
+        復号される。encode が 0.0 を 0x7FFF へ写すためで、memset でゼロ埋めしたつもりの
+        フィールドが最大級の負値になる。実チェーンで crane 役が ARGS 24..27 を書き忘れた
+        結果、feedforward が (-32.767, -32.767) になってロボットが場外まで走った。
+        """
+        sim = Cm4Sim(robot_ids="0")
+        try:
+            # ARGS 24..27 と TERMINAL_VELOCITY 36..37 をゼロバイトのままにする。
+            command = bytearray(build_command(1, target=(2.8, -1.8), linear_velocity_limit=2.0))
+            command[CONTROL_MODE_ARGS:CONTROL_MODE_ARGS + 4] = bytes(4)
+            command[TERMINAL_VELOCITY_HIGH:TERMINAL_VELOCITY_HIGH + 2] = bytes(2)
+            command = bytes(command)
+            self.assertAlmostEqual(decode_two_byte(command, CONTROL_MODE_ARGS, 32.767), -32.767, delta=1e-3,
+                                   msg="前提: ゼロバイトは -32.767 として復号される")
+
+            got = None
+            for _ in range(40):
+                sim.send_command(build_packet(0, command))
+                sim.send_feedback(0, 1, 4.3, -2.8)
+                time.sleep(0.02)
+                out = sim.recv_latest_output(timeout=0.5)
+                if out is None:
+                    continue
+                _, cmd = slot_of(out, 0)
+                if cmd != bytes(CMD_SIZE) and cmd[FLAGS] & (1 << STOP_EMERGENCY_BIT) == 0:
+                    got = cmd
+                    break
+            self.assertIsNotNone(got, "終端速度が未設定でも制御は続けるはず（止めるのは行き過ぎ）")
+
+            theta = decode_two_byte(got, CONTROL_MODE_ARGS + 2, 32.767)
+            expected = math.atan2(-1.8 - (-2.8), 2.8 - 4.3)  # 目標方向 2.5536 rad
+            self.assertAlmostEqual(theta, expected, delta=0.02,
+                                   msg="終端速度を無視せず、目標と無関係な方向を向いている")
+            r = decode_two_byte(got, CONTROL_MODE_ARGS, 32.767)
+            self.assertLessEqual(r, 2.0 + 2e-3, "linear_velocity_limit を超えている")
+        finally:
+            sim.close()
+
+    def test_unset_target_position_stops_the_robot(self):
+        """mode 4 の目標位置が未設定なら止まること。位置には安全な代替値が無い。"""
+        sim = Cm4Sim(robot_ids="0")
+        try:
+            command = bytearray(build_command(1, target=(0.0, 0.0), linear_velocity_limit=2.0))
+            command[TARGET_GLOBAL_POS_X_HIGH:TARGET_GLOBAL_POS_X_HIGH + 4] = bytes(4)
+            command = bytes(command)
+            got = None
+            for _ in range(40):
+                sim.send_command(build_packet(0, command))
+                sim.send_feedback(0, 1, 0.0, 0.0)
+                time.sleep(0.02)
+                out = sim.recv_latest_output(timeout=0.5)
+                if out is None:
+                    continue
+                _, cmd = slot_of(out, 0)
+                if cmd != bytes(CMD_SIZE):
+                    got = cmd
+                    break
+            self.assertIsNotNone(got)
+            self.assertAlmostEqual(decode_two_byte(got, CONTROL_MODE_ARGS, 32.767), 0.0, delta=2e-3)
+            self.assertTrue(got[FLAGS] & (1 << STOP_EMERGENCY_BIT))
+        finally:
+            sim.close()
+
     def test_mode3_is_forwarded_without_position_control(self):
         """mode 3 は位置制御せずそのまま転送すること（旧構成。A/B 比較の基準側）。
 

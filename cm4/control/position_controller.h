@@ -73,12 +73,24 @@ struct PositionControllerInput
 // 出力が 0 のとき「なぜ止まっているのか」が分からないデバッグを避けるため、
 // 理由を明示的に返す。ログと単体テストの両方が使う。
 enum class PositionControllerReason {
-  Ok,             // 制御則が速度を出した
-  AtTarget,       // 許容誤差内かつ終端速度ゼロ
-  StopEmergency,  // crane が STOP_EMERGENCY を立てた
-  CommandStale,   // crane からのパケットが途絶した
-  FeedbackStale,  // G474 feedback が途絶した（起動直後の未受信を含む）
+  Ok,              // 制御則が速度を出した
+  AtTarget,        // 許容誤差内かつ終端速度ゼロ
+  StopEmergency,   // crane が STOP_EMERGENCY を立てた
+  CommandStale,    // crane からのパケットが途絶した
+  FeedbackStale,   // G474 feedback が途絶した（起動直後の未受信を含む）
+  InvalidCommand,  // 位置が物理的にありえない値（未設定フィールドの復号結果）
 };
+
+// 2 バイト固定小数 (range 32.767) の「未設定フィールド」は 0.0 ではなく -32.767 として
+// 復号される。encode が 0.0 を 0x7FFF へ写すので、memset でゼロ埋めしたフィールドは
+// 最大級の負値になる。座標としても速度としても物理的にありえない大きさなので、
+// これを「未設定」のシグネチャとして扱う。
+//
+// 実測（framework セッション、実チェーン）: crane 役が terminal_velocity_x/y を
+// 書き忘れただけで feedforward が (-32.767, -32.767) になり、位置制御がそれに支配されて
+// ロボットが目標と無関係な方向へ場外まで走った。終端速度スカラも -32.767（負）なので
+// 「スカラ > 0 のときだけクランプ」の規則に入らずクランプもされない。
+constexpr float kImplausibleMagnitude = 32.0f;
 
 struct PositionControllerOutput
 {
@@ -86,6 +98,9 @@ struct PositionControllerOutput
   float polar_velocity_theta = 0.f;  // mode 3 args: target_global_velocity_theta（グローバル方向 [rad]）
   bool stop_emergency = false;
   PositionControllerReason reason = PositionControllerReason::FeedbackStale;
+  // 終端速度が未設定シグネチャだったので 0 とみなした。制御は続行している。
+  // ログに出すこと。crane 側のフィールド書き忘れはこれでしか気付けない。
+  bool feedforward_rejected = false;
 };
 
 // 位置指令から速度指令を計算する。状態を持たない純関数なので決定論的。

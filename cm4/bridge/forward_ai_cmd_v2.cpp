@@ -426,6 +426,7 @@ int main(int argc, char * argv[])
   uint64_t rx_discard_count = 0;
   uint64_t feedback_discard_count = 0;
   orion::PositionControllerReason pre_reason = orion::PositionControllerReason::FeedbackStale;
+  bool pre_ff_rejected = false;
 
   while (1) {
     const long long now_ms = get_current_time_ms();
@@ -594,13 +595,18 @@ int main(int argc, char * argv[])
 
       // 位置制御パスは既定 100Hz で送るので、毎回表示するとログが溢れる。
       // crane からの新規コマンドか、停止理由が変わったときだけ出す。
-      const bool reason_changed = position_control_active && control_out.reason != pre_reason;
+      const bool reason_changed = position_control_active && (control_out.reason != pre_reason || control_out.feedforward_rejected != pre_ff_rejected);
       const bool crane_updated = pre_check_cnt != latest_cmd[CHECK_COUNTER];
       if (!position_control_active || crane_updated || reason_changed) {
         printf("cam %+4d %+4d %2d fps(rx)%2d / %3lld / ", camera.pos_xy[0], camera.pos_xy[1], camera.radius, camera.fps, diff_time);
         printf("ck : %3d / ", (uint8_t)uart_tx_buf[UART_PACKET_SIZE - 1]);
         if (position_control_active) {
           printf("POS[%s] fbXY %+6.2f %+6.2f / ", orion::toString(control_out.reason), feedback_pos[0], feedback_pos[1]);
+          if (control_out.feedforward_rejected) {
+            // 2 バイト固定小数の未設定フィールドは -32.767 として復号される。
+            // crane 側のフィールド書き忘れはこの表示でしか気付けない。
+            printf("!! terminal_velocity 未設定 (無視して P 制御を継続) / ");
+          }
         }
         if (rx_discard_count > 0 || feedback_discard_count > 0) {
           printf("drop cmd %llu fb %llu / ", (unsigned long long)rx_discard_count, (unsigned long long)feedback_discard_count);
@@ -609,6 +615,7 @@ int main(int argc, char * argv[])
       }
     }
     pre_reason = control_out.reason;
+    pre_ff_rejected = control_out.feedforward_rejected;
     // passthrough のゲートと表示の両方が crane 由来の check_counter を見る。
     pre_check_cnt = latest_cmd[CHECK_COUNTER];
 

@@ -346,6 +346,84 @@ static void testTerminalVelocityClamp(void)
   checkClose(out.polar_velocity_r, 2.0f, 1e-4f, "TerminalVelocityClamp: |ff| が terminal_velocity へクランプされる");
 }
 
+// --- 未設定フィールドの防御 ---------------------------------------------
+//
+// 2 バイト固定小数 (range 32.767) の未設定フィールドは 0.0 ではなく -32.767 として
+// 復号される。encode が 0.0 を 0x7FFF へ写すためで、memset でゼロ埋めしたフィールドは
+// 最大級の負値になる。実チェーンで crane 役が terminal_velocity_x/y を書き忘れた結果、
+// feedforward が (-32.767, -32.767) になってロボットが場外まで走った実績がある。
+
+// 未設定の終端速度は 0 とみなして制御を続ける。素の P 制御で目標へ向かうのが正しい。
+static void testUnsetFeedforwardIsIgnored(void)
+{
+  PositionControllerConfig cfg;
+  PositionControllerInput in = freshInput();
+  in.target_global_pos[0] = 2.8f;
+  in.target_global_pos[1] = -1.8f;
+  in.current_pos[0] = 4.3f;
+  in.current_pos[1] = -2.8f;
+  in.linear_velocity_limit = 2.0f;
+  // crane 役が書き忘れたときに実際に復号される値
+  in.terminal_velocity_xy[0] = -32.767f;
+  in.terminal_velocity_xy[1] = -32.767f;
+  in.terminal_velocity = -32.767f;
+
+  const PositionControllerOutput out = computePositionControl(in, cfg);
+  checkReason(out.reason, PositionControllerReason::Ok, "UnsetFeedforward: 停止せず制御を続ける");
+  check(out.feedforward_rejected, "UnsetFeedforward: 呼び出し側へ印を返す");
+  // 素の P 制御なので方向は誤差方向 atan2(1.0, -1.5) = 2.5536 rad と一致する。
+  checkClose(out.polar_velocity_theta, atan2f(1.0f, -1.5f), 1e-4f, "UnsetFeedforward: 目標方向を向く");
+  checkClose(out.polar_velocity_r, 2.0f, 1e-4f, "UnsetFeedforward: linear_velocity_limit で頭打ち");
+}
+
+// 未設定の目標位置は安全な代替値が無いので止める。
+static void testUnsetTargetStops(void)
+{
+  PositionControllerConfig cfg;
+  PositionControllerInput in = freshInput();
+  in.target_global_pos[0] = -32.767f;
+  in.target_global_pos[1] = -32.767f;
+  in.linear_velocity_limit = 3.0f;
+
+  const PositionControllerOutput out = computePositionControl(in, cfg);
+  checkReason(out.reason, PositionControllerReason::InvalidCommand, "UnsetTarget: InvalidCommand で止まる");
+  checkClose(out.polar_velocity_r, 0.0f, 1e-6f, "UnsetTarget: r = 0");
+  check(out.stop_emergency, "UnsetTarget: STOP_EMERGENCY を立てる");
+}
+
+// feedback が NaN でも走り出さない。
+static void testNanFeedbackStops(void)
+{
+  PositionControllerConfig cfg;
+  PositionControllerInput in = freshInput();
+  in.target_global_pos[0] = 1.0f;
+  in.current_pos[0] = NAN;
+  in.linear_velocity_limit = 3.0f;
+
+  const PositionControllerOutput out = computePositionControl(in, cfg);
+  checkReason(out.reason, PositionControllerReason::InvalidCommand, "NanFeedback: InvalidCommand で止まる");
+  checkClose(out.polar_velocity_r, 0.0f, 1e-6f, "NanFeedback: r = 0");
+}
+
+// 正常なフィールドは防御に引っかからない（crane 版との一致を壊していないこと）。
+static void testPlausibleValuesAreNotRejected(void)
+{
+  PositionControllerConfig cfg;
+  PositionControllerInput in = freshInput();
+  in.target_global_pos[0] = 6.0f;   // フィールド端でも 6m 程度
+  in.target_global_pos[1] = -4.5f;
+  in.current_pos[0] = -6.0f;
+  in.current_pos[1] = 4.5f;
+  in.linear_velocity_limit = 4.0f;
+  in.terminal_velocity_xy[0] = 3.0f;  // ありうる最大級の終端速度
+  in.terminal_velocity_xy[1] = -3.0f;
+  in.terminal_velocity = 5.0f;
+
+  const PositionControllerOutput out = computePositionControl(in, cfg);
+  checkReason(out.reason, PositionControllerReason::Ok, "PlausibleValues: 正常値は弾かれない");
+  check(!out.feedforward_rejected, "PlausibleValues: feedforward も弾かれない");
+}
+
 int main(void)
 {
   printf("position_controller unit test\n");
@@ -364,6 +442,12 @@ int main(void)
   testZeroVelocityLimitMeansStop();
   testOutputDirectionIsGlobal();
   testTerminalVelocityClamp();
+
+  printf("\n-- 未設定フィールドの防御 --\n");
+  testUnsetFeedforwardIsIgnored();
+  testUnsetTargetStops();
+  testNanFeedbackStops();
+  testPlausibleValuesAreNotRejected();
 
   printf("\n-- 安全停止 --\n");
   testStopEmergency();
