@@ -45,6 +45,11 @@ build_binaries() {
   # パケットレイアウトのドリフト検査
   g++ "${CXXFLAGS[@]}" "${BRIDGE_DIR}/robot_packet_layout_test.cpp" -o "${BIN_DIR}/robot_packet_layout_test.out"
 
+  # 位置制御ライブラリの単体テスト。
+  # position_controller.cpp は実機ブリッジとシミュレータ用バイナリの両方が
+  # 同一ソースとしてリンクする (コピーを作らない) ため、ここでの検証が両方に効く。
+  g++ "${CXXFLAGS[@]}" -I"${CONTROL_DIR}" "${CONTROL_DIR}/test_position_controller.cpp" "${CONTROL_DIR}/position_controller.cpp" -o "${BIN_DIR}/test_position_controller.out"
+
   chmod +x "${BIN_DIR}"/*.out
 }
 
@@ -56,6 +61,9 @@ run_tests() {
 
   log "パケットレイアウト検査を実行します"
   "${BIN_DIR}/robot_packet_layout_test.out"
+
+  log "位置制御ライブラリの単体テストを実行します"
+  "${BIN_DIR}/test_position_controller.out"
 }
 
 main() {
