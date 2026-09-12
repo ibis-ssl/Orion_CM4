@@ -427,6 +427,10 @@ int main(int argc, char * argv[])
   uint64_t feedback_discard_count = 0;
   orion::PositionControllerReason pre_reason = orion::PositionControllerReason::FeedbackStale;
   bool pre_ff_rejected = false;
+  // 「最後に表示したときの crane 由来 check_counter」。pre_check_cnt とは別に持つ。
+  // pre_check_cnt は 1 kHz の毎周期で更新されるので、100 Hz の送信ゲートが開く頃には
+  // 必ず最新値と一致してしまい、表示条件として使うと位置制御パスがほぼ無言になる。
+  int last_logged_check_cnt = -1;
 
   while (1) {
     const long long now_ms = get_current_time_ms();
@@ -575,11 +579,15 @@ int main(int argc, char * argv[])
     // 2 つの経路を 1 つのパラメータ化された送信にまとめない。
     // passthrough は crane 由来の check_counter 変化ゲートがそのまま正しく、
     // 位置制御は CM4 採番なのでそのゲートが成立しない（常に変化してしまう）。
+    // 停止理由が変わった周期。送信と表示の両方がこれを見る。
+    const bool safety_changed = position_control_active && (control_out.reason != pre_reason || control_out.feedforward_rejected != pre_ff_rejected);
+
     bool do_send = false;
     if (position_control_active) {
-      if (now_ms - last_tx_time_ms >= tx_period_ms) {
-        do_send = true;
-      }
+      // 安全停止の状態が変わったらレートゲートを待たずに送る。待たせると
+      // crane 断の検出から最大 1/tx_rate_hz (既定 10ms) だけ停止指令が遅れ、
+      // 「crane 断から command_timeout_ms 以内に止まる」を満たせなくなる。
+      do_send = safety_changed || (now_ms - last_tx_time_ms >= tx_period_ms);
     } else if (pre_check_cnt != uart_tx_buf[CHECK_COUNTER]) {
       do_send = true;
     }
@@ -596,9 +604,9 @@ int main(int argc, char * argv[])
 
       // 位置制御パスは既定 100Hz で送るので、毎回表示するとログが溢れる。
       // crane からの新規コマンドか、停止理由が変わったときだけ出す。
-      const bool reason_changed = position_control_active && (control_out.reason != pre_reason || control_out.feedforward_rejected != pre_ff_rejected);
-      const bool crane_updated = pre_check_cnt != latest_cmd[CHECK_COUNTER];
-      if (!position_control_active || crane_updated || reason_changed) {
+      const bool crane_updated = last_logged_check_cnt != (int)(uint8_t)latest_cmd[CHECK_COUNTER];
+      if (!position_control_active || crane_updated || safety_changed) {
+        last_logged_check_cnt = (int)(uint8_t)latest_cmd[CHECK_COUNTER];
         printf("cam %+4d %+4d %2d fps(rx)%2d / %3lld / ", camera.pos_xy[0], camera.pos_xy[1], camera.radius, camera.fps, diff_time);
         printf("ck : %3d / ", (uint8_t)uart_tx_buf[UART_PACKET_SIZE - 1]);
         if (position_control_active) {

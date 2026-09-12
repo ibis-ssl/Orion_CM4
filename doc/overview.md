@@ -412,7 +412,8 @@ crane が vision で見失っているロボットの `target_global_pos` は推
 - `robot_packet_layout_test.out` — crane 版正本からのパケットレイアウトのドリフト検出
 - `test_position_controller.out` — 位置制御則の単体テスト（crane 版テストからの移植を含む）
 - `test_cm4_sim.py` — cm4_sim の結合スモークテスト
-- `test_forward_ai_cmd_v2.py` — 実機ブリッジの結合スモークテスト（`--debug` + pty）
+- `test_forward_ai_cmd_v2.py` — 実機ブリッジの結合スモークテスト（`--debug` + pty）。
+  1 件だけ `--debug` なしの実運用モードで動かし、位置制御の状態表示が実際に出ることを検査する
 
 `test_cm4_sim_chain.py` は実 `simulator-cli` が要るので CI では走らない。
 
@@ -427,4 +428,6 @@ SIMULATOR_CLI=/home/hans/workspace/framework/build/bin/simulator-cli \
 - crane を mode 4 送出に切り替えて `ai_cmd_v2.out` の表示に `mode 4` と `tarPos` が出ること
 - `--tx-rate-hz 500` での UART 占有率。G474 の `uart ORE/FE/NE/PE` と parser timeout
   カウンタが増えないことを ST-Link で確認する
-- crane を止めて 100 ms 以内に車輪が止まること
+- crane を止めて車輪が止まるまでの時間。予算は `--command-timeout-ms`(100) +
+  ポーリング 1 ms + UART 0.72 ms + G474 メインループ 2 ms = **約 104 ms**
+  （`doc/control_packet.md` の「crane 断から車輪が止まるまでの時間」）

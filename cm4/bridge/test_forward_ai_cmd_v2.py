@@ -13,6 +13,8 @@
   3. crane 無通信・feedback 無通信のいずれでも速度指令が 0 になり
      STOP_EMERGENCY が立つ (検収条件 4)。
   4. ロボット ID を決定できないときは黙って 0 号機として動かず落ちる。
+  5. --debug なしの実運用モードで、位置制御の状態表示が実際に出ること。
+     ここだけは pty を実 UART 代わりに使って本物の送信経路を通す。
 
 cm4/firmware/test_*.py と同じ unittest 方式 (pytest は使わない)。
 """
@@ -25,6 +27,7 @@ import socket
 import struct
 import subprocess
 import sys
+import threading
 import time
 import unittest
 
@@ -125,13 +128,14 @@ def checksum(buf):
 class Bridge(object):
     """ai_cmd_v2.out を --debug で起動し、送信されるはずの 72 バイトを読み出す。"""
 
-    def __init__(self, port_base, robot_id=0, extra_args=None):
+    def __init__(self, port_base, robot_id=0, extra_args=None, debug=True):
         self.cmd_port = port_base
         self.cam_port = port_base + 1
         self.feedback_port = port_base + 2
         self.robot_id = robot_id
         self.master, self.slave = pty.openpty()
-        args = [BIN, "--debug", "--serial-port", os.ttyname(self.slave),
+        args = [BIN] + (["--debug"] if debug else [])
+        args += ["--serial-port", os.ttyname(self.slave),
                 "--robot-id", str(robot_id),
                 "--ai-cmd-port", str(self.cmd_port),
                 "--local-cam-port", str(self.cam_port),
@@ -142,9 +146,24 @@ class Bridge(object):
         self.log = open(self.log_path, "w+")
         self.proc = subprocess.Popen(["stdbuf", "-oL"] + args, stdout=self.log, stderr=subprocess.STDOUT, text=True)
         self.tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # --debug なしでは pty へ本当に書く。読み手が居ないと pty のバッファが
+        # 埋まって write_some がブロックし、制御ループごと止まる。
+        self.drain_stop = False
+        self.drain = None
+        if not debug:
+            self.drain = threading.Thread(target=self._drain_pty, daemon=True)
+            self.drain.start()
         time.sleep(0.5)
         if self.proc.poll() is not None:
             raise RuntimeError("ai_cmd_v2.out が起動直後に終了しました:\n" + self._read_log())
+
+    def _drain_pty(self):
+        while not self.drain_stop:
+            try:
+                if not os.read(self.master, 4096):
+                    return
+            except OSError:
+                return
 
     def _read_log(self):
         self.log.flush()
@@ -177,6 +196,7 @@ class Bridge(object):
         return out
 
     def close(self):
+        self.drain_stop = True
         self.proc.terminate()
         try:
             self.proc.wait(timeout=5)
@@ -347,6 +367,30 @@ class ForwardAiCmdV2Test(unittest.TestCase):
             r = dec(frame[CONTROL_MODE_ARGS], frame[CONTROL_MODE_ARGS + 1], 32.767)
             self.assertAlmostEqual(r, 0.0, delta=1e-3, msg="vision 不可でも動いている")
             self.assertTrue(frame[FLAGS] & (1 << STOP_EMERGENCY_BIT))
+
+    def test_position_state_is_logged_in_normal_mode(self):
+        """--debug なしの実運用モードで位置制御の状態表示が出ること。
+
+        他のテストは --debug 経路しか通らないので、実運用の表示だけが無言に
+        なっていても気付けない。表示は「crane から新しい指令が来た周期」と
+        「停止理由が変わった周期」に限る設計なので、crane レート (20Hz) 相当で
+        出て UART 送信レート (100Hz) 相当では出ないことまで検査する。
+        """
+        bridge = self.start(12495, debug=False)
+        counter = 0
+        deadline = time.time() + 1.0
+        while time.time() < deadline:
+            counter = counter + 1 if counter < 200 else 0
+            bridge.send_command(build_command(counter, POSITION_TARGET_WITH_TERMINAL_VELOCITY_MODE, target=(2.0, -1.0)))
+            bridge.send_feedback(0.0, 0.0)
+            time.sleep(0.05)  # 20Hz
+        time.sleep(0.2)
+
+        lines = [ln for ln in bridge._read_log().splitlines() if "POS[" in ln]
+        self.assertTrue(lines, "位置制御の状態が一度も表示されていない:\n" + bridge._read_log()[-2000:])
+        self.assertIn("POS[Ok]", "\n".join(lines))
+        self.assertGreaterEqual(len(lines), 10, "crane の指令ごとに出ていない (%d 行)" % len(lines))
+        self.assertLessEqual(len(lines), 45, "UART 送信のたびに出ている (%d 行)" % len(lines))
 
     def test_malformed_datagrams_are_discarded(self):
         """715 バイト以外は捨てる。旧実装は recv の戻り値を見ていなかった。"""
