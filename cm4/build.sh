@@ -45,6 +45,12 @@ build_binaries() {
   # パケットレイアウトのドリフト検査
   g++ "${CXXFLAGS[@]}" "${BRIDGE_DIR}/robot_packet_layout_test.cpp" -o "${BIN_DIR}/robot_packet_layout_test.out"
 
+  # シミュレータ用の CM4 相当プロセス。
+  # position_controller.cpp を実機ブリッジと同一ソースとしてリンクする
+  # (コピーを作らないことが実機と sim の挙動一致の保証)。
+  # boost に依存しないのでホスト PC (x86_64) でもそのままビルドできる。
+  g++ "${CXXFLAGS[@]}" -I"${CONTROL_DIR}" "${BRIDGE_DIR}/cm4_sim.cpp" "${CONTROL_DIR}/position_controller.cpp" -o "${BIN_DIR}/cm4_sim.out"
+
   # 位置制御ライブラリの単体テスト。
   # position_controller.cpp は実機ブリッジとシミュレータ用バイナリの両方が
   # 同一ソースとしてリンクする (コピーを作らない) ため、ここでの検証が両方に効く。
@@ -64,6 +70,9 @@ run_tests() {
 
   log "位置制御ライブラリの単体テストを実行します"
   "${BIN_DIR}/test_position_controller.out"
+
+  log "cm4_sim の結合スモークテストを実行します"
+  (cd "${BRIDGE_DIR}" && python3 -m unittest test_cm4_sim)
 }
 
 main() {

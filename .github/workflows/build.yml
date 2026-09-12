@@ -22,9 +22,12 @@ jobs:
           sudo apt-get install -y build-essential libboost-all-dev
 
       # cm4/build.sh は setup.sh / update.sh と同じ唯一のビルド定義。
-      # 末尾で robot_packet_layout_test.out を実行し、crane 版正本からの
-      # パケットレイアウトのドリフトを検出する。
-      - name: ビルドとパケットレイアウト検査
+      # 末尾で次を実行する:
+      #   - robot_packet_layout_test.out: crane 版正本からのパケットレイアウトのドリフト検出
+      #   - test_position_controller.out: 位置制御則の単体テスト
+      #   - test_cm4_sim.py: cm4_sim の結合スモークテスト
+      # test_cm4_sim_chain.py は simulator-cli (framework) が要るので CI では走らない。
+      - name: ビルドとテスト
         run: ./cm4/build.sh
 
       # test_main_uart_stability.py は実機 UART が必要なので CI からは除外する。
