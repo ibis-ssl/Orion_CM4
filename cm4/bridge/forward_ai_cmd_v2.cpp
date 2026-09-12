@@ -514,6 +514,7 @@ int main(int argc, char * argv[])
       in.terminal_velocity = cmd.terminal_velocity;
       in.linear_velocity_limit = cmd.linear_velocity_limit;
       in.stop_emergency = cmd.stop_emergency;
+      in.vision_available = cmd.is_vision_available;
       in.has_command = has_command;
       in.command_time_ms = (uint64_t)command_time_ms;
       // crane の vision_global_pos ではなく G474 feedback の位置で閉じる。

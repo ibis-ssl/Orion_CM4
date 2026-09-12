@@ -51,6 +51,14 @@ struct PositionControllerInput
   float terminal_velocity = 0.f;             // byte 36..37 (到達時の速度上限スカラー)
   float linear_velocity_limit = 0.f;         // byte 14..15
   bool stop_emergency = false;               // byte 22 bit3
+  // byte 22 bit0。crane の vision がこのロボットを捉えているか。
+  //
+  // false のとき crane の target_global_pos は「見えていないロボット」に対する
+  // 推測値なので、そこへ向かって走ってはいけない。G474 は state_func.c:314 で
+  // 同じ条件でホイールを止めるが、simulator-cli はこのビットを復号するだけで
+  // 何もしない (src/simulator/ibis_protocol.h:145)。ここで止めないと実機は
+  // 止まり sim は走るという食い違いが生まれ、A/B 比較の数値が意味を失う。
+  bool vision_available = false;
   bool has_command = false;                  // crane パケットを 1 度でも受けたか
   uint64_t command_time_ms = 0;              // 最後に crane パケットを受けた時刻
 
@@ -78,6 +86,7 @@ enum class PositionControllerReason {
   StopEmergency,   // crane が STOP_EMERGENCY を立てた
   CommandStale,    // crane からのパケットが途絶した
   FeedbackStale,   // G474 feedback が途絶した（起動直後の未受信を含む）
+  VisionUnavailable,  // crane がこのロボットを vision で捉えていない (byte 22 bit0 = 0)
   InvalidCommand,  // 位置が物理的にありえない値（未設定フィールドの復号結果）
 };
 

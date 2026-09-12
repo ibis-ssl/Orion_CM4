@@ -75,6 +75,12 @@ PositionControllerOutput computePositionControl(const PositionControllerInput & 
     // feedback が位置制御ループ内で唯一の位置信号。起動直後の未受信もここに入る。
     return stopped(PositionControllerReason::FeedbackStale, true);
   }
+  if (!input.vision_available) {
+    // crane が見失っている間の target_global_pos は推測値。実機 G474 も同条件で
+    // 止める (state_func.c:314) ので、CM4 が先に止めても実機の挙動は変わらない。
+    // 変わるのは sim 側で、これで実機と揃う。
+    return stopped(PositionControllerReason::VisionUnavailable, true);
+  }
 
   // --- 未設定フィールドの防御（kImplausibleMagnitude の説明を参照） ---
   //
@@ -142,6 +148,8 @@ const char * toString(PositionControllerReason reason)
       return "CommandStale";
     case PositionControllerReason::FeedbackStale:
       return "FeedbackStale";
+    case PositionControllerReason::VisionUnavailable:
+      return "VisionUnavailable";
     case PositionControllerReason::InvalidCommand:
       return "InvalidCommand";
   }

@@ -64,6 +64,7 @@ static PositionControllerInput freshInput(void)
   in.command_time_ms = 1000;
   in.has_feedback = true;
   in.feedback_time_ms = 1000;
+  in.vision_available = true;
   in.now_ms = 1000;
   in.current_pos[0] = 0.f;
   in.current_pos[1] = 0.f;
@@ -301,6 +302,29 @@ static void testFeedbackTimeout(void)
   checkReason(computePositionControl(never, cfg).reason, PositionControllerReason::FeedbackStale, "FeedbackTimeout: 未受信 (起動直後) も FeedbackStale");
 }
 
+// crane が vision でロボットを捉えていないときは止めること。
+//
+// 実機 G474 は state_func.c:314 の同じ条件でホイールを止めるが、simulator-cli は
+// このビットを復号するだけで何もしない。CM4 で止めることで実機と sim が揃う。
+static void testVisionUnavailableStops(void)
+{
+  PositionControllerConfig cfg;
+  PositionControllerInput in = freshInput();
+  in.target_global_pos[0] = 5.0f;
+  in.linear_velocity_limit = 3.0f;
+  in.vision_available = false;
+
+  const PositionControllerOutput out = computePositionControl(in, cfg);
+  checkClose(out.polar_velocity_r, 0.0f, 1e-6f, "VisionUnavailable: 速度ゼロ");
+  checkReason(out.reason, PositionControllerReason::VisionUnavailable, "VisionUnavailable: reason");
+  check(out.stop_emergency, "VisionUnavailable: STOP_EMERGENCY を立てる");
+
+  // 途絶判定のほうが優先されること（止まる理由として先に来る）。
+  PositionControllerInput stale = in;
+  stale.now_ms = 2000;  // crane から 1000ms
+  checkReason(computePositionControl(stale, cfg).reason, PositionControllerReason::CommandStale, "VisionUnavailable: crane 断のほうが優先");
+}
+
 // 時刻が巻き戻っても unsigned underflow で誤判定しないこと。
 // G474 の USART2 パーサが 2026-08 に同じ形のバグで不安定化した前例がある。
 static void testNoUnsignedUnderflow(void)
@@ -454,6 +478,7 @@ int main(void)
   testCommandTimeout();
   testFeedbackTimeout();
   testNoUnsignedUnderflow();
+  testVisionUnavailableStops();
 
   printf("\n%s (%d failure%s)\n", g_failures == 0 ? "PASS" : "FAIL", g_failures, g_failures == 1 ? "" : "s");
   return g_failures == 0 ? 0 : 1;

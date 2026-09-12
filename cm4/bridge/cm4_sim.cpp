@@ -676,6 +676,7 @@ int main(int argc, char * argv[])
       in.terminal_velocity = cmd.terminal_velocity;
       in.linear_velocity_limit = cmd.linear_velocity_limit;
       in.stop_emergency = cmd.stop_emergency;
+      in.vision_available = cmd.is_vision_available;
       in.has_command = st.has_command;
       in.command_time_ms = st.command_time_ms;
       in.current_pos[0] = st.feedback_pos[0];

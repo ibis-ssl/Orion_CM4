@@ -327,6 +327,27 @@ class ForwardAiCmdV2Test(unittest.TestCase):
             self.assertAlmostEqual(r, 0.0, delta=1e-3)
             self.assertTrue(frame[FLAGS] & (1 << STOP_EMERGENCY_BIT))
 
+    def test_stops_when_vision_is_unavailable(self):
+        """crane が見失っている間の target_global_pos は推測値。そこへ走ってはならない。
+
+        G474 は state_func.c:314 の同じ条件でホイールを止めるので実機の挙動は
+        変わらないが、CM4 で止めることで simulator-cli 側（このビットを見ない）と
+        挙動が揃う。
+        """
+        bridge = self.start(12475)
+        for c in range(1, 8):
+            bridge.send_command(build_command(c, POSITION_TARGET_WITH_TERMINAL_VELOCITY_MODE, target=(2.0, -1.0), flags=0x00))
+            bridge.send_feedback(0.0, 0.0)
+            time.sleep(0.03)
+        time.sleep(0.1)
+        frames = bridge.frames()
+        self.assertTrue(frames)
+        for frame in frames:
+            self.assertEqual(frame[CONTROL_MODE], POLAR_VELOCITY_TARGET_MODE)
+            r = dec(frame[CONTROL_MODE_ARGS], frame[CONTROL_MODE_ARGS + 1], 32.767)
+            self.assertAlmostEqual(r, 0.0, delta=1e-3, msg="vision 不可でも動いている")
+            self.assertTrue(frame[FLAGS] & (1 << STOP_EMERGENCY_BIT))
+
     def test_malformed_datagrams_are_discarded(self):
         """715 バイト以外は捨てる。旧実装は recv の戻り値を見ていなかった。"""
         bridge = self.start(12480)

@@ -335,6 +335,18 @@ mode 3 の素通し経路（`--passthrough` を含む）では従来どおり cr
 テストを書くときは **使わないフィールドも明示的に `0.0` をエンコードして埋めること**。
 `bytearray(64)` のままだと全フィールドが `-32.767` になる。
 
+### IS_VISION_AVAILABLE を CM4 でも見る
+
+crane が vision で見失っているロボットの `target_global_pos` は推測値なので、
+`position_controller` は byte 22 bit0 が 0 のとき停止する（`reason = VisionUnavailable`）。
+
+実機 G474 は `state_func.c:314` の同じ条件でホイールを止めるので**実機の挙動は変わらない**。
+変わるのは sim 側で、simulator-cli はこのビットを復号するだけで何にも使っていない
+（`src/simulator/ibis_protocol.h:145`）。CM4 で止めないと「実機は止まるが sim は走る」
+という食い違いが残り、A/B 比較の数値が意味を失う。
+
+テストを書くときは **FLAGS に bit0 を立てること**。立て忘れるとロボットは動かない。
+
 ### cm4_sim の使い方（ホスト PC 専用）
 
 `cm4_sim.out` は実機では動かさないので `cm4/lancher.py` の起動対象に入れていない。
@@ -390,6 +402,8 @@ mode 3 の素通し経路（`--passthrough` を含む）では従来どおり cr
   **タイムアウト値が実機 250 ms に対し cm4_sim 既定 100 ms である点に注意。**
 - シミュレータ側の G474 相当は **125 Hz** で、実機の G474（500 Hz）より粗い。
   ゲインを詰めるときに影響する。
+- simulator-cli は `IS_VISION_AVAILABLE` を見ない（上記）。CM4 側で止めているので
+  両構成とも同じ条件で止まるが、素通し経路では**下流が止めないまま**であることに注意する。
 
 ### テスト
 

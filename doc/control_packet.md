@@ -284,14 +284,31 @@ mode 4 を受けると `cm4/control/position_controller.cpp` を通します。�
 
 次のいずれかで速度指令をゼロにし、`STOP_EMERGENCY`(byte 22 bit3) を立てます。
 
-| 条件 | 既定 |
-|---|---|
-| crane が `STOP_EMERGENCY` を立てた | — |
-| crane からのパケットが途絶 | `--command-timeout-ms 100` |
-| G474 feedback が途絶（起動直後の未受信を含む） | `--feedback-timeout-ms 100` |
+| 条件 | `reason` | 既定 |
+|---|---|---|
+| crane が `STOP_EMERGENCY` を立てた | `StopEmergency` | — |
+| crane からのパケットが途絶 | `CommandStale` | `--command-timeout-ms 100` |
+| G474 feedback が途絶（起動直後の未受信を含む） | `FeedbackStale` | `--feedback-timeout-ms 100` |
+| crane が vision でこのロボットを見失っている | `VisionUnavailable` | — |
+| 目標位置・現在位置が物理的にありえない値 | `InvalidCommand` | — |
+
+判定はこの表の順で、先に成立したものが理由になります。
 
 安全停止時は `KICK_POWER` / `DRIBBLE_POWER` / `ENABLE_CHIP` も落とします。
 古いキック指令を撃ち続けないためです。
+
+#### IS_VISION_AVAILABLE (byte 22 bit0) を CM4 でも見ます
+
+crane が見失っている間の `target_global_pos` は「見えていないロボット」に対する
+推測値なので、そこへ向かって走らせてはいけません。
+
+実機 G474 は `Core/Src/state_func.c:314` で `!is_vision_available` のときホイールを
+止めるので、**実機の挙動はこれまでと変わりません**。変わるのは sim 側です。
+simulator-cli はこのビットを復号するだけで何にも使っていない
+（`src/simulator/ibis_protocol.h:145`）ので、CM4 で止めないと
+「実機は止まるが sim は走る」という食い違いが残り、A/B 比較の数値が意味を失います。
+
+判定は `position_controller` にあるので、実機バイナリと `cm4_sim` が同じ経路を通ります。
 
 判定は `position_controller` の中にあるので、**実機バイナリと `cm4_sim` が必ず同じ判定を
 通ります**。
