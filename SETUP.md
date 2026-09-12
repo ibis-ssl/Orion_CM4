@@ -90,9 +90,11 @@ uv run cm4-fleet deploy --all
 これを呼ぶだけです）。sudo も apt も使わないので、ホスト PC (x86_64) でもそのまま実行できます。
 
 ```bash
-./cm4/build.sh              # ビルド + パケットレイアウト検査
+./cm4/build.sh              # ビルド + テスト一式
 ./cm4/build.sh --no-tests   # ビルドのみ
 ```
+
+テスト一式は実機 UART も STM32 も使わないので、ホスト PC でそのまま走ります。
 
 出力は `cm4/bin/` です。
 
@@ -101,6 +103,8 @@ uv run cm4-fleet deploy --all
 | `ai_cmd_v2.out` | AI 制御 UDP を受けて UART で STM32 へ送るブリッジ |
 | `robot_feedback.out` | STM32 からの 128B feedback を multicast へ再配信 |
 | `robot_packet_layout_test.out` | `robot_packet.h` が crane 側正本からドリフトしていないか検査 |
+| `test_position_controller.out` | 位置制御則の単体テスト |
+| `cm4_sim.out` | シミュレータ用の CM4 相当プロセス（**ホスト PC 専用**。実機では使わない） |
 
 ### ai_cmd_v2.out
 
@@ -109,15 +113,40 @@ uv run cm4-fleet deploy --all
 - `--serial-port` で UART デバイスを変更できる（既定 `/dev/serial0`）。
 - `--ai-cmd-port` / `--local-cam-port` で待ち受けポートを変更できる
   （既定 `12345` / `8890`。ホスト PC でのテスト用）。
+- `--robot-id` でロボット ID を明示指定できる。既定は `wlan0` の IPv4 最終オクテット
+  `- 100` で、**決定できない場合は 0 号機として動かず終了します**。
+- `--passthrough` で mode 4 を位置制御せず素通しする（旧構成との A/B 比較用）。
+- `--tx-rate-hz` で位置制御パスの UART 送信レートを変更できる（既定 `100`）。
+  500 Hz は G474 メインループ相当ですが UART 占有率 36% になるので、ST-Link で
+  `ORE`/`FE`/`NE`/`PE` を確認してから使ってください。
+- `--kp` / `--decel` / `--tolerance` / `--command-timeout-ms` / `--feedback-timeout-ms`
+  で位置制御の定数を変更できる。
+- `-h` で全オプションを表示します。
 
 ```bash
 ./cm4/bin/ai_cmd_v2.out --debug
 ```
 
+位置制御の詳細は [制御パケット](doc/control_packet.md) と
+[overview](doc/overview.md) を参照してください。
+
 ### robot_feedback.out
 
 - `-n` でIP指定(例:101)
+- `/dev/serial0` の**唯一の読み手**です。UART から読んだ 128B を multicast へ再配信すると
+  同時に、`127.0.0.1:(50000 + 機体番号)` へ loopback unicast でも投げます。
+  `ai_cmd_v2.out` はこれを受けて位置制御ループを閉じます。
 
 ```bash
 ./cm4/bin/robot_feedback.out -n 101
+```
+
+### cm4_sim.out（ホスト PC 専用）
+
+シミュレータ環境で CM4 の役を演じるプロセスです。実機では使いません。
+`ai_cmd_v2.out` と**同一の位置制御ソース**をリンクしています。
+使い方は [overview](doc/overview.md) の「ロボット側位置制御」の節を参照してください。
+
+```bash
+./cm4/bin/cm4_sim.out --help
 ```
