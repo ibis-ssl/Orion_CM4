@@ -1,11 +1,31 @@
 ﻿# 制御パケット
 
-このドキュメントは、AI から CM4 を経由して STM32 へ送る制御パケットの責務とレイアウトをまとめます。
+このドキュメントは、AI(crane) から CM4 を経由して STM32(G474) へ送る制御パケットの責務とレイアウトをまとめます。
+
+## SSOT（この仕様の正本）
+
+`RobotCommandSerializedV2`（64 バイト）のレイアウトの正本は **crane 側**の
+`crane/crane_sender/include/crane_sender/robot_packet.h` です。
+次の 4 者が一致していなければなりません。
+
+| リポジトリ | ファイル | 状態 |
+|---|---|---|
+| crane | `crane_sender/include/crane_sender/robot_packet.h` | **正本** |
+| G474_Orion_main | `Core/Inc/robot_packet.h` | byte 0..31 一致（32..37 は G474 が使わないので未定義） |
+| framework | `src/simulator/ibis_protocol.h` | 一致 |
+| Orion_CM4 | `cm4/bridge/robot_packet.h` | 一致（2026-09 に旧レイアウトから統一） |
+
+過去に 2 度ドリフトしているため、`cm4/bridge/robot_packet_layout_test.cpp` が
+byte 0..37 の全オフセット・`ControlMode`・`FlagAddress` を `static_assert` で固定し、
+さらにゴールデンベクタで量子化挙動（丸めずに切り捨てる）まで検査します。
+`cm4/build.sh` と CI から実行されます。**`robot_packet.h` を編集したら必ず通すこと。**
 
 ## 対象ファイル
 
 - `cm4/bridge/robot_packet.h`
-  - 64 バイトの `RobotCommandSerializedV2` と、C++ 側のシリアライズ / デシリアライズ処理を定義します。
+  - 64 バイトの `RobotCommandSerializedV2` と、シリアライズ / デシリアライズ処理を定義します。
+- `cm4/bridge/robot_packet_layout_test.cpp`
+  - 上記のレイアウトが正本からドリフトしていないことを検査します。
 - `cm4/bridge/forward_ai_cmd_v2.cpp`
   - AI から受け取った制御パケットとローカルカメラ情報をまとめ、UART で STM32 へ送ります。
 - `host/lib/cm4_control_client.py`
@@ -25,83 +45,127 @@
 
 `/stop` は上記の関連プロセスを `pkill -f` で停止します。
 
+## パケット全体（715 バイト）
+
+crane は 11 台分を **1 データグラム 715 バイト**にまとめて UDP ポート `12345` へ送ります。
+
+```text
+1 スロット = robot_id 1 バイト + RobotCommandSerializedV2 64 バイト = 65 バイト
+715 バイト = 65 バイト x 11 スロット（固定）
+```
+
+- スロット `i`（0..10）の先頭バイトは **スロット添字そのもの**が入ります。
+- crane がコマンドを持たないロボットのスロットは **コマンド 64 バイトがすべてゼロ**になります。
+  受信側は「64 バイトが全ゼロ」または「`robot_id` が範囲外」で明示的にスキップしてください。
+  `control_mode = 0` は現在の `ControlMode` に存在しない値なので、無効スロットの印として使えます。
+- **使用中スロットの byte 28..31 と 38..63 はゼロとは限りません。**
+  crane の `ibis_sender_node.cpp` は `RobotCommandSerializedV2` を `{}` なしで宣言しており、
+  シリアライズが書かない領域にはスタックの残骸が乗ります。
+  受信側は「予約領域＝0」を前提にしないでください。
+
+`cm4/bridge/forward_ai_cmd_v2.cpp` は自機の `robot_id` と一致するスロットだけを取り出します。
+`robot_id` は `wlan0` の IPv4 最終オクテットから `-100` して求めます
+（`get_machine_id()`。`wlan0` が無い環境では 0 になります）。
+
 ## RobotCommandSerializedV2
 
 `cm4/bridge/robot_packet.h` の `RobotCommandSerializedV2` は 64 バイト固定長です。
+実際に使用しているのは byte 0..37 で、38..63 は未使用です。
 
-### 固定フィールド
+### バイトオフセット
 
-- `0`: `HEADER`
-- `1`: `CHECK_COUNTER`
-- `2..3`: `VISION_GLOBAL_X`
-- `4..5`: `VISION_GLOBAL_Y`
-- `6..7`: `VISION_GLOBAL_THETA`
-- `8..9`: `TARGET_GLOBAL_THETA`
-- `10`: `KICK_POWER`
-- `11`: `DRIBBLE_POWER`
-- `12..13`: `SPEED_LIMIT`
-- `14..15`: `OMEGA_LIMIT`
-- `16..17`: `LATENCY_TIME_MS`
-- `18..19`: `ELAPSED_TIME_MS_SINCE_LAST_VISION`
-- `20`: `FLAGS`
-- `21`: `CONTROL_MODE`
-- `22..`: `CONTROL_MODE_ARGS`
+| offset | 名前 | 符号化 |
+|---|---|---|
+| `0` | `HEADER` | 生値（crane は `0x00`。CM4 が UART へ出す直前に `254` で上書きする） |
+| `1` | `CHECK_COUNTER` | 生値（後述） |
+| `2..3` | `VISION_GLOBAL_X` | float, range `32.767` |
+| `4..5` | `VISION_GLOBAL_Y` | float, range `32.767` |
+| `6..7` | `VISION_GLOBAL_THETA` | float, range `M_PI` |
+| `8..9` | `TARGET_GLOBAL_THETA` | float, range `M_PI` |
+| `10` | `KICK_POWER` | `uint8 = value * 20` |
+| `11` | `DRIBBLE_POWER` | `uint8 = value * 20` |
+| `12..13` | `ACCELERATION_LIMIT` | float, range `32.767` |
+| `14..15` | `LINEAR_VELOCITY_LIMIT` | float, range `32.767` |
+| `16..17` | `ANGULAR_VELOCITY_LIMIT` | float, range `32.767` |
+| `18..19` | `LATENCY_TIME_MS` | **uint16 生値**（float 変換なし） |
+| `20..21` | `ELAPSED_TIME_MS_SINCE_LAST_VISION` | **uint16 生値** |
+| `22` | `FLAGS` | 後述 |
+| `23` | `CONTROL_MODE` | 3 または 4 |
+| `24..31` | `CONTROL_MODE_ARGS` | **union**（`CONTROL_MODE` により意味が変わる） |
+| `32..33` | `TARGET_GLOBAL_POS_X` | float, range `32.767` |
+| `34..35` | `TARGET_GLOBAL_POS_Y` | float, range `32.767` |
+| `36..37` | `TERMINAL_VELOCITY` | float, range `32.767` |
+
+> **旧レイアウトとの違い**: 2026-09 以前の Orion_CM4 は `ACCELERATION_LIMIT` を持たず
+> `SPEED_LIMIT`(12..13) / `OMEGA_LIMIT`(14..15) だったため、**byte 12 以降が 2 バイトずれて**
+> いました。`FLAGS` は 20、`CONTROL_MODE` は 21 でした。
+> `forward_ai_cmd_v2.cpp` が受信バイト列を `memcpy` で素通しするだけの
+> バイト転送器だったため顕在化していませんでしたが、デバッグ表示は誤った値を出していました。
 
 ### FLAGS
 
 - bit `0`: `IS_VISION_AVAILABLE`
 - bit `1`: `ENABLE_CHIP`
-- bit `2`: `LIFT_DRIBBLER`
+- bit `2`: 未使用（旧 `LIFT_DRIBBLER` の跡地。常に 0）
 - bit `3`: `STOP_EMERGENCY`
-- bit `4`: `PRIORITIZE_MOVE`
-- bit `5`: `PRIORITIZE_ACCURATE_ACCELERATION`
+- bit `4..7`: 未使用（旧 `PRIORITIZE_MOVE` / `PRIORITIZE_ACCURATE_ACCELERATION` の跡地。常に 0）
 
 ### スケーリング
 
 - 位置と速度の多くは `convertFloatToTwoByte(value, 32.767)` で 2 バイト化します。
-- 角度は `convertFloatToTwoByte(value, M_PI)` で 2 バイト化します。
+  量子化幅は `2 * 32.767 / 65534` ≒ **1 mm / 1 mm/s** です。
+- 角度は `convertFloatToTwoByte(value, M_PI)` で 2 バイト化します。量子化幅は約 `0.0001 rad`。
 - `kick_power` と `dribble_power` は `value * 20` を 1 バイトに入れます。
 - `latency_time_ms` と `elapsed_time_ms_since_last_vision` は `uint16_t` を上位 / 下位バイトに分けます。
+- **丸めは行いません。** `(uint16_t)(32767.f * (val / range) + 32767.f)` の切り捨てです。
+  `roundf()` を足すと crane と 1 LSB ずれます（レイアウト検査テストが検出します）。
+- 範囲外の値はクランプされます。crane は `std::cout` へ警告を出しますが、CM4 は制御ループ内で
+  毎周期呼ぶため出力が溢れます。CM4 はクランプ回数を `robotPacketClampCount()` で数え、
+  デバッグ表示にまとめて出します。
 
 ## 制御モード
 
-`CONTROL_MODE` は次の値です。
+`CONTROL_MODE`(byte 23) は次の値です。
 
-- `0`: `LOCAL_CAMERA_MODE`
-- `1`: `POSITION_TARGET_MODE`
-- `2`: `SIMPLE_VELOCITY_TARGET_MODE`
-- `3`: `VELOCITY_TARGET_WITH_TRAJECTORY_MODE`
+| 値 | 名前 | ARGS(24..31) の意味 | 送信元 → 受信先 |
+|---|---|---|---|
+| `3` | `POLAR_VELOCITY_TARGET_MODE` | `target_global_velocity_r`, `target_global_velocity_theta` | CM4 → G474 / cm4_sim → simulator-cli |
+| `4` | `POSITION_TARGET_WITH_TERMINAL_VELOCITY_MODE` | `terminal_velocity_x`, `terminal_velocity_y` | crane → CM4 / crane → cm4_sim |
 
-### LOCAL_CAMERA_MODE
+> **`CONTROL_MODE_ARGS` は union です。`CONTROL_MODE` を見ずに復号してはいけません。**
+> mode 4 のパケットを mode 3 として復号すると `terminal_velocity_x/y` が `r/theta` として
+> 読まれ、無言で暴走します。
 
-`CONTROL_MODE_ARGS` には次を入れます。
+**G474 は mode 3 しか実装していません。** mode 4 は CM4 が消費して mode 3 に変換するものであり、
+G474 へ素通ししてはいけません。
 
-- `0..1`: `ball_pos[0]`
-- `2..3`: `ball_pos[1]`
-- `4..5`: `ball_vel[0]`
-- `6..7`: `ball_vel[1]`
-- `8..9`: `target_global_vel[0]`
-- `10..11`: `target_global_vel[1]`
+### POLAR_VELOCITY_TARGET_MODE (3)
 
-### POSITION_TARGET_MODE
+- `24..25`: `target_global_velocity_r`（range 32.767）
+- `26..27`: `target_global_velocity_theta`（range 32.767、**グローバル方向のラジアン**）
+- `28..31`: 未使用
 
-- `0..1`: `target_global_pos[0]`
-- `2..3`: `target_global_pos[1]`
-- `4..5`: `terminal_velocity`
+### POSITION_TARGET_WITH_TERMINAL_VELOCITY_MODE (4)
 
-### SIMPLE_VELOCITY_TARGET_MODE
+- `24..25`: `terminal_velocity_x`（range 32.767）
+- `26..27`: `terminal_velocity_y`（range 32.767）
+- `28..31`: 未使用
 
-- `0..1`: `target_global_vel[0]`
-- `2..3`: `target_global_vel[1]`
+目標位置そのものは mode_args ではなく **固定フィールド** `TARGET_GLOBAL_POS_X/Y`(32..35) に、
+到達時の速度上限（スカラー）は `TERMINAL_VELOCITY`(36..37) に入ります。
 
-### VELOCITY_TARGET_WITH_TRAJECTORY_MODE
+### `LINEAR_VELOCITY_LIMIT = 0` の扱い
 
-- `0..1`: `target_global_vel[0]`
-- `2..3`: `target_global_vel[1]`
-- `4..5`: `trajectory_global_origin[0]`
-- `6..7`: `trajectory_global_origin[1]`
-- `8..9`: `trajectory_origin_angle`
-- `10..11`: `trajectory_curvature`
+このフィールドの `0` は **上流と下流で意味が違います**。
+
+- crane の位置制御則（と CM4 の `position_controller`）は `clampNorm` の仕様上
+  `0` を **「停止」** として扱います。
+- framework の `ibis_protocol.h` は同じフィールドを `0 means "no limit"` と定義し、
+  simulator-cli は `> 0` のときだけ制限を適用します。
+
+CM4 では**上流（位置制御器）の解釈が先に勝ちます**。`linear_velocity_limit = 0` なら
+位置制御器が `r = 0` を出すので、そのバイトを下流へ素通ししても結果は変わりません。
+これは事故ではなく決定であり、`position_controller` の単体テストで固定しています。
 
 ## cm4/bridge/forward_ai_cmd_v2.cpp
 
@@ -110,21 +174,42 @@
 ### 入力
 
 - AI 制御パケット
-  - UDP port: `12345`
-  - 1 台分は `RobotCommandSerializedV2` 64 バイト + 機体 index 1 バイトです。
-  - `AI_CMD_V2_ROBOT_NUM` は `11` です。
+  - UDP port: `12345`（`--ai-cmd-port` で変更可。ホスト PC でのテスト用）
+  - 715 バイト固定（`(64 + 1) * 11`）。
 - ローカルカメラパケット
-  - UDP port: `8890`
+  - UDP port: `8890`（`--local-cam-port` で変更可）
   - `CAM_BUF_SIZE` は `7` バイトです。
 
 ### UART 送信
 
-- UART port: `/dev/serial0`（CM4_108ではPL011の`ttyAMA0`）
+- UART port: `/dev/serial0`（CM4_108ではPL011の`ttyAMA0`）。`--serial-port` で変更可。
 - 既定 baudrate: `1000000`
 - `-s` で baudrate を変更できます。
 - 送信サイズは `AI_CMD_V2_SIZE + CAM_BUF_SIZE + 1`、つまり `72` バイトです。
 - UART 送信バッファの先頭は `254` に上書きします。
-- 末尾 1 バイトはチェックサムです。
+- 末尾 1 バイトはチェックサムです（byte 0..70 の総和 & 0xFF）。
+
+72 バイト x 10 bit / 1 Mbps = **720 us/パケット**です。送信レートを上げると UART 占有率が
+そのまま上がるので注意してください（500 Hz で 36%、1 kHz で 72%）。
+
+### 送信ゲートとポーリング
+
+メインループは `usleep(1000)` の **1 kHz ポーリング**です。UDP は非ブロッキングで読み、
+受信が無ければ前回のバッファがそのまま残ります。
+
+UART へ実際に送るのは **`CHECK_COUNTER`(byte 1) が前回と変化したとき**だけです。
+つまり従来構成では crane の送出レート（約 60 Hz）でしか UART に流れません。
+
+### CHECK_COUNTER
+
+crane は `RobotCommands` メッセージ 1 通につき 1 回インクリメントし、その値を
+**全ロボット共通**で入れます（`0 → 201` で折り返すので実質 1..200 の巡回）。
+
+G474 の `checkConnect2AI()`（`Core/Src/ai_comm.c`）は
+**`check_counter` が変化し続けること**を AI 接続生存の判定に使います。
+`AI_CMD_TIMEOUT(0.5) * MAIN_LOOP_CYCLE(500)` = **250 ms** 変化が無いと `connected_ai = false` です。
+
+1 バイトなので値は周期的に一巡します。**ロス検出用のシーケンス番号としては使えません。**
 
 ### ローカルカメラ情報の挿入
 

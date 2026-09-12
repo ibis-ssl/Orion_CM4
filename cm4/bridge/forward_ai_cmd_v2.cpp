@@ -22,7 +22,8 @@
 #include "robot_packet.h"
 
 // CM4のprimary UARTを示す安定名。現在はPL011 (/dev/ttyAMA0) に割り当てる。
-#define SERIAL_PORT "/dev/serial0"
+// --serial-port で上書きできる（ホストPCでの疑似端末テスト用）。
+#define DEFAULT_SERIAL_PORT "/dev/serial0"
 
 constexpr int AI_CMD_V2_SIZE = 64;
 constexpr int AI_CMD_V2_ROBOT_NUM = 11;
@@ -93,6 +94,40 @@ int getUartBaudrate(int argc, char * argv[])
   return speed;
 }
 
+const char * getSerialPort(int argc, char * argv[])
+{
+  const char * port = DEFAULT_SERIAL_PORT;
+
+  for (int i = 1; i < argc; ++i) {
+    if (strcmp(argv[i], "--serial-port") == 0) {
+      if (i + 1 < argc) {
+        port = argv[++i];
+      } else {
+        printf("Error: --serial-port option requires a path argument.");
+      }
+    }
+  }
+  return port;
+}
+
+// --ai-cmd-port / --local-cam-port はホストPCでのテスト用。
+// 既定値は実機構成（AI 指令 12345 / ローカルカメラ 8890）。
+int getIntOption(int argc, char * argv[], const char * name, int default_value)
+{
+  int value = default_value;
+
+  for (int i = 1; i < argc; ++i) {
+    if (strcmp(argv[i], name) == 0) {
+      if (i + 1 < argc) {
+        value = std::stoi(argv[++i]);
+      } else {
+        printf("Error: %s option requires an integer argument.", name);
+      }
+    }
+  }
+  return value;
+}
+
 bool isDebugMode(int argc, char * argv[])
 {
   bool debug = false;
@@ -132,25 +167,19 @@ void printParcedData(char buf[])
   printf("Ltcy %3d ", cmd_v2.latency_time_ms);
 
   printf("TarTheta %+6.2f ", cmd_v2.target_global_theta);
-  printf("SpdLmt %4.2f OmgLmt %4.1f ", cmd_v2.speed_limit, cmd_v2.omega_limit);
+  printf("AccLmt %4.2f VelLmt %4.2f OmgLmt %4.1f ", cmd_v2.acceleration_limit, cmd_v2.linear_velocity_limit, cmd_v2.angular_velocity_limit);
 
   printf("dri %+4.2f ", cmd_v2.dribble_power);
-  if (cmd_v2.lift_dribbler) {
-    printf("UP ");
-  } else {
-    printf("DN ");
-  }
   if (cmd_v2.enable_chip) {
     printf("chip %3.2f ", cmd_v2.kick_power);
   } else {
     printf("stlt %3.2f ", cmd_v2.kick_power);
   }
 
-  if (cmd_v2.prioritize_accurate_acceleration) {
-    printf("Pri-Acur ");
-  }
-  if (cmd_v2.prioritize_move) {
-    printf("Pri-Move ");
+  // robot_packet.h は範囲外クランプ時に警告を出さずカウンタを回すだけなので、ここで可視化する。
+  const uint32_t clamp_count = *robotPacketClampCount();
+  if (clamp_count > 0) {
+    printf("clamp %u ", clamp_count);
   }
 
   printf("\n");
@@ -179,11 +208,15 @@ int main(int argc, char * argv[])
   printf("start!! foward ai cmd V2 (multi cast packet), arg : %d\n", argc);
 
   int uart_baudrate = getUartBaudrate(argc, argv);
+  const char * serial_port_path = getSerialPort(argc, argv);
+  int ai_cmd_port = getIntOption(argc, argv, "--ai-cmd-port", 12345);
+  int local_cam_port = getIntOption(argc, argv, "--local-cam-port", 8890);
   bool debug_mode_enabled = isDebugMode(argc, argv);
   int machine_id = get_machine_id();
   printf("debug mode : %d\n", debug_mode_enabled);
-  printf("UART %d bps\n", uart_baudrate);
+  printf("UART %s %d bps\n", serial_port_path, uart_baudrate);
   printf("ID %d\n", machine_id);
+  printf("AI cmd UDP %d / local cam UDP %d\n", ai_cmd_port, local_cam_port);
 
   int local_cam_sock, ai_cmd_sock;
   struct sockaddr_in local_cam_addr;
@@ -199,24 +232,30 @@ int main(int argc, char * argv[])
   ai_cmd_sock = socket(AF_INET, SOCK_DGRAM, 0);
 
   local_cam_addr.sin_family = AF_INET;
-  local_cam_addr.sin_port = htons(8890);
+  local_cam_addr.sin_port = htons(local_cam_port);
   local_cam_addr.sin_addr.s_addr = INADDR_ANY;
   printf("IP : 0x%08x\n", AF_INET);
 
-  bind(local_cam_sock, (struct sockaddr *)&local_cam_addr, sizeof(local_cam_addr));
+  if (bind(local_cam_sock, (struct sockaddr *)&local_cam_addr, sizeof(local_cam_addr)) != 0) {
+    perror("bind(local_cam_sock)");
+    return 1;
+  }
 
   ai_cmd_addr.sin_family = AF_INET;
-  ai_cmd_addr.sin_port = htons(12345);
+  ai_cmd_addr.sin_port = htons(ai_cmd_port);
   ai_cmd_addr.sin_addr.s_addr = INADDR_ANY;
 
-  bind(ai_cmd_sock, (struct sockaddr *)&ai_cmd_addr, sizeof(ai_cmd_addr));
+  if (bind(ai_cmd_sock, (struct sockaddr *)&ai_cmd_addr, sizeof(ai_cmd_addr)) != 0) {
+    perror("bind(ai_cmd_sock)");
+    return 1;
+  }
 
   int val = 1;
   ioctl(local_cam_sock, FIONBIO, &val);
   ioctl(ai_cmd_sock, FIONBIO, &val);
 
   boost::asio::io_service io;
-  boost::asio::serial_port serial(io, SERIAL_PORT);
+  boost::asio::serial_port serial(io, serial_port_path);
   serial.set_option(boost::asio::serial_port_base::baud_rate(uart_baudrate));
   serial.set_option(boost::asio::serial_port_base::character_size(8));
   serial.set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none));

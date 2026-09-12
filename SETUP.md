@@ -1,4 +1,4 @@
-# CM4 セットアップ
+﻿# CM4 セットアップ
 
 この手順は Raspberry Pi CM4 上で実行します。作業ディレクトリは `/home/ibis/Orion_CM4` を前提にしています。
 
@@ -85,12 +85,39 @@ uv run cm4-fleet deploy --all
 
 
 ## 手動ビルド
-g++ cm4/bridge/forward_robot_feedback.cpp -pthread -o cm4/bin/robot_feedback.out
-g++ cm4/bridge/forward_ai_cmd_v2.cpp -pthread -o cm4/bin/ai_cmd_v2.out
 
---debug バイナリ表示になる。マイコン側には送信されない。
--s オプションでボーレートを変更できる。デフォルト2Mbps
- ./cm4/bin/ai_cmd_v2.out --debug
+ビルド定義は `cm4/build.sh` に一本化されています（`cm4/setup.sh` と `cm4/update.sh` は
+これを呼ぶだけです）。sudo も apt も使わないので、ホスト PC (x86_64) でもそのまま実行できます。
 
- -n でIP指定(例:101)
- ./cm4/bin/robot_feedback.out -n 101
+```bash
+./cm4/build.sh              # ビルド + パケットレイアウト検査
+./cm4/build.sh --no-tests   # ビルドのみ
+```
+
+出力は `cm4/bin/` です。
+
+| バイナリ | 用途 |
+|---|---|
+| `ai_cmd_v2.out` | AI 制御 UDP を受けて UART で STM32 へ送るブリッジ |
+| `robot_feedback.out` | STM32 からの 128B feedback を multicast へ再配信 |
+| `robot_packet_layout_test.out` | `robot_packet.h` が crane 側正本からドリフトしていないか検査 |
+
+### ai_cmd_v2.out
+
+- `--debug` バイナリ表示になる。マイコン側には送信されない。
+- `-s` オプションでボーレートを変更できる。**デフォルト 1 Mbps**。
+- `--serial-port` で UART デバイスを変更できる（既定 `/dev/serial0`）。
+- `--ai-cmd-port` / `--local-cam-port` で待ち受けポートを変更できる
+  （既定 `12345` / `8890`。ホスト PC でのテスト用）。
+
+```bash
+./cm4/bin/ai_cmd_v2.out --debug
+```
+
+### robot_feedback.out
+
+- `-n` でIP指定(例:101)
+
+```bash
+./cm4/bin/robot_feedback.out -n 101
+```
