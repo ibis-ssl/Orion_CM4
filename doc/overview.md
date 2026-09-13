@@ -1,4 +1,4 @@
-﻿# overview
+# overview
 
 ## MCUファームウェア更新
 
@@ -62,8 +62,6 @@ payload長別300回試験の初回timeout率は16 byteで0%、128 byteで1.33%�
   - 複数台の CM4 をブラウザから操作する管理 Web UI です。
 - `host/lib/fleet/`
   - ホスト PC から複数の CM4 へ OTA アップデート・SSH 鍵配布・設定配布を行うライブラリです(`cm4-fleet` CLI から利用)。詳細は [フリート管理](fleet.md)。
-- `host/templates/`
-  - 旧 Web 表示用の静的 HTML テンプレートです。
 - `doc/`
   - 通信仕様、セットアップ、運用メモを日本語で残します。
 
@@ -120,7 +118,6 @@ Orion_CM4/
 
   host/
     robot-manager/
-    templates/
 ```
 
 ## CM4 側
