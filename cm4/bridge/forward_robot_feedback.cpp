@@ -1,8 +1,13 @@
-// このファイルはSTM32からUARTで受信した128バイトのロボット状態パケットを、
-// そのままUDP multicastへ転送する処理とパケット構造の定義を担当する。
-#include <arpa/inet.h>
 // このファイルは STM32 から UART で受信した 128 バイトのロボット状態パケットを、
-// host 側へ UDP multicast で転送するブリッジを担当する。
+// host 側へ UDP multicast で転送し、あわせて同一 CM4 上の ai_cmd_v2.out へ
+// loopback unicast で渡すブリッジを担当する。
+//
+// UART の読み手はこのプロセスだけにする。ai_cmd_v2.out が位置制御ループを
+// 閉じるために feedback を必要とするが、/dev/serial0 の読み手を 2 プロセスに
+// 割ると取り合いになるため、ここから loopback で配る。
+// これにより ai_cmd_v2.out の feedback 受信コードとポート番号が、実機と
+// シミュレータ (cm4_sim) で完全に同一になる。
+#include <arpa/inet.h>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <stdint.h>
@@ -12,80 +17,19 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <termios.h>  //ttyパラメータの構造体
-#include <termios.h>
 #include <unistd.h>
 
 #include <boost/array.hpp>
 #include <boost/asio.hpp>
 #include <cstring>
 
+#include "robot_feedback_packet.h"
+
 // CM4のprimary UARTを示す安定名。現在はPL011 (/dev/ttyAMA0) に割り当てる。
 #define SERIAL_PORT "/dev/serial0"
-constexpr int PACKET_SIZE = 128;
-
-#pragma pack(push, 1)
-
-struct RobotFeedbackPacketHeader
-{
-  uint8_t sync0;
-  uint8_t sync1;
-  uint8_t checksum;
-  uint8_t check_counter;
-};
-
-struct RobotFeedbackPacket
-{
-  RobotFeedbackPacketHeader header;
-
-  // STM32 Core/Src/ai_comm.c の sendRobotInfo() に対応するペイロード。
-  // float 値は STM32 側 float_to_uchar4() の生バイト列がそのまま格納される。
-  // したがって little-endian IEEE754 float 前提で読む必要がある。
-  float imu_yaw_deg;                   // [4..7]
-  float battery_voltage_bldc_right;   // [8..11]
-  uint8_t ball_detection[3];           // [12..14]
-  uint8_t kick_state_div10;           // [15]
-  uint16_t current_error_id;          // [16..17] little-endian
-  uint16_t current_error_info;        // [18..19] little-endian
-  float current_error_value;          // [20..23]
-  uint8_t motor_current_x10[4];       // [24..27]
-  uint8_t ball_detection_extra;       // [28]
-  uint8_t temp_motor[4];              // [29..32]
-  uint8_t temp_fet;                   // [33]
-  uint8_t temp_coil[2];               // [34..35]
-  float diff_angle_deg;               // [36..39]
-  float capacitor_boost_voltage;      // [40..43]
-  float vision_based_position_x;      // [44..47]
-  float vision_based_position_y;      // [48..51]
-  float global_odom_speed_x;          // [52..55]
-  float global_odom_speed_y;          // [56..59]
-  uint8_t camera_pos_x_div2;          // [60]
-  uint8_t camera_pos_y;               // [61]
-  uint8_t camera_radius_div4;         // [62]
-  uint8_t camera_fps;                 // [63]
-  float tx_value_array[14];           // [64..119]
-  uint8_t reserved[8];                // [120..127] 現状は未使用。送信側で明示初期化なし。
-};
-
-#pragma pack(pop)
-
-static_assert(sizeof(RobotFeedbackPacket) == PACKET_SIZE, "RobotFeedbackPacket size must be 128 bytes");
-
-enum TxValueIndex {
-  TX_MOUSE_ODOM_X = 0,
-  TX_MOUSE_ODOM_Y,
-  TX_MOUSE_GLOBAL_VEL_X,
-  TX_MOUSE_GLOBAL_VEL_Y,
-  TX_OUTPUT_VEL_X,
-  TX_OUTPUT_VEL_Y,
-  TX_MOTOR_FEEDBACK_0,
-  TX_MOTOR_FEEDBACK_1,
-  TX_MOTOR_FEEDBACK_2,
-  TX_MOTOR_FEEDBACK_3,
-  TX_LOCAL_ODOM_SPEED_MVF_X,
-  TX_LOCAL_ODOM_SPEED_MVF_Y,
-  TX_LOCAL_ODOM_SPEED_MVF_W,
-  TX_MOUSE_QUALITY,
-};
+// パケットのレイアウトは robot_feedback_packet.h が正本。
+// ai_cmd_v2.out と cm4_sim.out も同じ定義を使う (消費者が 3 つに増えたため)。
+constexpr int PACKET_SIZE = FEEDBACK_PACKET_SIZE;
 
 /*
  * RobotFeedbackPacket.tx_value_array の意味:
@@ -175,16 +119,11 @@ int main(int argc, char * argv[])
 
   printf("UART %d bps\n", uart_baudrate);
 
-  int count = 0;
-  char Rxbuf[PACKET_SIZE];
   char buf[PACKET_SIZE];
-  char Rxdata[PACKET_SIZE];
 
   /**
    * シリアル通信の設定
    */
-
-startpoint:
 
   boost::asio::io_service io;
   boost::asio::serial_port serial(io, SERIAL_PORT);
@@ -202,7 +141,6 @@ startpoint:
   int sock;
   struct sockaddr_in addr;
   in_addr_t ipaddr;
-  int cnt_nodata = 0;
 
   sock = socket(AF_INET, SOCK_DGRAM, 0);
 
@@ -216,23 +154,35 @@ startpoint:
     return 1;
   }
 
-  size_t total_length = 0;
+  // 同一 CM4 上の ai_cmd_v2.out へ渡す loopback unicast。
+  // ポート番号は multicast と同じ (50000 + machine_number = 50100 + id)。
+  // unicast は unicast ソケットへ、multicast は multicast ソケットへしか
+  // 配送されないので、同じポート番号でも取り違えは起きない。
+  struct sockaddr_in loopback_addr;
+  memset(&loopback_addr, 0, sizeof(loopback_addr));
+  loopback_addr.sin_family = AF_INET;
+  loopback_addr.sin_port = htons(50000 + machine_number);
+  loopback_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+  printf("loopback : 127.0.0.1:%d (ai_cmd_v2.out の位置制御ループ用)\n", 50000 + machine_number);
 
   char uart_rx_buf[PACKET_SIZE];
   uint32_t buf_idx = 0;
 
   while (1) {
     size_t n = serial.read_some(boost::asio::buffer(buf, sizeof(buf)));
-    for (int i = 0; i < n; i++) {
+    for (size_t i = 0; i < n; i++) {
       /*if(buf[i] == '\n'){
         printf("n = %3d ",n);
       }
       printf("%c",buf[i]);*/
 
-      if (buf[i] == 0xAB && buf_idx == 0) {
+      // char は x86 で符号付き、ARM で符号なし。0x80 以上と比較するので
+      // uint8_t へ明示キャストしないと x86 ビルドで常に false になる。
+      const uint8_t byte = static_cast<uint8_t>(buf[i]);
+      if (byte == 0xAB && buf_idx == 0) {
         uart_rx_buf[buf_idx] = buf[i];
         buf_idx = 1;
-      } else if (buf[i] == 0xEA && buf_idx == 1) {
+      } else if (byte == 0xEA && buf_idx == 1) {
         uart_rx_buf[buf_idx] = buf[i];
         buf_idx = 2;
       } else if (buf_idx >= 2) {
@@ -241,6 +191,7 @@ startpoint:
         if (buf_idx >= PACKET_SIZE) {
           buf_idx = 0;
           sendto(sock, uart_rx_buf, PACKET_SIZE, 0, (struct sockaddr *)&addr, sizeof(addr));
+          sendto(sock, uart_rx_buf, PACKET_SIZE, 0, (struct sockaddr *)&loopback_addr, sizeof(loopback_addr));
           printf("check_counter : %3d / ", (uint8_t)uart_rx_buf[3]);
 
           for (int pi = 0; pi < PACKET_SIZE; pi++) {

@@ -6,7 +6,24 @@
 
 #ifndef CRANE_SENDER__ROBOT_PACKET_H_
 // このファイルは AI 制御コマンドの 64 バイトパケット形式を定義する。
-// CM4 の forward_ai_cmd_v2.cpp から STM32 へ送るデータのシリアライズ責務を持つ。
+// CM4 の forward_ai_cmd_v2.cpp / cm4_sim.cpp が、crane から受けたパケットの
+// デシリアライズと、STM32(G474) へ送るパケットのシリアライズに使う。
+//
+// 【SSOT】このレイアウトの正本は crane 側の
+//   crane/crane_sender/include/crane_sender/robot_packet.h
+// である。crane / G474_Orion_main / framework(ibis_protocol.h) / 本ファイルの
+// 4 者が一致していなければならない。過去に 2 度ドリフトしているため、
+// cm4/bridge/robot_packet_layout_test.cpp が byte 0..37 の全オフセットと
+// 量子化挙動を static_assert + ゴールデンベクタで固定している。
+// このファイルを編集したら必ずそのテストも通すこと。
+//
+// crane 版との意図的な差分は次の 2 点のみ (他はすべて整形の違い):
+//   1. 範囲外クランプ時に crane は std::cout へ警告を出すが、CM4 は制御ループ内で
+//      毎周期呼ぶため出力が溢れる。クランプ自体は残し、回数を数えるだけにした
+//      (robotPacketClampCount)。
+//   2. deserialize が switch の前に mode_args をゼロ初期化する。crane 版は未知の
+//      control_mode のとき mode_args が未初期化のまま返るが、CM4 は crane から来た
+//      パケットを解釈して制御するので、ゴミを速度指令として使う危険を潰しておく。
 #define CRANE_SENDER__ROBOT_PACKET_H_
 
 #include <math.h>
@@ -21,9 +38,25 @@ typedef struct
   uint8_t low;
 } TwoByte;
 
+// 範囲外クランプの累計回数。crane 版の std::cout 警告の代替。
+// デバッグ表示側でまとめて出すこと。
+inline uint32_t * robotPacketClampCount(void)
+{
+  static uint32_t count = 0;
+  return &count;
+}
+
 inline TwoByte convertFloatToTwoByte(float val, float range)
 {
+  if (val > range) {
+    val = range;
+    (*robotPacketClampCount())++;
+  } else if (val < -range) {
+    val = -range;
+    (*robotPacketClampCount())++;
+  }
   TwoByte result;
+  // crane 版とビット一致させるため、丸めを足さず (uint16_t) の切り捨てのままにする。
   uint16_t uint16 = (uint16_t)(32767.f * (float)(val / range) + 32767.f);
   result.high = (uint16 & 0xFF00) >> 8;
   result.low = uint16 & 0x00FF;
@@ -55,103 +88,51 @@ inline void forward(uint8_t * arg1, uint8_t * arg2, float val, float range)
 
 #define MODE_ARGS_SIZE (8)
 
+// mode 3: CM4 -> G474 / cm4_sim -> simulator-cli
 typedef struct
 {
-  float ball_pos[2];
-  float ball_vel[2];
-  float target_global_vel[2];
-} LocalCameraModeArgs;
+  float target_global_velocity_r;
+  float target_global_velocity_theta;
+} PolarVelocityModeArgs;
 
-inline void LocalCameraModeArgs_init(LocalCameraModeArgs * args, const uint8_t * data)
+inline void PolarVelocityModeArgs_init(PolarVelocityModeArgs * args, const uint8_t * data)
 {
-  args->ball_pos[0] = convertTwoByteToFloat(data[0], data[1], 32.767);
-  args->ball_pos[1] = convertTwoByteToFloat(data[2], data[3], 32.767);
-  args->ball_vel[0] = convertTwoByteToFloat(data[4], data[5], 32.767);
-  args->ball_vel[1] = convertTwoByteToFloat(data[6], data[7], 32.767);
-  args->target_global_vel[0] = convertTwoByteToFloat(data[8], data[9], 32.767);
-  args->target_global_vel[1] = convertTwoByteToFloat(data[10], data[11], 32.767);
+  args->target_global_velocity_r = convertTwoByteToFloat(data[0], data[1], 32.767);
+  args->target_global_velocity_theta = convertTwoByteToFloat(data[2], data[3], 32.767);
 }
 
-inline void LocalCameraModeArgs_serialize(const LocalCameraModeArgs * args, uint8_t * data)
+inline void PolarVelocityModeArgs_serialize(const PolarVelocityModeArgs * args, uint8_t * data)
 {
-  forward(&data[0], &data[1], args->ball_pos[0], 32.767);
-  forward(&data[2], &data[3], args->ball_pos[1], 32.767);
-  forward(&data[4], &data[5], args->ball_vel[0], 32.767);
-  forward(&data[6], &data[7], args->ball_vel[1], 32.767);
-  forward(&data[8], &data[9], args->target_global_vel[0], 32.767);
-  forward(&data[10], &data[11], args->target_global_vel[1], 32.767);
+  forward(&data[0], &data[1], args->target_global_velocity_r, 32.767);
+  forward(&data[2], &data[3], args->target_global_velocity_theta, 32.767);
 }
 
+// mode 4: crane -> CM4 / crane -> cm4_sim
+// 目標位置そのものは mode_args ではなく TARGET_GLOBAL_POS_X/Y (32..35) に載る。
 typedef struct
 {
-  float target_global_pos[2];
-  float terminal_velocity;
+  float terminal_velocity_x;
+  float terminal_velocity_y;
 } PositionTargetModeArgs;
 
 inline void PositionTargetModeArgs_init(PositionTargetModeArgs * args, const uint8_t * data)
 {
-  args->target_global_pos[0] = convertTwoByteToFloat(data[0], data[1], 32.767);
-  args->target_global_pos[1] = convertTwoByteToFloat(data[2], data[3], 32.767);
-  args->terminal_velocity = convertTwoByteToFloat(data[4], data[5], 32.767);
+  args->terminal_velocity_x = convertTwoByteToFloat(data[0], data[1], 32.767);
+  args->terminal_velocity_y = convertTwoByteToFloat(data[2], data[3], 32.767);
 }
 
 inline void PositionTargetModeArgs_serialize(const PositionTargetModeArgs * args, uint8_t * data)
 {
-  forward(&data[0], &data[1], args->target_global_pos[0], 32.767);
-  forward(&data[2], &data[3], args->target_global_pos[1], 32.767);
-  forward(&data[4], &data[5], args->terminal_velocity, 32.767);
+  forward(&data[0], &data[1], args->terminal_velocity_x, 32.767);
+  forward(&data[2], &data[3], args->terminal_velocity_y, 32.767);
 }
 
-typedef struct
-{
-  float target_global_vel[2];
-} SimpleVelocityTargetModeArgs;
-
-inline void SimpleVelocityTargetModeArgs_init(SimpleVelocityTargetModeArgs * args, const uint8_t * data)
-{
-  args->target_global_vel[0] = convertTwoByteToFloat(data[0], data[1], 32.767);
-  args->target_global_vel[1] = convertTwoByteToFloat(data[2], data[3], 32.767);
-}
-
-inline void SimpleVelocityTargetModeArgs_serialize(const SimpleVelocityTargetModeArgs * args, uint8_t * data)
-{
-  forward(&data[0], &data[1], args->target_global_vel[0], 32.767);
-  forward(&data[2], &data[3], args->target_global_vel[1], 32.767);
-}
-
-typedef struct
-{
-  float target_global_vel[2];
-  float trajectory_global_origin[2];
-  float trajectory_origin_angle;
-  float trajectory_curvature;
-} VelocityTargetWithTrajectoryModeArgs;
-
-inline void VelocityTargetWithTrajectoryModeArgs_init(VelocityTargetWithTrajectoryModeArgs * args, const uint8_t * data)
-{
-  args->target_global_vel[0] = convertTwoByteToFloat(data[0], data[1], 32.767);
-  args->target_global_vel[1] = convertTwoByteToFloat(data[2], data[3], 32.767);
-  args->trajectory_global_origin[0] = convertTwoByteToFloat(data[4], data[5], 32.767);
-  args->trajectory_global_origin[1] = convertTwoByteToFloat(data[6], data[7], 32.767);
-  args->trajectory_origin_angle = convertTwoByteToFloat(data[8], data[9], M_PI);
-  args->trajectory_curvature = convertTwoByteToFloat(data[10], data[11], 32.767);
-}
-
-inline void VelocityTargetWithTrajectoryModeArgs_serialize(const VelocityTargetWithTrajectoryModeArgs * args, uint8_t * data)
-{
-  forward(&data[0], &data[1], args->target_global_vel[0], 32.767);
-  forward(&data[2], &data[3], args->target_global_vel[1], 32.767);
-  forward(&data[4], &data[5], args->trajectory_global_origin[0], 32.767);
-  forward(&data[6], &data[7], args->trajectory_global_origin[1], 32.767);
-  forward(&data[8], &data[9], args->trajectory_origin_angle, M_PI);
-  forward(&data[10], &data[11], args->trajectory_curvature, 32.767);
-}
-
+// CONTROL_MODE_ARGS (24..31) は union である。CONTROL_MODE を見ずに復号してはならない。
+// mode 4 のパケットを mode 3 として復号すると terminal_velocity_x/y が r/theta として
+// 読まれ、無言で暴走する。
 typedef enum {
-  LOCAL_CAMERA_MODE = 0,
-  POSITION_TARGET_MODE = 1,
-  SIMPLE_VELOCITY_TARGET_MODE = 2,
-  VELOCITY_TARGET_WITH_TRAJECTORY_MODE = 3,
+  POLAR_VELOCITY_TARGET_MODE = 3,
+  POSITION_TARGET_WITH_TERMINAL_VELOCITY_MODE = 4,
 } ControlMode;
 
 typedef struct
@@ -166,22 +147,21 @@ typedef struct
   float kick_power;
   float dribble_power;
   bool enable_chip;
-  bool lift_dribbler;
   bool stop_emergency;
-  float speed_limit;
-  float omega_limit;
+  float acceleration_limit;
+  float linear_velocity_limit;
+  float angular_velocity_limit;
   uint16_t latency_time_ms;
-  bool prioritize_move;
-  bool prioritize_accurate_acceleration;
   uint16_t elapsed_time_ms_since_last_vision;
   ControlMode control_mode;
 
   union {
-    LocalCameraModeArgs local_camera;
-    PositionTargetModeArgs position;
-    SimpleVelocityTargetModeArgs simple_velocity;
-    VelocityTargetWithTrajectoryModeArgs velocity;
+    PolarVelocityModeArgs polar_velocity;
+    PositionTargetModeArgs position_target;
   } mode_args;
+
+  float target_global_pos[2];
+  float terminal_velocity;
 } RobotCommandV2;
 
 typedef struct
@@ -202,10 +182,12 @@ enum Address {
   TARGET_GLOBAL_THETA_LOW,
   KICK_POWER,
   DRIBBLE_POWER,
-  SPEED_LIMIT_HIGH,
-  SPEED_LIMIT_LOW,
-  OMEGA_LIMIT_HIGH,
-  OMEGA_LIMIT_LOW,
+  ACCELERATION_LIMIT_HIGH,
+  ACCELERATION_LIMIT_LOW,
+  LINEAR_VELOCITY_LIMIT_HIGH,
+  LINEAR_VELOCITY_LIMIT_LOW,
+  ANGULAR_VELOCITY_LIMIT_HIGH,
+  ANGULAR_VELOCITY_LIMIT_LOW,
   LATENCY_TIME_MS_HIGH,
   LATENCY_TIME_MS_LOW,
   ELAPSED_TIME_MS_SINCE_LAST_VISION_HIGH,
@@ -213,15 +195,18 @@ enum Address {
   FLAGS,
   CONTROL_MODE,
   CONTROL_MODE_ARGS,
+  TARGET_GLOBAL_POS_X_HIGH = CONTROL_MODE_ARGS + MODE_ARGS_SIZE,
+  TARGET_GLOBAL_POS_X_LOW,
+  TARGET_GLOBAL_POS_Y_HIGH,
+  TARGET_GLOBAL_POS_Y_LOW,
+  TERMINAL_VELOCITY_HIGH,
+  TERMINAL_VELOCITY_LOW,
 };
 
 enum FlagAddress {
   IS_VISION_AVAILABLE = 0,
   ENABLE_CHIP = 1,
-  LIFT_DRIBBLER = 2,
   STOP_EMERGENCY = 3,
-  PRIORITIZE_MOVE = 4,
-  PRIORITIZE_ACCURATE_ACCELERATION = 5,
 };
 
 inline void RobotCommandSerializedV2_serialize(RobotCommandSerializedV2 * serialized, const RobotCommandV2 * command)
@@ -234,8 +219,9 @@ inline void RobotCommandSerializedV2_serialize(RobotCommandSerializedV2 * serial
   forward(&serialized->data[TARGET_GLOBAL_THETA_HIGH], &serialized->data[TARGET_GLOBAL_THETA_LOW], command->target_global_theta, M_PI);
   serialized->data[KICK_POWER] = command->kick_power * 20;
   serialized->data[DRIBBLE_POWER] = command->dribble_power * 20;
-  forward(&serialized->data[SPEED_LIMIT_HIGH], &serialized->data[SPEED_LIMIT_LOW], command->speed_limit, 32.767);
-  forward(&serialized->data[OMEGA_LIMIT_HIGH], &serialized->data[OMEGA_LIMIT_LOW], command->omega_limit, 32.767);
+  forward(&serialized->data[ACCELERATION_LIMIT_HIGH], &serialized->data[ACCELERATION_LIMIT_LOW], command->acceleration_limit, 32.767);
+  forward(&serialized->data[LINEAR_VELOCITY_LIMIT_HIGH], &serialized->data[LINEAR_VELOCITY_LIMIT_LOW], command->linear_velocity_limit, 32.767);
+  forward(&serialized->data[ANGULAR_VELOCITY_LIMIT_HIGH], &serialized->data[ANGULAR_VELOCITY_LIMIT_LOW], command->angular_velocity_limit, 32.767);
   TwoByte latency_time = convertUInt16ToTwoByte(command->latency_time_ms);
   serialized->data[LATENCY_TIME_MS_HIGH] = latency_time.high;
   serialized->data[LATENCY_TIME_MS_LOW] = latency_time.low;
@@ -245,26 +231,20 @@ inline void RobotCommandSerializedV2_serialize(RobotCommandSerializedV2 * serial
   uint8_t flags = 0x00;
   flags |= (command->is_vision_available << IS_VISION_AVAILABLE);
   flags |= (command->enable_chip << ENABLE_CHIP);
-  flags |= (command->lift_dribbler << LIFT_DRIBBLER);
   flags |= (command->stop_emergency << STOP_EMERGENCY);
-  flags |= (command->prioritize_move << PRIORITIZE_MOVE);
-  flags |= (command->prioritize_accurate_acceleration << PRIORITIZE_ACCURATE_ACCELERATION);
   serialized->data[FLAGS] = flags;
   serialized->data[CONTROL_MODE] = (uint8_t)command->control_mode;
   switch (command->control_mode) {
-    case LOCAL_CAMERA_MODE:
-      LocalCameraModeArgs_serialize(&command->mode_args.local_camera, &serialized->data[CONTROL_MODE_ARGS]);
+    case POLAR_VELOCITY_TARGET_MODE:
+      PolarVelocityModeArgs_serialize(&command->mode_args.polar_velocity, &serialized->data[CONTROL_MODE_ARGS]);
       break;
-    case POSITION_TARGET_MODE:
-      PositionTargetModeArgs_serialize(&command->mode_args.position, &serialized->data[CONTROL_MODE_ARGS]);
-      break;
-    case SIMPLE_VELOCITY_TARGET_MODE:
-      SimpleVelocityTargetModeArgs_serialize(&command->mode_args.simple_velocity, &serialized->data[CONTROL_MODE_ARGS]);
-      break;
-    case VELOCITY_TARGET_WITH_TRAJECTORY_MODE:
-      VelocityTargetWithTrajectoryModeArgs_serialize(&command->mode_args.velocity, &serialized->data[CONTROL_MODE_ARGS]);
+    case POSITION_TARGET_WITH_TERMINAL_VELOCITY_MODE:
+      PositionTargetModeArgs_serialize(&command->mode_args.position_target, &serialized->data[CONTROL_MODE_ARGS]);
       break;
   }
+  forward(&serialized->data[TARGET_GLOBAL_POS_X_HIGH], &serialized->data[TARGET_GLOBAL_POS_X_LOW], command->target_global_pos[0], 32.767);
+  forward(&serialized->data[TARGET_GLOBAL_POS_Y_HIGH], &serialized->data[TARGET_GLOBAL_POS_Y_LOW], command->target_global_pos[1], 32.767);
+  forward(&serialized->data[TERMINAL_VELOCITY_HIGH], &serialized->data[TERMINAL_VELOCITY_LOW], command->terminal_velocity, 32.767);
 }
 
 inline RobotCommandV2 RobotCommandSerializedV2_deserialize(const RobotCommandSerializedV2 * serialized)
@@ -278,32 +258,30 @@ inline RobotCommandV2 RobotCommandSerializedV2_deserialize(const RobotCommandSer
   command.target_global_theta = convertTwoByteToFloat(serialized->data[TARGET_GLOBAL_THETA_HIGH], serialized->data[TARGET_GLOBAL_THETA_LOW], M_PI);
   command.kick_power = serialized->data[KICK_POWER] / 20.;
   command.dribble_power = serialized->data[DRIBBLE_POWER] / 20.;
-  command.speed_limit = convertTwoByteToFloat(serialized->data[SPEED_LIMIT_HIGH], serialized->data[SPEED_LIMIT_LOW], 32.767);
-  command.omega_limit = convertTwoByteToFloat(serialized->data[OMEGA_LIMIT_HIGH], serialized->data[OMEGA_LIMIT_LOW], 32.767);
+  command.acceleration_limit = convertTwoByteToFloat(serialized->data[ACCELERATION_LIMIT_HIGH], serialized->data[ACCELERATION_LIMIT_LOW], 32.767);
+  command.linear_velocity_limit = convertTwoByteToFloat(serialized->data[LINEAR_VELOCITY_LIMIT_HIGH], serialized->data[LINEAR_VELOCITY_LIMIT_LOW], 32.767);
+  command.angular_velocity_limit = convertTwoByteToFloat(serialized->data[ANGULAR_VELOCITY_LIMIT_HIGH], serialized->data[ANGULAR_VELOCITY_LIMIT_LOW], 32.767);
   command.latency_time_ms = convertTwoByteToUInt16(serialized->data[LATENCY_TIME_MS_HIGH], serialized->data[LATENCY_TIME_MS_LOW]);
   command.elapsed_time_ms_since_last_vision = convertTwoByteToUInt16(serialized->data[ELAPSED_TIME_MS_SINCE_LAST_VISION_HIGH], serialized->data[ELAPSED_TIME_MS_SINCE_LAST_VISION_LOW]);
   uint8_t flags = serialized->data[FLAGS];
   command.is_vision_available = (flags >> IS_VISION_AVAILABLE) & 0x01;
   command.enable_chip = (flags >> ENABLE_CHIP) & 0x01;
-  command.lift_dribbler = (flags >> LIFT_DRIBBLER) & 0x01;
   command.stop_emergency = (flags >> STOP_EMERGENCY) & 0x01;
-  command.prioritize_move = (flags >> PRIORITIZE_MOVE) & 0x01;
-  command.prioritize_accurate_acceleration = (flags >> PRIORITIZE_ACCURATE_ACCELERATION) & 0x01;
   command.control_mode = (ControlMode)serialized->data[CONTROL_MODE];
+  // mode_args は union。未知の mode では復号せずゼロのままにする。
+  command.mode_args.polar_velocity.target_global_velocity_r = 0.f;
+  command.mode_args.polar_velocity.target_global_velocity_theta = 0.f;
   switch (command.control_mode) {
-    case LOCAL_CAMERA_MODE:
-      LocalCameraModeArgs_init(&command.mode_args.local_camera, &serialized->data[CONTROL_MODE_ARGS]);
+    case POLAR_VELOCITY_TARGET_MODE:
+      PolarVelocityModeArgs_init(&command.mode_args.polar_velocity, &serialized->data[CONTROL_MODE_ARGS]);
       break;
-    case POSITION_TARGET_MODE:
-      PositionTargetModeArgs_init(&command.mode_args.position, &serialized->data[CONTROL_MODE_ARGS]);
-      break;
-    case SIMPLE_VELOCITY_TARGET_MODE:
-      SimpleVelocityTargetModeArgs_init(&command.mode_args.simple_velocity, &serialized->data[CONTROL_MODE_ARGS]);
-      break;
-    case VELOCITY_TARGET_WITH_TRAJECTORY_MODE:
-      VelocityTargetWithTrajectoryModeArgs_init(&command.mode_args.velocity, &serialized->data[CONTROL_MODE_ARGS]);
+    case POSITION_TARGET_WITH_TERMINAL_VELOCITY_MODE:
+      PositionTargetModeArgs_init(&command.mode_args.position_target, &serialized->data[CONTROL_MODE_ARGS]);
       break;
   }
+  command.target_global_pos[0] = convertTwoByteToFloat(serialized->data[TARGET_GLOBAL_POS_X_HIGH], serialized->data[TARGET_GLOBAL_POS_X_LOW], 32.767);
+  command.target_global_pos[1] = convertTwoByteToFloat(serialized->data[TARGET_GLOBAL_POS_Y_HIGH], serialized->data[TARGET_GLOBAL_POS_Y_LOW], 32.767);
+  command.terminal_velocity = convertTwoByteToFloat(serialized->data[TERMINAL_VELOCITY_HIGH], serialized->data[TERMINAL_VELOCITY_LOW], 32.767);
   return command;
 }
 

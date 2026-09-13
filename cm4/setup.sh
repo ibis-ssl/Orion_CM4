@@ -8,8 +8,6 @@ CM4_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${CM4_DIR}/.." && pwd)"
 SERVICE_NAME="control_server.service"
 SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}"
-BRIDGE_DIR="${CM4_DIR}/bridge"
-BIN_DIR="${CM4_DIR}/bin"
 CAMERA_DIR="${CM4_DIR}/camera"
 
 APT_PACKAGES=(
@@ -78,11 +76,8 @@ install_python_packages() {
 }
 
 build_cpp_binaries() {
-  log "C++ ブリッジをビルドします"
-  mkdir -p "${BIN_DIR}"
-  g++ "${BRIDGE_DIR}/forward_robot_feedback.cpp" -pthread -o "${BIN_DIR}/robot_feedback.out"
-  g++ "${BRIDGE_DIR}/forward_ai_cmd_v2.cpp" -pthread -o "${BIN_DIR}/ai_cmd_v2.out"
-  chmod +x "${BIN_DIR}/robot_feedback.out" "${BIN_DIR}/ai_cmd_v2.out"
+  # ビルド定義は cm4/build.sh に一本化している (cm4/update.sh も同じものを呼ぶ)。
+  "${CM4_DIR}/build.sh"
 }
 
 build_camera_server() {

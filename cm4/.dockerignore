@@ -1,0 +1,8 @@
+# ビルド成果物はイメージへ持ち込まない（builder が作り直す）
+bin/
+camera/build/
+camera/dist/
+runtime/
+__pycache__/
+*.pyc
+*.out

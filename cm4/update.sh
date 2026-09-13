@@ -7,8 +7,6 @@ set -euo pipefail
 CM4_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_NAME="control_server.service"
 SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}"
-BRIDGE_DIR="${CM4_DIR}/bridge"
-BIN_DIR="${CM4_DIR}/bin"
 CAMERA_DIR="${CM4_DIR}/camera"
 
 REBUILD_CAMERA=0
@@ -35,11 +33,14 @@ run_sudo() {
 }
 
 build_cpp_binaries() {
-  log "C++ ブリッジを再ビルドします"
-  mkdir -p "${BIN_DIR}"
-  g++ "${BRIDGE_DIR}/forward_robot_feedback.cpp" -pthread -o "${BIN_DIR}/robot_feedback.out"
-  g++ "${BRIDGE_DIR}/forward_ai_cmd_v2.cpp" -pthread -o "${BIN_DIR}/ai_cmd_v2.out"
-  chmod +x "${BIN_DIR}/robot_feedback.out" "${BIN_DIR}/ai_cmd_v2.out"
+  # ビルド定義は cm4/build.sh に一本化している (cm4/setup.sh も同じものを呼ぶ)。
+  #
+  # --no-tests: デプロイ経路ではテストを走らせない。build.sh のテストは UDP を
+  # bind して cm4_sim.out / ai_cmd_v2.out を spawn するので、restart_service の
+  # 前に稼働中の control_server と同居することになる。lancher.py の /status は
+  # `pgrep -f ai_cmd_v2.out` で判定するため、テストが立てたプロセスを本番稼働と
+  # 誤認する。検証は CI と cm4/setup.sh (初期セットアップ) が担う。
+  "${CM4_DIR}/build.sh" --no-tests
 }
 
 build_camera_server() {
