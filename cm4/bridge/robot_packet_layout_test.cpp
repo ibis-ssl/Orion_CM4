@@ -323,8 +323,48 @@ static void testUInt16Fields(void)
   check(back.elapsed_time_ms_since_last_vision == 0x1234, "uint16: elapsed_time_ms roundtrip");
 }
 
-int main(void)
+// --dump-offsets: Python テストが読むオフセット表を出力する。
+//
+// C++ 側は static_assert でレイアウトを固定しているが、Python テスト
+// (packet_codec.py) が独自に持つ表は誰も検査していなかった。ここから出力させて
+// test_packet_codec.py が突き合わせることで、Python 側も同じ保護下に入る。
+void dumpOffsets(void)
 {
+  printf("CMD_SIZE=%d\n", (int)sizeof(RobotCommandSerializedV2));
+  printf("CHECK_COUNTER=%d\n", CHECK_COUNTER);
+  printf("VISION_GLOBAL_X_HIGH=%d\n", VISION_GLOBAL_X_HIGH);
+  printf("VISION_GLOBAL_Y_HIGH=%d\n", VISION_GLOBAL_Y_HIGH);
+  printf("VISION_GLOBAL_THETA_HIGH=%d\n", VISION_GLOBAL_THETA_HIGH);
+  printf("TARGET_GLOBAL_THETA_HIGH=%d\n", TARGET_GLOBAL_THETA_HIGH);
+  printf("KICK_POWER=%d\n", KICK_POWER);
+  printf("DRIBBLE_POWER=%d\n", DRIBBLE_POWER);
+  printf("ACCELERATION_LIMIT_HIGH=%d\n", ACCELERATION_LIMIT_HIGH);
+  printf("LINEAR_VELOCITY_LIMIT_HIGH=%d\n", LINEAR_VELOCITY_LIMIT_HIGH);
+  printf("ANGULAR_VELOCITY_LIMIT_HIGH=%d\n", ANGULAR_VELOCITY_LIMIT_HIGH);
+  printf("LATENCY_TIME_MS_HIGH=%d\n", LATENCY_TIME_MS_HIGH);
+  printf("ELAPSED_TIME_MS_SINCE_LAST_VISION_HIGH=%d\n", ELAPSED_TIME_MS_SINCE_LAST_VISION_HIGH);
+  printf("FLAGS=%d\n", FLAGS);
+  printf("CONTROL_MODE=%d\n", CONTROL_MODE);
+  printf("CONTROL_MODE_ARGS=%d\n", CONTROL_MODE_ARGS);
+  printf("TARGET_GLOBAL_POS_X_HIGH=%d\n", TARGET_GLOBAL_POS_X_HIGH);
+  printf("TARGET_GLOBAL_POS_Y_HIGH=%d\n", TARGET_GLOBAL_POS_Y_HIGH);
+  printf("TERMINAL_VELOCITY_HIGH=%d\n", TERMINAL_VELOCITY_HIGH);
+  printf("IS_VISION_AVAILABLE_BIT=%d\n", IS_VISION_AVAILABLE);
+  printf("ENABLE_CHIP_BIT=%d\n", ENABLE_CHIP);
+  printf("STOP_EMERGENCY_BIT=%d\n", STOP_EMERGENCY);
+  printf("MODE_POLAR_VELOCITY=%d\n", POLAR_VELOCITY_TARGET_MODE);
+  printf("MODE_POSITION_TARGET=%d\n", POSITION_TARGET_WITH_TERMINAL_VELOCITY_MODE);
+  printf("FEEDBACK_SIZE=%d\n", FEEDBACK_PACKET_SIZE);
+  printf("FEEDBACK_POS_X_OFFSET=%d\n", (int)FEEDBACK_POS_X_OFFSET);
+  printf("FEEDBACK_POS_Y_OFFSET=%d\n", (int)FEEDBACK_POS_Y_OFFSET);
+}
+
+int main(int argc, char * argv[])
+{
+  if (argc > 1 && strcmp(argv[1], "--dump-offsets") == 0) {
+    dumpOffsets();
+    return 0;
+  }
   printf("robot_packet.h layout test (SSOT: crane/crane_sender/include/crane_sender/robot_packet.h)\n\n");
   testGoldenMode4();
   testGoldenMode3();

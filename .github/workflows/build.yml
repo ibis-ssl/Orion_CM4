@@ -25,6 +25,7 @@ jobs:
       # 末尾で次を実行する:
       #   - robot_packet_layout_test.out: crane 版正本からのパケットレイアウトのドリフト検出
       #   - test_position_controller.out: 位置制御則の単体テスト
+      #   - test_packet_codec.py: Python 側のオフセット表が C++ の正本と一致するか
       #   - test_cm4_sim.py: cm4_sim の結合スモークテスト
       #   - test_forward_ai_cmd_v2.py: 実機ブリッジの結合スモークテスト
       #     (--debug + pty で動かすので実機 UART も STM32 も不要)

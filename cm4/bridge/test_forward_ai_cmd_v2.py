@@ -34,37 +34,18 @@ import unittest
 BIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bin", "ai_cmd_v2.out")
 BIN = os.path.normpath(BIN)
 
-CMD_SIZE = 64
-SLOT_SIZE = CMD_SIZE + 1
-ROBOT_NUM = 11
-PACKET_SIZE = SLOT_SIZE * ROBOT_NUM
+# パケットのオフセットと符号化は packet_codec.py が正本。
+from packet_codec import (  # noqa: E402
+    CHECK_COUNTER, CMD_SIZE, CONTROL_MODE, CONTROL_MODE_ARGS, DRIBBLE_POWER, FEEDBACK_POS_X_OFFSET,
+    FEEDBACK_POS_Y_OFFSET, FEEDBACK_SIZE, FEEDBACK_SYNC, FLAGS, KICK_POWER,
+    LINEAR_VELOCITY_LIMIT_HIGH, PACKET_SIZE, STOP_EMERGENCY_BIT, TARGET_GLOBAL_POS_X_HIGH,
+    TERMINAL_VELOCITY_HIGH, build_packet, encode_two_byte as enc)
+from packet_codec import MODE_POLAR_VELOCITY as POLAR_VELOCITY_TARGET_MODE  # noqa: E402
+from packet_codec import MODE_POSITION_TARGET as POSITION_TARGET_WITH_TERMINAL_VELOCITY_MODE  # noqa: E402
+
 UART_PACKET_SIZE = 72
-FEEDBACK_SIZE = 128
-
-# robot_packet.h の enum Address と対応させること。
-CHECK_COUNTER = 1
-KICK_POWER = 10
-DRIBBLE_POWER = 11
-LINEAR_VELOCITY_LIMIT_HIGH = 14
-FLAGS = 22
-CONTROL_MODE = 23
-CONTROL_MODE_ARGS = 24
-TARGET_GLOBAL_POS_X_HIGH = 32
-TERMINAL_VELOCITY_HIGH = 36
-
-STOP_EMERGENCY_BIT = 3
-POLAR_VELOCITY_TARGET_MODE = 3
-POSITION_TARGET_WITH_TERMINAL_VELOCITY_MODE = 4
 
 HEX_TOKEN = re.compile(r"0x([0-9a-f]+)")
-
-
-def enc(value, value_range):
-    """robot_packet.h convertFloatToTwoByte と同じ（丸めずに切り捨てる）。"""
-    clamped = max(-value_range, min(value_range, value))
-    u = int(32767.0 * (clamped / value_range) + 32767.0)
-    u = max(0, min(65535, u))
-    return bytes([(u >> 8) & 0xFF, u & 0xFF])
 
 
 def dec(high, low, value_range):
@@ -105,19 +86,11 @@ def build_command(check_counter, mode, target=(2.0, -1.0), velocity_limit=3.0, t
     return bytes(d)
 
 
-def build_packet(robot_id, command):
-    packet = bytearray()
-    for slot in range(ROBOT_NUM):
-        packet += bytes([slot]) + (command if slot == robot_id else bytes(CMD_SIZE))
-    return bytes(packet)
-
-
 def build_feedback(x, y):
     fb = bytearray(FEEDBACK_SIZE)
-    fb[0] = 0xAB
-    fb[1] = 0xEA
-    fb[44:48] = struct.pack("<f", x)
-    fb[48:52] = struct.pack("<f", y)
+    fb[0], fb[1] = FEEDBACK_SYNC
+    fb[FEEDBACK_POS_X_OFFSET:FEEDBACK_POS_X_OFFSET + 4] = struct.pack("<f", x)
+    fb[FEEDBACK_POS_Y_OFFSET:FEEDBACK_POS_Y_OFFSET + 4] = struct.pack("<f", y)
     return bytes(fb)
 
 

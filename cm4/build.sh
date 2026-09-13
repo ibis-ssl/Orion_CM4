@@ -73,6 +73,11 @@ run_tests() {
   log "位置制御ライブラリの単体テストを実行します"
   "${BIN_DIR}/test_position_controller.out"
 
+  # Python 側のオフセット表 (packet_codec.py) が C++ の正本とずれていないこと。
+  # robot_packet_layout_test.out --dump-offsets の出力と突き合わせる。
+  log "パケット定数の Python/C++ 一致検査を実行します"
+  (cd "${BRIDGE_DIR}" && python3 -m unittest test_packet_codec)
+
   log "cm4_sim の結合スモークテストを実行します"
   (cd "${BRIDGE_DIR}" && python3 -m unittest test_cm4_sim)
 

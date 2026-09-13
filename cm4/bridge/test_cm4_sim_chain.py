@@ -26,7 +26,8 @@ import time
 import unittest
 from pathlib import Path
 
-from test_cm4_sim import (CMD_SIZE, PACKET_SIZE, build_command, build_packet)
+from packet_codec import CMD_SIZE, PACKET_SIZE, build_packet
+from test_cm4_sim import build_command
 
 REPO = Path(__file__).resolve().parents[2]
 CM4_SIM = REPO / "cm4" / "bin" / "cm4_sim.out"

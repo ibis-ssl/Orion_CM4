@@ -29,17 +29,16 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 BINARY = REPO / "cm4" / "bin" / "cm4_sim.out"
 
-CMD_SIZE = 64
-SLOTS = 11
-SLOT_SIZE = CMD_SIZE + 1
-PACKET_SIZE = SLOT_SIZE * SLOTS
-FEEDBACK_SIZE = 128
-
-MODE_POLAR_VELOCITY = 3
-MODE_POSITION_TARGET = 4
-KICK_POWER = 10
-DRIBBLE_POWER = 11
-ENABLE_CHIP_BIT = 1
+# パケットのオフセットと符号化は packet_codec.py が正本。
+from packet_codec import (  # noqa: E402
+    ACCELERATION_LIMIT_HIGH, ANGULAR_VELOCITY_LIMIT_HIGH, CHECK_COUNTER, CMD_SIZE, CONTROL_MODE,
+    CONTROL_MODE_ARGS, DRIBBLE_POWER, ELAPSED_TIME_MS_SINCE_LAST_VISION_HIGH, ENABLE_CHIP_BIT,
+    FEEDBACK_POS_X_OFFSET, FEEDBACK_POS_Y_OFFSET, FEEDBACK_SIZE, FEEDBACK_SYNC, FLAGS,
+    IS_VISION_AVAILABLE_BIT, KICK_POWER, LINEAR_VELOCITY_LIMIT_HIGH, MODE_POLAR_VELOCITY,
+    MODE_POSITION_TARGET, PACKET_SIZE, SLOT_SIZE, SLOTS, STOP_EMERGENCY_BIT,
+    TARGET_GLOBAL_POS_X_HIGH, TARGET_GLOBAL_POS_Y_HIGH, TARGET_GLOBAL_THETA_HIGH,
+    TERMINAL_VELOCITY_HIGH, VISION_GLOBAL_THETA_HIGH, VISION_GLOBAL_X_HIGH, VISION_GLOBAL_Y_HIGH,
+    build_packet, decode_two_byte, encode_two_byte)
 
 # 既定 (12345 / 12346 / 50100) から離す
 # ポートはテストごとにずらし、さらにプロセスごとにもずらす。
@@ -51,33 +50,6 @@ PORT_BASE = 20000 + (os.getpid() % 300) * 64
 FEEDBACK_BASE = 40000 + (os.getpid() % 90) * 256
 _port_slot = itertools.count()
 
-# robot_packet.h の enum Address
-CHECK_COUNTER = 1
-VISION_GLOBAL_X_HIGH = 2
-VISION_GLOBAL_Y_HIGH = 4
-ACCELERATION_LIMIT_HIGH = 12
-LINEAR_VELOCITY_LIMIT_HIGH = 14
-ANGULAR_VELOCITY_LIMIT_HIGH = 16
-FLAGS = 22
-CONTROL_MODE = 23
-CONTROL_MODE_ARGS = 24
-TARGET_GLOBAL_POS_X_HIGH = 32
-TARGET_GLOBAL_POS_Y_HIGH = 34
-TERMINAL_VELOCITY_HIGH = 36
-
-STOP_EMERGENCY_BIT = 3
-
-
-def encode_two_byte(value, value_range):
-    """crane の convertFloatToTwoByte と同じ式（丸めずに切り捨て）。"""
-    raw = int(32767.0 * (value / value_range) + 32767.0)
-    raw = max(0, min(65535, raw))
-    return bytes([(raw >> 8) & 0xFF, raw & 0xFF])
-
-
-def decode_two_byte(data, offset, value_range):
-    raw = (data[offset] << 8) | data[offset + 1]
-    return (raw - 32767.0) / 32767.0 * value_range
 
 
 def build_command(counter, target=(1.0, 0.0), vision=(0.0, 0.0), mode=MODE_POSITION_TARGET,
@@ -88,18 +60,18 @@ def build_command(counter, target=(1.0, 0.0), vision=(0.0, 0.0), mode=MODE_POSIT
     d[CHECK_COUNTER] = counter & 0xFF
     d[VISION_GLOBAL_X_HIGH:VISION_GLOBAL_X_HIGH + 2] = encode_two_byte(vision[0], 32.767)
     d[VISION_GLOBAL_Y_HIGH:VISION_GLOBAL_Y_HIGH + 2] = encode_two_byte(vision[1], 32.767)
-    d[6:8] = encode_two_byte(0.0, math.pi)      # VISION_GLOBAL_THETA
-    d[8:10] = encode_two_byte(0.0, math.pi)     # TARGET_GLOBAL_THETA
+    d[VISION_GLOBAL_THETA_HIGH:VISION_GLOBAL_THETA_HIGH + 2] = encode_two_byte(0.0, math.pi)
+    d[TARGET_GLOBAL_THETA_HIGH:TARGET_GLOBAL_THETA_HIGH + 2] = encode_two_byte(0.0, math.pi)
     d[ACCELERATION_LIMIT_HIGH:ACCELERATION_LIMIT_HIGH + 2] = encode_two_byte(4.0, 32.767)
     d[LINEAR_VELOCITY_LIMIT_HIGH:LINEAR_VELOCITY_LIMIT_HIGH + 2] = encode_two_byte(linear_velocity_limit, 32.767)
     d[ANGULAR_VELOCITY_LIMIT_HIGH:ANGULAR_VELOCITY_LIMIT_HIGH + 2] = encode_two_byte(5.0, 32.767)
     # byte 20..21 は素の uint16 (big-endian)。2 バイト固定小数ではないので
     # ゼロ埋めが正しく 0 (= 最新) になる。
-    d[20] = (elapsed_ms_since_last_vision >> 8) & 0xFF
-    d[21] = elapsed_ms_since_last_vision & 0xFF
+    d[ELAPSED_TIME_MS_SINCE_LAST_VISION_HIGH] = (elapsed_ms_since_last_vision >> 8) & 0xFF
+    d[ELAPSED_TIME_MS_SINCE_LAST_VISION_HIGH + 1] = elapsed_ms_since_last_vision & 0xFF
     d[KICK_POWER] = kick_power
     d[DRIBBLE_POWER] = dribble_power
-    d[FLAGS] = ((0x01 if vision_available else 0x00)
+    d[FLAGS] = (((1 << IS_VISION_AVAILABLE_BIT) if vision_available else 0x00)
                 | ((1 << STOP_EMERGENCY_BIT) if stop_emergency else 0)
                 | ((1 << ENABLE_CHIP_BIT) if enable_chip else 0))
     d[CONTROL_MODE] = mode
@@ -111,14 +83,6 @@ def build_command(counter, target=(1.0, 0.0), vision=(0.0, 0.0), mode=MODE_POSIT
     return bytes(d)
 
 
-def build_packet(robot_id, command):
-    """715 バイト。crane と同じく未使用スロットは添字 + 64B ゼロ埋め。"""
-    pkt = bytearray()
-    for slot in range(SLOTS):
-        pkt += bytes([slot]) + (command if slot == robot_id else bytes(CMD_SIZE))
-    return bytes(pkt)
-
-
 def build_feedback(robot_id, counter, x, y):
     """simulator-cli の ibisBuildFeedbackPacket と同じバイト配置。
 
@@ -128,13 +92,13 @@ def build_feedback(robot_id, counter, x, y):
     cm4_sim が読むのは byte 44..51 だけなので制御には影響しない。
     """
     d = bytearray(FEEDBACK_SIZE)
-    d[0], d[1] = 0xAB, 0xEA
+    d[0], d[1] = FEEDBACK_SYNC
     d[2] = 10                            # 定数。チェックサムではない
     d[3] = counter & 0xFF                # 実機は指令の check_counter の反射、sim は自走
     struct.pack_into("<f", d, 4, 0.0)    # imu_yaw_deg [deg] (制御では使わない)
     d[14] = counter & 0xFF               # tx_cycle_count
-    struct.pack_into("<f", d, 44, x)     # vision_based_position_x
-    struct.pack_into("<f", d, 48, y)     # vision_based_position_y
+    struct.pack_into("<f", d, FEEDBACK_POS_X_OFFSET, x)
+    struct.pack_into("<f", d, FEEDBACK_POS_Y_OFFSET, y)
     struct.pack_into("<f", d, 52, 0.0)   # 速度
     struct.pack_into("<f", d, 56, 0.0)
     return bytes(d)
