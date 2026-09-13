@@ -150,3 +150,16 @@ uv run cm4-fleet deploy --all
 ```bash
 ./cm4/bin/cm4_sim.out --help
 ```
+
+Docker イメージ `ghcr.io/ibis-ssl/orion-cm4-sim` も用意しています（crane の
+`docker/scenario/docker-compose.yaml` が `cm4-loop` プロファイルで参照します）。
+
+```bash
+# ローカルでビルドする場合
+docker build -t orion-cm4-sim -f cm4/Dockerfile cm4
+docker run --rm --network host --entrypoint tini orion-cm4-sim -- cm4_sim --help
+```
+
+`--network host` が必要です。`cm4_sim` は 127.0.0.1 上で simulator-cli と
+やり取りするため、独立したネットワーク名前空間では何も届きません。
+イメージ内のバイナリ名は `cm4_sim`（`.out` なし）です。

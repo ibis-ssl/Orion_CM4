@@ -17,6 +17,7 @@ CI ではスキップされる（test_cm4_sim.py が cm4_sim 単体を検査し�
 """
 
 import os
+import shlex
 import socket
 import struct
 import subprocess
@@ -29,6 +30,13 @@ from test_cm4_sim import (CMD_SIZE, PACKET_SIZE, build_command, build_packet)
 
 REPO = Path(__file__).resolve().parents[2]
 CM4_SIM = REPO / "cm4" / "bin" / "cm4_sim.out"
+
+# cm4_sim の起動コマンドは CM4_SIM_CMD で差し替えられる。Docker イメージを
+# 実チェーンで検証するときに使う。例:
+#   CM4_SIM_CMD="docker run --rm --network host --entrypoint tini \
+#                ghcr.io/ibis-ssl/orion-cm4-sim:latest -- cm4_sim"
+# network_mode: host 相当でないと 127.0.0.1 上のやり取りが届かない。
+CM4_SIM_CMD = os.environ.get("CM4_SIM_CMD", "")
 SIMULATOR_CLI = os.environ.get("SIMULATOR_CLI", "")
 
 # simulator-cli 側に必要な機能。framework のブランチやビルドによっては
@@ -87,7 +95,7 @@ def parse_feedback(data):
 @unittest.skipIf(MISSING_OPTIONS,
                  f"simulator-cli が必要なオプションを持っていない: {MISSING_OPTIONS}. "
                  "framework を robot-side-position-control 対応のブランチでビルドし直すこと")
-@unittest.skipUnless(CM4_SIM.exists(), f"{CM4_SIM} が無い。先に ./cm4/build.sh を実行すること")
+@unittest.skipUnless(CM4_SIM_CMD or CM4_SIM.exists(), f"{CM4_SIM} が無い。先に ./cm4/build.sh を実行すること (または CM4_SIM_CMD を指定する)")
 class Cm4SimChainTest(unittest.TestCase):
 
     def setUp(self):
@@ -107,8 +115,9 @@ class Cm4SimChainTest(unittest.TestCase):
 
         # feedback 再配信を loopback の multicast で受けるので --multicast-if 127.0.0.1。
         # 実機は 192.168.20.x だが開発 PC には無い。
+        cm4_cmd = shlex.split(CM4_SIM_CMD) if CM4_SIM_CMD else [str(CM4_SIM)]
         self.cm4 = subprocess.Popen(
-            [str(CM4_SIM),
+            cm4_cmd + [
              "--robot-ids", str(ROBOT_ID),
              "--in-port", str(CRANE_TO_CM4_PORT),
              "--out-addr", "127.0.0.1", "--out-port", str(CM4_TO_SIM_PORT),

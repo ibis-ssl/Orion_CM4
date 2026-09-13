@@ -1,0 +1,61 @@
+# cm4_sim の Docker イメージをビルドして ghcr へ push する。
+# crane 側の docker/scenario/docker-compose.yaml が
+# ghcr.io/ibis-ssl/orion-cm4-sim:latest を参照している。
+#
+# pull_request では push せずビルドだけ行う。Dockerfile の破損を
+# マージ前に捕まえるため。
+name: cm4-sim docker
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'cm4/**'
+      - '.github/workflows/cm4-sim-docker.yml'
+  pull_request:
+    paths:
+      - 'cm4/**'
+      - '.github/workflows/cm4-sim-docker.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: build cm4-sim image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # context は cm4/ のみ。build.sh・bridge・control がすべてここにある。
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./cm4
+          file: ./cm4/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/orion-cm4-sim:latest
+            ghcr.io/${{ github.repository_owner }}/orion-cm4-sim:${{ github.sha }}
+          cache-from: type=gha,scope=cm4-sim
+          cache-to: type=gha,mode=max,scope=cm4-sim
+
+      # compose 側の契約 (entrypoint: tini / command: cm4_sim) が満たされているか、
+      # イメージを実際に動かして確かめる。PR では push しないのでローカルへ load する。
+      - name: Verify compose contract
+        run: |
+          docker build -t cm4-sim:verify -f ./cm4/Dockerfile ./cm4
+          docker run --rm --entrypoint tini cm4-sim:verify -- cm4_sim --help

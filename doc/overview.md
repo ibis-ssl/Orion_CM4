@@ -404,6 +404,36 @@ crane が vision で見失っているロボットの `target_global_pos` は推
   **crane → CM4 の入力側にのみ**適用する。mode 3 素通しでも mode 4 位置制御でも同じように
   かかるので、A/B 比較の独立変数が「位置ループをどこで閉じるか」だけになる。
 
+### Docker イメージ（`ghcr.io/ibis-ssl/orion-cm4-sim`）
+
+crane の `docker/scenario/docker-compose.yaml` が `cm4-loop` プロファイルで参照する。
+定義は `cm4/Dockerfile`、push は `.github/workflows/cm4-sim-docker.yml`（main への
+push と `workflow_dispatch`。pull request ではビルドのみで push しない）。
+
+compose 側との契約は 3 つで、これを崩すと一括起動が壊れる。
+
+| 契約 | 実装 |
+|---|---|
+| `entrypoint: ["tini", "--"]` | runtime ステージで `tini` を入れている |
+| `command: cm4_sim ...` | `bin/cm4_sim.out` を **`/usr/local/bin/cm4_sim`** として置く（名前が違う） |
+| `network_mode: host` | 前提。独立した netns に置くと 127.0.0.1 上の simulator-cli と crane に届かない |
+
+ビルド定義は `cm4/build.sh` 唯一のままである。Dockerfile は `./build.sh --no-tests` を
+呼ぶだけで、g++ の行を持たない。ここに書き直すと実機用の `setup.sh` / `update.sh` と
+食い違ったバイナリを配ることになる。
+
+イメージの検証は実チェーンで行う。`CM4_SIM_CMD` で `cm4_sim` の起動コマンドを
+差し替えられる。
+
+```bash
+cd cm4/bridge
+SIMULATOR_CLI=/path/to/simulator-cli \
+CM4_SIM_CMD="docker run --rm --network host --entrypoint tini ghcr.io/ibis-ssl/orion-cm4-sim:latest -- cm4_sim" \
+  python3 -m unittest test_cm4_sim_chain
+```
+
+ローカルバイナリと同じ結果（目標まで 4.328 m -> 0.010 m）になることを確認済み。
+
 ### A/B 比較で数値を読むときの前提
 
 - `cm4_sim` の mode 3 素通し経路は、crane 断のとき速度ゼロと `STOP_EMERGENCY` を出す。
