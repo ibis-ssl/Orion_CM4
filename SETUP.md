@@ -90,8 +90,9 @@ uv run cm4-fleet deploy --all
 これを呼ぶだけです）。sudo も apt も使わないので、ホスト PC (x86_64) でもそのまま実行できます。
 
 ```bash
-./cm4/build.sh              # ビルド + テスト一式
-./cm4/build.sh --no-tests   # ビルドのみ
+./cm4/build.sh                          # ビルド + テスト一式
+./cm4/build.sh --no-tests               # ビルドのみ（全 5 本）
+./cm4/build.sh --no-tests --targets=sim # cm4_sim.out に必要なものだけ（Docker 用）
 ```
 
 `cm4/update.sh`（`cm4-fleet deploy` 経由）は `--no-tests` で呼びます。デプロイ中の

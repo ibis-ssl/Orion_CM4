@@ -18,10 +18,10 @@
 # ---- builder ----
 FROM debian:bookworm-slim AS builder
 
-# build.sh は cm4_sim.out 以外（boost::asio を使う実機ブリッジ）もビルドするので
-# libboost-dev が要る。cm4_sim.out 自体は boost に依存しない。
+# cm4_sim.out は boost に依存しない（POSIX ソケットのみ）。build.sh を
+# --targets=sim で呼ぶので boost::asio を使う実機ブリッジはビルドしない。
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends g++ libboost-dev \
+  && apt-get install -y --no-install-recommends g++ \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -29,7 +29,9 @@ COPY . /src
 
 # --no-tests: テストは CI (.github/workflows/build.yml) が実行する。
 # イメージビルドで UDP ポートを取り合うテストを走らせる必要はない。
-RUN ./build.sh --no-tests
+# --targets=sim: runtime へ COPY するのは cm4_sim.out 1 本だけなので、
+# 実機ブリッジ 2 本とテストバイナリ 2 本をビルドして捨てる必要はない。
+RUN ./build.sh --no-tests --targets=sim
 
 # ---- runtime ----
 FROM debian:bookworm-slim

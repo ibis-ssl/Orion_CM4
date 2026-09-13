@@ -126,9 +126,23 @@ class Bridge(object):
         if not debug:
             self.drain = threading.Thread(target=self._drain_pty, daemon=True)
             self.drain.start()
-        time.sleep(0.5)
-        if self.proc.poll() is not None:
-            raise RuntimeError("ai_cmd_v2.out が起動直後に終了しました:\n" + self._read_log())
+        self._wait_until_running()
+
+    def _wait_until_running(self, deadline_s=5.0):
+        """起動バナーの最終行が出るまで待つ。
+
+        固定 sleep だと、遅いときは足りず速いときは待ちすぎる。"control kp" は
+        全オプションの解析と検証を通り抜けたあとに出るので、この行が出た時点で
+        引数エラーで落ちないことと UART/ソケットの初期化開始が確定する。
+        """
+        end = time.monotonic() + deadline_s
+        while time.monotonic() < end:
+            if "control kp" in self._read_log():
+                return
+            if self.proc.poll() is not None:
+                raise RuntimeError("ai_cmd_v2.out が起動直後に終了しました:\n" + self._read_log())
+            time.sleep(0.01)
+        raise RuntimeError(f"ai_cmd_v2.out が {deadline_s}s 以内に起動を終えませんでした:\n" + self._read_log())
 
     def _drain_pty(self):
         while not self.drain_stop:

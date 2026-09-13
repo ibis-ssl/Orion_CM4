@@ -151,12 +151,29 @@ class Cm4Sim:
         self.log_path = Path(tempfile.mkdtemp(prefix="cm4-sim-")) / "cm4_sim.log"
         self.log = open(self.log_path, "w+")
         self.proc = subprocess.Popen(args, stdout=self.log, stderr=subprocess.STDOUT)
-        time.sleep(0.4)
-        # 起動失敗を「出力が来ない」ではなく起動時点で検出する。
-        if self.proc.poll() is not None:
-            self.log.flush()
-            self.log.seek(0)
-            raise RuntimeError("cm4_sim.out が起動直後に終了しました:\n" + self.log.read())
+        self._wait_until_running()
+
+    def _wait_until_running(self, deadline_s=5.0):
+        """最初の出力データグラムが届くまで待つ。
+
+        固定 sleep だと、遅いときは足りず速いときは待ちすぎる。cm4_sim は起動
+        直後から毎周期 715B を出すので、それを 1 つ受けられた時点で bind と
+        制御ループの稼働が同時に証明される（起動バナーを見るより強い）。
+        """
+        self.out_rx.settimeout(0.05)
+        end = time.monotonic() + deadline_s
+        while time.monotonic() < end:
+            # 起動失敗を「出力が来ない」ではなく終了コードで検出する。
+            if self.proc.poll() is not None:
+                self.log.flush()
+                self.log.seek(0)
+                raise RuntimeError("cm4_sim.out が起動直後に終了しました:\n" + self.log.read())
+            try:
+                if len(self.out_rx.recv(2048)) == PACKET_SIZE:
+                    return
+            except socket.timeout:
+                continue
+        raise RuntimeError(f"cm4_sim.out が {deadline_s}s 以内に出力を始めませんでした")
 
     def send_command(self, packet):
         self.tx.sendto(packet, ("127.0.0.1", self.in_port))
