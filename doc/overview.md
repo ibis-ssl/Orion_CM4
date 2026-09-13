@@ -477,6 +477,29 @@ crane の compose はログイン無しの素の `image:` で pull するので�
 また `workflow_dispatch` は既定ブランチにファイルが無いと選べないので、
 **`:latest` が出るのはこのブランチが main へマージされたあと**である。
 
+#### public 化した直後に 1 回だけやること
+
+public 化は一度きりの操作で、間違えても**誰かが compose で使おうとするまで誰も
+気づかない**。そこで確認まで込みで 1 セットにする。
+
+```bash
+# 1. 匿名で pull できること（public 化そのものの確認）
+docker logout ghcr.io
+docker pull ghcr.io/ibis-ssl/orion-cm4-sim:latest
+
+# 2. 既定 entrypoint のまま起動してログが残ること（バッファリングの確認）
+docker run -d --name t --network host --entrypoint tini   ghcr.io/ibis-ssl/orion-cm4-sim:latest -- cm4_sim --robot-ids 0
+sleep 1 && docker stop t && docker logs t   # 起動バナーが出ること
+docker rm t
+
+# 3. crane の compose から起動できること
+```
+
+**1 を落としやすい。** 手元は `docker login` 済みなので private のままでも pull が
+通り、「public にした」と思い込める。`docker logout ghcr.io` か、ログイン情報の無い
+環境で確かめること。同じ組織の `framework-simulatorcli` も、意識的に確認して
+初めて匿名 pull が通ると分かった。
+
 ### A/B 比較で数値を読むときの前提
 
 - `cm4_sim` の mode 3 素通し経路は、crane 断のとき速度ゼロと `STOP_EMERGENCY` を出す。

@@ -385,6 +385,27 @@ CM4 側で巻き戻りを補正することは**しません**。実機 G474 と
 判定は `position_controller` の中にあるので、**実機バイナリと `cm4_sim` が必ず同じ判定を
 通ります**。
 
+##### この 104 ms と G474 の 250 ms は「二段構え」ではありません
+
+新構成で crane が沈黙しても、**CM4 は `check_counter` を進めながら送信を続けます**
+（`forward_ai_cmd_v2.cpp` の位置制御パスは毎送信で `nextCheckCounter()` を呼び、
+停止中も `--tx-rate-hz` で送り続ける）。したがって G474 の `connected_ai` は真のまま
+であり、車輪が止まる理由は **CM4 が立てた `STOP_EMERGENCY`** です。250 ms の
+`connected_ai` タイムアウトはこの経路には出てきません。
+
+新構成での 250 ms の役割は変わり、**CM4 側（`ai_cmd_v2.out` のプロセス死、UART 断）
+に対する最後の砦**になります。このときだけ `check_counter` が凍り、G474 が自力で
+止めます。
+
+| 何が落ちたか | 止めるのは誰か | 時間 |
+|---|---|---|
+| crane（無線断・プロセス死） | CM4 の `STOP_EMERGENCY` | 約 104 ms |
+| CM4（`ai_cmd_v2.out` の死、UART 断） | G474 の `connected_ai` | 250 ms |
+
+旧構成（`--passthrough`）では `check_counter` が crane 由来なので、crane 断が
+そのまま `connected_ai` の 250 ms に出ます。**同じ 250 ms が構成によって別の障害を
+見ている**ので、実機で測るときに取り違えないこと。
+
 出力パケットは受信した 64 バイトをコピーして `CHECK_COUNTER` / `CONTROL_MODE` /
 `CONTROL_MODE_ARGS` だけを差し替えて作ります。ゼロから組み立てると
 `target_global_theta` / `angular_velocity_limit` / `kick_power` / `dribble_power` / flags を
