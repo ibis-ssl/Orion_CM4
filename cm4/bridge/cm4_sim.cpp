@@ -73,7 +73,19 @@ struct Options
   // 再配信先は入力ポートと独立。simulator-cli の feedback を別ポートで受けても、
   // crane の crane_robot_receiver は 50100+id 固定なので再配信先は動かせない。
   int feedback_relay_port_base = 50100;
-  std::string multicast_if;  // 空なら OS 任せ (開発 PC に 192.168.20.x は無い)
+  // feedback 再配信の送出インタフェース。既定でループバックに固定する。
+  //
+  // 省略して IP_MULTICAST_IF を設定しないと、OS は既定ルートのインタフェース
+  // (開発 PC では Wi-Fi になりうる) を選ぶ。crane 側には multicast が Wi-Fi へ
+  // 漏れて AP が過負荷になる問題があり、対策 (PR #1425) の iptables DROP は
+  // 224.5.23.0/24 (vision/referee) だけで 224.5.20.0/24 (feedback) は対象外である。
+  // 従来この帯域には何も流れていなかったが、cm4_sim の再配信で実際に流れるように
+  // なったので、発生元のソケットで閉じ込める。
+  //
+  // cm4_sim はホスト専用のシミュレータ用バイナリなので、この既定が実機の
+  // forward_robot_feedback.out に影響することはない。実ネットワークへ出したい
+  // ときは --multicast-if <ip> で明示する。
+  std::string multicast_if = "127.0.0.1";
   bool feedback_relay = true;
 
   int rate_hz = 1000;
@@ -101,7 +113,9 @@ void printUsage(const char * argv0)
     "  --feedback-relay-port-base 50100\n"
     "                            multicast 再配信の宛先ポート。crane の\n"
     "                            crane_robot_receiver は 50100+id 固定なので通常は既定のまま\n"
-    "  --multicast-if <ip>       feedback 再配信の送出インタフェース (省略時 OS 任せ)\n"
+    "  --multicast-if <ip>       feedback 再配信の送出インタフェース (既定 127.0.0.1)\n"
+    "                            既定はループバック固定。multicast を Wi-Fi へ漏らさないため。\n"
+    "                            実ネットワークへ出すときだけ明示する ('' で OS 任せ)\n"
     "  --no-feedback-relay       multicast 再配信を行わない\n"
     "  --rate-hz 1000            制御レート\n"
     "  --rx-delay-ms 0           crane -> CM4 経路への固定遅延\n"

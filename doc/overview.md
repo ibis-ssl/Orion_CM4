@@ -359,8 +359,7 @@ crane が vision で見失っているロボットの `target_global_pos` は推
 
 # 端末2: cm4_sim
 ./cm4/bin/cm4_sim.out --robot-ids 0 \
-  --in-port 12345 --out-port 12346 --feedback-port-base 50100 \
-  --multicast-if 127.0.0.1
+  --in-port 12345 --out-port 12346 --feedback-port-base 50100
 
 # 端末3: crane を sim:=true feedback_sim_mode:=false で起動
 ```
@@ -381,6 +380,14 @@ crane が vision で見失っているロボットの `target_global_pos` は推
   cm4_sim と feedback を取り合う。`SO_REUSEPORT` は 4-tuple ハッシュで振り分けるため
   **単一送信元からの feedback は必ずどちらか一方が全量取る**（実測: 200 発中 0 対 200）。
   どちらが当たるかは実行ごとに変わり、再現性がない。
+- **feedback 再配信の送出 IF は既定でループバック固定**（`--multicast-if`、既定 `127.0.0.1`）。
+  省略して `IP_MULTICAST_IF` を設定しないと OS が既定ルートの IF（開発 PC では Wi-Fi に
+  なりうる）を選ぶ。crane 側には multicast が Wi-Fi へ漏れて AP が過負荷になる問題があり、
+  対策（PR #1425）の iptables DROP は `224.5.23.0/24`（vision/referee）だけで
+  **`224.5.20.0/24`（feedback）は対象外**である。従来この帯域には何も流れていなかったが、
+  `cm4_sim` の再配信で実際に流れるようになったので発生元のソケットで閉じ込める。
+  実ネットワークへ出したいときだけ `--multicast-if <ip>` で明示する。
+  `cm4_sim` はホスト専用なので、実機の `robot_feedback.out` には影響しない。
 - 再配信ポートは `--feedback-relay-port-base`（既定 50100）で入力ポートと独立に指定する。
   crane の `crane_robot_receiver` は `robot_id = port - 50100` と直書きしているので、
   再配信先は **50100 固定**である。

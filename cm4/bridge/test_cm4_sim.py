@@ -401,11 +401,11 @@ class Cm4SimSmokeTest(unittest.TestCase):
         """feedback が multicast へ再配信されること。
 
         実機の robot_feedback.out と同じ経路で、crane と host ツールがここを見る。
-        開発 PC には 192.168.20.x が無いので送出 IF は loopback にする。
+
+        --multicast-if を **あえて渡さない**。既定がループバック固定であること
+        （multicast を Wi-Fi へ漏らさないこと）をこのテストで担保する。
         """
-        # --no-feedback-relay を外し、送出 IF を loopback にする
-        sim = Cm4Sim(robot_ids="0", extra_args=["--multicast-if", "127.0.0.1"],
-                     relay=True)
+        sim = Cm4Sim(robot_ids="0", relay=True)
         # 再配信先はテストごとにずらした feedback_base から決まるので、
         # 起動後の実ポートを見て join する（定数を直接使うとズレる）。
         group = f"224.5.20.{100 + 0}"
