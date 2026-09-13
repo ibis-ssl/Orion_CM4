@@ -81,7 +81,8 @@ def decode_two_byte(data, offset, value_range):
 
 def build_command(counter, target=(1.0, 0.0), vision=(0.0, 0.0), mode=MODE_POSITION_TARGET,
                   terminal_velocity_xy=(0.0, 0.0), terminal_velocity=0.0,
-                  linear_velocity_limit=3.0, stop_emergency=False, vision_available=True):
+                  linear_velocity_limit=3.0, stop_emergency=False, vision_available=True,
+                  elapsed_ms_since_last_vision=0):
     d = bytearray(CMD_SIZE)
     d[CHECK_COUNTER] = counter & 0xFF
     d[VISION_GLOBAL_X_HIGH:VISION_GLOBAL_X_HIGH + 2] = encode_two_byte(vision[0], 32.767)
@@ -91,6 +92,10 @@ def build_command(counter, target=(1.0, 0.0), vision=(0.0, 0.0), mode=MODE_POSIT
     d[ACCELERATION_LIMIT_HIGH:ACCELERATION_LIMIT_HIGH + 2] = encode_two_byte(4.0, 32.767)
     d[LINEAR_VELOCITY_LIMIT_HIGH:LINEAR_VELOCITY_LIMIT_HIGH + 2] = encode_two_byte(linear_velocity_limit, 32.767)
     d[ANGULAR_VELOCITY_LIMIT_HIGH:ANGULAR_VELOCITY_LIMIT_HIGH + 2] = encode_two_byte(5.0, 32.767)
+    # byte 20..21 は素の uint16 (big-endian)。2 バイト固定小数ではないので
+    # ゼロ埋めが正しく 0 (= 最新) になる。
+    d[20] = (elapsed_ms_since_last_vision >> 8) & 0xFF
+    d[21] = elapsed_ms_since_last_vision & 0xFF
     d[FLAGS] = (0x01 if vision_available else 0x00) | ((1 << STOP_EMERGENCY_BIT) if stop_emergency else 0)
     d[CONTROL_MODE] = mode
     d[CONTROL_MODE_ARGS:CONTROL_MODE_ARGS + 2] = encode_two_byte(terminal_velocity_xy[0], 32.767)
@@ -511,6 +516,37 @@ class Cm4SimSmokeTest(unittest.TestCase):
         sim = Cm4Sim(robot_ids="0")
         try:
             command = build_command(1, target=(3.0, 0.0), linear_velocity_limit=2.0, vision_available=False)
+            got = None
+            for _ in range(40):
+                sim.send_command(build_packet(0, command))
+                sim.send_feedback(0, 1, 0.0, 0.0)
+                time.sleep(0.02)
+                out = sim.recv_latest_output(timeout=0.5)
+                if out is None:
+                    continue
+                _, cmd = slot_of(out, 0)
+                if cmd != bytes(CMD_SIZE):
+                    got = cmd
+                    break
+            self.assertIsNotNone(got)
+            self.assertEqual(got[CONTROL_MODE], MODE_POLAR_VELOCITY)
+            self.assertAlmostEqual(decode_two_byte(got, CONTROL_MODE_ARGS, 32.767), 0.0, delta=2e-3)
+            self.assertTrue(got[FLAGS] & (1 << STOP_EMERGENCY_BIT))
+        finally:
+            sim.close()
+
+    def test_stale_vision_stops_the_robot(self):
+        """vision が古すぎるときは is_vision_available が立っていても止めること。
+
+        crane は world model からロボットを引けないとき例外経路に入り、
+        elapsed に fail-safe 値を詰める (65535 を検討中)。その値が
+        is_vision_available = true と同時に来ても止まることを固定する。
+        実機 G474 の state_func.c:314 は OR なので同じ挙動になる。
+        """
+        sim = Cm4Sim(robot_ids="0")
+        try:
+            command = build_command(1, target=(3.0, 0.0), linear_velocity_limit=2.0,
+                                    vision_available=True, elapsed_ms_since_last_vision=65535)
             got = None
             for _ in range(40):
                 sim.send_command(build_packet(0, command))
