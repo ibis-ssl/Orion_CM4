@@ -37,6 +37,8 @@
 #include <boost/asio.hpp>
 #include <cmath>
 #include <cstring>
+#include <string>
+#include <vector>
 
 #include "../control/position_controller.h"
 #include "robot_command_ops.h"
@@ -73,9 +75,6 @@ typedef struct
   uint8_t fps;
 } camera_t;
 
-float two_to_float(char data[2]) { return (float)(((uint8_t)data[0] << 8 | (uint8_t)data[1]) - 32767.0) / 32767.0; }
-float two_to_int(char data[2]) { return (((uint8_t)data[0] << 8 | (uint8_t)data[1]) - 32767.0); }
-
 // wlan0 の最終オクテット - 100 をロボット ID とする。
 // 決定できないときは 0 ではなく -1 を返すこと。位置制御では ID が feedback の
 // bind ポート (50000+100+id) も決めるので、黙って 0 に落ちると「自分の G474 へ
@@ -111,19 +110,56 @@ int get_machine_id()
   return -1;
 }
 
+// 問い合わせのあったオプション名をそのまま「既知オプション」の正本にする。
+// 別に一覧表を持つと、オプションを足したときに片方だけ更新して、正しい指定を
+// 黙って弾く / 打ち間違いを黙って通す、のどちらかの事故になる。
+std::vector<std::string> g_value_options;  // 値を 1 つ取るもの
+std::vector<std::string> g_flag_options;   // 値を取らないもの
+bool g_option_error = false;
+
+bool isKnown(const std::vector<std::string> & names, const char * arg)
+{
+  for (const std::string & n : names) {
+    if (n == arg) return true;
+  }
+  return false;
+}
+
 // コマンドライン引数の走査。値の欠落時の扱いを 1 箇所に閉じる。
 //
 // --ai-cmd-port / --local-cam-port / --robot-id などはホスト PC でのテスト用。
 // 既定値は実機構成 (AI 指令 12345 / ローカルカメラ 8890)。
 const char * getRawOption(int argc, char * argv[], const char * name)
 {
+  if (!isKnown(g_value_options, name)) g_value_options.push_back(name);
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], name) != 0) continue;
     if (i + 1 < argc) return argv[i + 1];
-    fprintf(stderr, "%s には引数が必要です。既定値を使います。\n", name);
+    // 既定値で続行しない。--kp / --command-timeout-ms などの制御定数がここに
+    // 載っているので、値を書き忘れたまま既定ゲインで走らせてはならない。
+    fprintf(stderr, "%s には引数が必要です。\n", name);
+    g_option_error = true;
     return nullptr;
   }
   return nullptr;
+}
+
+// 既知オプションの正本 (g_value_options / g_flag_options) が出そろったあとに
+// 1 度だけ呼ぶ。打ち間違いを黙って既定値で走らせないための最後の関門。
+bool validateOptions(int argc, char * argv[])
+{
+  bool ok = !g_option_error;
+  for (int i = 1; i < argc; ++i) {
+    if (isKnown(g_value_options, argv[i])) {
+      ++i;  // その値は消費済み
+      continue;
+    }
+    if (isKnown(g_flag_options, argv[i])) continue;
+    fprintf(stderr, "不明なオプションです: %s\n", argv[i]);
+    ok = false;
+  }
+  if (!ok) fprintf(stderr, "  -h で全オプションを表示します。\n");
+  return ok;
 }
 
 int getIntOption(int argc, char * argv[], const char * name, int default_value)
@@ -146,6 +182,7 @@ const char * getStringOption(int argc, char * argv[], const char * name, const c
 
 bool hasFlag(int argc, char * argv[], const char * name)
 {
+  if (!isKnown(g_flag_options, name)) g_flag_options.push_back(name);
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], name) == 0) {
       return true;
@@ -254,6 +291,13 @@ void printUsage()
 
 int main(int argc, char * argv[])
 {
+  // stdout が端末でないとき (docker のログ、systemd の journal、テストのパイプ)
+  // 既定はブロックバッファリングになる。異常時に SIGTERM で落とされると、その
+  // 直前の数十行がバッファごと消える。現地で一番読みたいログが一番消えやすい
+  // ので、行バッファへ固定する。呼び出し側の stdbuf -oL に頼らない。
+  setvbuf(stdout, nullptr, _IOLBF, 0);
+  setvbuf(stderr, nullptr, _IOLBF, 0);
+
   if (hasFlag(argc, argv, "-h") || hasFlag(argc, argv, "--help")) {
     printUsage();
     return 0;
@@ -297,6 +341,9 @@ int main(int argc, char * argv[])
   control_config.position_tolerance = getFloatOption(argc, argv, "--tolerance", control_config.position_tolerance);
   control_config.command_timeout_ms = (uint32_t)getIntOption(argc, argv, "--command-timeout-ms", (int)control_config.command_timeout_ms);
   control_config.feedback_timeout_ms = (uint32_t)getIntOption(argc, argv, "--feedback-timeout-ms", (int)control_config.feedback_timeout_ms);
+
+  // 全オプションの問い合わせが終わったここで検証する。
+  if (!validateOptions(argc, argv)) return 1;
 
   printf("debug mode : %d\n", debug_mode_enabled);
   printf("UART %s %d bps\n", serial_port_path, uart_baudrate);

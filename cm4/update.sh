@@ -34,7 +34,13 @@ run_sudo() {
 
 build_cpp_binaries() {
   # ビルド定義は cm4/build.sh に一本化している (cm4/setup.sh も同じものを呼ぶ)。
-  "${CM4_DIR}/build.sh"
+  #
+  # --no-tests: デプロイ経路ではテストを走らせない。build.sh のテストは UDP を
+  # bind して cm4_sim.out / ai_cmd_v2.out を spawn するので、restart_service の
+  # 前に稼働中の control_server と同居することになる。lancher.py の /status は
+  # `pgrep -f ai_cmd_v2.out` で判定するため、テストが立てたプロセスを本番稼働と
+  # 誤認する。検証は CI と cm4/setup.sh (初期セットアップ) が担う。
+  "${CM4_DIR}/build.sh" --no-tests
 }
 
 build_camera_server() {

@@ -370,6 +370,14 @@ struct RobotState
   bool has_feedback = false;
   uint64_t feedback_time_ms = 0;
 
+  // 最後に表示した停止理由。共有制御器が reason を返すのは、実機と sim の
+  // どちらでも「なぜ止まっているか」を言えるようにするため。実機側
+  // (forward_ai_cmd_v2.cpp) と同じく、変わった周期にだけ 1 行出す。
+  orion::PositionControllerReason logged_reason = orion::PositionControllerReason::Ok;
+  bool logged_reason_valid = false;
+
+  // feedback 再配信の宛先。id ごとに定数なので毎データグラム作り直さない。
+  struct sockaddr_in relay_dst = {};
 };
 
 // ---------------------------------------------------------------------------
@@ -484,6 +492,13 @@ void onSignal(int) { g_stop = 1; }
 
 int main(int argc, char * argv[])
 {
+  // stdout が端末でないとき (docker のログ、systemd の journal、テストのパイプ)
+  // 既定はブロックバッファリングになる。異常時に SIGTERM で落とされると、その
+  // 直前の数十行がバッファごと消える。現地で一番読みたいログが一番消えやすい
+  // ので、行バッファへ固定する。呼び出し側の stdbuf -oL に頼らない。
+  setvbuf(stdout, nullptr, _IOLBF, 0);
+  setvbuf(stderr, nullptr, _IOLBF, 0);
+
   Options opt;
   if (!parseOptions(argc, argv, &opt)) return 1;
 
@@ -523,10 +538,27 @@ int main(int argc, char * argv[])
     const int loop = 1;  // 同一ホストの crane / host ツールへ届かせる
     setsockopt(relay_sock, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, sizeof(loop));
     if (!opt.multicast_if.empty()) {
+      // 失敗しても送出を続けると、上のコメントで閉じ込めたかった経路 (Wi-Fi への
+      // multicast 漏れ) へそのまま流れる。気付けるのは AP が落ちたときで、しかも
+      // 原因が cm4_sim だとは結び付かない。閉じ込めを要求された以上、ここは落とす。
+      // 「OS 任せ」を選びたいときは --multicast-if '' と明示する。
       const in_addr_t ifaddr = inet_addr(opt.multicast_if.c_str());
       if (setsockopt(relay_sock, IPPROTO_IP, IP_MULTICAST_IF, &ifaddr, sizeof(ifaddr)) != 0) {
-        perror("setsockopt(IP_MULTICAST_IF)");
+        fprintf(stderr, "setsockopt(IP_MULTICAST_IF, %s) に失敗しました: %s\n", opt.multicast_if.c_str(), strerror(errno));
+        fprintf(stderr, "  feedback 再配信が意図しないインタフェース (Wi-Fi など) へ漏れるので起動を中止します。\n");
+        fprintf(stderr, "  OS 任せで構わない場合は --multicast-if '' を明示してください。\n");
+        close(relay_sock);
+        return 1;
       }
+    }
+
+    // 宛先は id ごとに定数。起動時に 1 回だけ作る。
+    for (int id : opt.robot_ids) {
+      char group[32];
+      snprintf(group, sizeof(group), "224.5.20.%d", 100 + id);
+      robots[id].relay_dst.sin_family = AF_INET;
+      robots[id].relay_dst.sin_port = htons(static_cast<uint16_t>(opt.feedback_relay_port_base + id));
+      robots[id].relay_dst.sin_addr.s_addr = inet_addr(group);
     }
   }
 
@@ -597,14 +629,7 @@ int main(int argc, char * argv[])
         robots[id].feedback_time_ms = clock.nowMs();
 
         if (relay_sock >= 0) {
-          char group[32];
-          snprintf(group, sizeof(group), "224.5.20.%d", 100 + id);
-          struct sockaddr_in dst;
-          memset(&dst, 0, sizeof(dst));
-          dst.sin_family = AF_INET;
-          dst.sin_port = htons(static_cast<uint16_t>(opt.feedback_relay_port_base + id));
-          dst.sin_addr.s_addr = inet_addr(group);
-          sendto(relay_sock, fb, kFeedbackSize, 0, reinterpret_cast<struct sockaddr *>(&dst), sizeof(dst));
+          sendto(relay_sock, fb, kFeedbackSize, 0, reinterpret_cast<struct sockaddr *>(&robots[id].relay_dst), sizeof(robots[id].relay_dst));
         }
       }
     }
@@ -612,6 +637,9 @@ int main(int argc, char * argv[])
 
   // --- 1 制御周期ぶんの出力データグラムを作って送る ---
   auto sendControlDatagram = [&]() {
+    // 11 スロットは 1 つのデータグラムで出るので、タイムスタンプも 1 つにする。
+    // スロットごとに取り直すと、スロット 10 の stale 判定だけが後の時刻を見る。
+    const uint64_t now_ms = clock.nowMs();
     memset(tx, 0, sizeof(tx));
     check_counter = (check_counter >= 200) ? 0 : static_cast<uint8_t>(check_counter + 1);
 
@@ -636,7 +664,7 @@ int main(int argc, char * argv[])
       // だけになる。
       if (cmd.control_mode != POSITION_TARGET_WITH_TERMINAL_VELOCITY_MODE) {
         // 判定は位置制御側と共有する。素通し経路でも crane 断の扱いを揃えるため。
-      const bool stale = orion::isCommandStale(st.has_command, st.command_time_ms, clock.nowMs(), opt.control);
+        const bool stale = orion::isCommandStale(st.has_command, st.command_time_ms, now_ms, opt.control);
         out_slot[0] = static_cast<uint8_t>(slot);
         buildPassthroughSlot(out_slot + 1, st, stale, opt.vision_echo_feedback);
         continue;
@@ -650,9 +678,20 @@ int main(int argc, char * argv[])
       in.current_pos[1] = st.feedback_pos[1];
       in.has_feedback = st.has_feedback;
       in.feedback_time_ms = st.feedback_time_ms;
-      in.now_ms = clock.nowMs();
+      in.now_ms = now_ms;
 
       const orion::PositionControllerOutput out = computePositionControl(in, opt.control);
+
+      // 共有制御器が reason を返すのは両バイナリがログに出すため。実機側と同じく
+      // 「変わった周期だけ」出す (毎周期出すと 1 kHz でログが埋まる)。
+      if (!st.logged_reason_valid || out.reason != st.logged_reason) {
+        printf("cm4_sim: robot %d %s (r %.3f m/s, fbXY %+6.2f %+6.2f)\n", slot, orion::toString(out.reason),
+          static_cast<double>(out.polar_velocity_r), static_cast<double>(st.feedback_pos[0]), static_cast<double>(st.feedback_pos[1]));
+        fflush(stdout);
+        st.logged_reason = out.reason;
+        st.logged_reason_valid = true;
+      }
+
       if (out.feedforward_rejected) {
         // 2 バイト固定小数の未設定フィールドは 0.0 ではなく -32.767 として復号される。
         // 黙って無視すると crane 側のフィールド書き忘れに誰も気付かない。
@@ -691,6 +730,11 @@ int main(int argc, char * argv[])
   printf("\ncm4_sim 終了: %llu 周期送出\n", static_cast<unsigned long long>(loop_count));
   if (ff_rejected_count > 0) {
     printf("terminal_velocity 未設定として無視した回数: %llu\n", static_cast<unsigned long long>(ff_rejected_count));
+  }
+  // robot_packet.h の 2 バイト固定小数クランプ回数。劣化注入して A/B の数値を
+  // 取るのはこちら側なので、範囲外を黙って丸めた事実がここで消えては困る。
+  if (*robotPacketClampCount() > 0) {
+    printf("2 バイト固定小数で範囲外クランプした回数: %u\n", *robotPacketClampCount());
   }
   if (degrader.enabled()) {
     // seed と受信パケット数が同じなら必ず同じ行になる。--seed の再現性検証に使う。

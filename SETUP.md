@@ -94,6 +94,10 @@ uv run cm4-fleet deploy --all
 ./cm4/build.sh --no-tests   # ビルドのみ
 ```
 
+`cm4/update.sh`（`cm4-fleet deploy` 経由）は `--no-tests` で呼びます。デプロイ中の
+実機で UDP を bind するテストプロセスを立てないためです。初期セットアップの
+`cm4/setup.sh` はテストまで実行します。
+
 テスト一式は実機 UART も STM32 も使わないので、ホスト PC でそのまま走ります。
 
 出力は `cm4/bin/` です。
@@ -122,6 +126,9 @@ uv run cm4-fleet deploy --all
 - `--kp` / `--decel` / `--tolerance` / `--command-timeout-ms` / `--feedback-timeout-ms`
   で位置制御の定数を変更できる。
 - `-h` で全オプションを表示します。
+- **不明なオプションや値の書き忘れがあると起動せずに終了します**。位置制御の
+  ゲインとタイムアウトがこの経路に載っているので、打ち間違いを既定値で
+  黙って走らせません。
 
 ```bash
 ./cm4/bin/ai_cmd_v2.out --debug

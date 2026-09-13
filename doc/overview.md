@@ -514,3 +514,73 @@ SIMULATOR_CLI=/home/hans/workspace/framework/build/bin/simulator-cli \
 - crane を止めて車輪が止まるまでの時間。予算は `--command-timeout-ms`(100) +
   ポーリング 1 ms + UART 0.72 ms + G474 メインループ 2 ms = **約 104 ms**
   （`doc/control_packet.md` の「crane 断から車輪が止まるまでの時間」）
+
+### 起動時と異常時に必ず言葉が残るようにした（2026-09-13）
+
+`/simplify` のレビューで挙がった「気付けない失敗」を潰した。いずれも実機とホスト
+の両方に効く。
+
+**1. ログのブロックバッファリング**
+
+`ai_cmd_v2.out` と `cm4_sim.out` は `main()` の先頭で `setvbuf(stdout, ..., _IOLBF, 0)`
+を呼び、stdout / stderr を行バッファへ固定する。stdout が端末でないとき（docker
+のログ、systemd の journal、テストのパイプ）既定はブロックバッファリングで、
+SIGTERM で落とされると直前の数十行がバッファごと消える。**現地で一番読みたい
+ログが一番消えやすい**。framework 側は `simulator-cli` で実際にこれを踏み、
+「警告 0 行」という誤った結論を一度出している。
+
+呼び出し側の `stdbuf -oL` に頼らない。`docker stop` 後に `docker logs` へ起動
+バナーが残ることを確認済み。
+
+**2. `ai_cmd_v2.out` が不明なオプションで落ちるようになった**
+
+従来は引数の書き間違いを黙って無視して既定値で走っていた。`--kp` / `--decel` /
+`--tolerance` / `--command-timeout-ms` / `--feedback-timeout-ms` がこの経路に
+載った以上、`--Kp` と打ち間違えたロボットが既定ゲインで黙って走るのは許容できない。
+
+既知オプションの一覧は別表ではなく、**引数解析が問い合わせた名前そのもの**
+（`g_value_options` / `g_flag_options`）である。別表にするとオプションを足した
+ときに片方だけ更新して、正しい指定を弾く事故になる。
+
+```
+$ ai_cmd_v2.out --Kp 3.0
+不明なオプションです: --Kp
+  -h で全オプションを表示します。
+$ ai_cmd_v2.out --tolerance
+--tolerance には引数が必要です。
+```
+
+`cm4/lancher.py` が渡すのは `-s 1000000` だけなので、実機の起動経路には影響しない。
+
+**3. `cm4_sim` の `--multicast-if` 失敗が致命的になった**
+
+`setsockopt(IP_MULTICAST_IF)` に失敗したら起動を中止する。従来は `perror` して
+送出を続けていたが、それでは閉じ込めたかった経路（Wi-Fi への multicast 漏れ）へ
+そのまま流れる。気付けるのは AP が落ちたときで、原因が `cm4_sim` だとは結び付かない。
+OS 任せで構わないときは `--multicast-if ''` と明示する。
+
+**4. `cm4_sim` が停止理由を表示するようになった**
+
+共有制御器が `reason` を返すのは、実機と sim のどちらでも「なぜ止まっているか」を
+言えるようにするためである。`cm4_sim` はそれを一切出していなかった。実機側と同じく
+**理由が変わった周期にだけ** 1 行出す。
+
+```
+cm4_sim: robot 0 FeedbackStale (r 0.000 m/s, fbXY  +0.00  +0.00)
+cm4_sim: robot 0 Ok (r 1.600 m/s, fbXY  +0.20  +0.00)
+cm4_sim: robot 0 CommandStale (r 0.000 m/s, fbXY  +0.20  +0.00)
+```
+
+終了時のサマリには `robot_packet.h` の 2 バイト固定小数クランプ回数も出す。劣化を
+注入して A/B の数値を取るのは `cm4_sim` 側なので、範囲外を黙って丸めた事実がここで
+消えては困る。
+
+**5. `cm4/update.sh` がデプロイ経路でテストを走らせなくなった**
+
+`build.sh` への一本化で、`cm4-fleet deploy` のたびに CM4 実機上で Python 結合
+テスト（約 17 秒）が走るようになっていた。テストは UDP を bind して
+`cm4_sim.out` / `ai_cmd_v2.out` を spawn するので、`restart_service` の前に
+稼働中の `control_server` と同居する。`lancher.py` の `/status` は
+`pgrep -f ai_cmd_v2.out` で判定するため、テストが立てたプロセスを本番稼働と
+誤認する。`update.sh` は `build.sh --no-tests` を呼ぶ。検証は CI と
+`cm4/setup.sh`（初期セットアップ）が担う。
