@@ -1,7 +1,7 @@
 """cm4_sim の結合スモークテストを担当する。
 
 cm4_sim.out 単体を相手にする（simulator-cli は起動しない）ので、CI で
-framework リポジトリに依存しない。実チェーンの検証は test_cm4_sim_chain.py。
+framework リポジトリに依存しない。
 
 検査するもの:
   1. mode 4 の 715B を投げると mode 3 の 715B が出る（CHECK_COUNTER が毎回変化）

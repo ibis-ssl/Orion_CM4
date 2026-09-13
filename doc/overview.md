@@ -100,7 +100,6 @@ Orion_CM4/
       robot_packet_layout_test.cpp
       cm4_sim.cpp
       test_cm4_sim.py
-      test_cm4_sim_chain.py
       test_forward_ai_cmd_v2.py
     control/
       position_controller.h
@@ -456,17 +455,8 @@ compose 側との契約は 3 つで、これを崩すと一括起動が壊れる
 呼ぶだけで、g++ の行を持たない。ここに書き直すと実機用の `setup.sh` / `update.sh` と
 食い違ったバイナリを配ることになる。
 
-イメージの検証は実チェーンで行う。`CM4_SIM_CMD` で `cm4_sim` の起動コマンドを
-差し替えられる。
-
-```bash
-cd cm4/bridge
-SIMULATOR_CLI=/path/to/simulator-cli \
-CM4_SIM_CMD="docker run --rm --network host --entrypoint tini ghcr.io/ibis-ssl/orion-cm4-sim:latest -- cm4_sim" \
-  python3 -m unittest test_cm4_sim_chain
-```
-
-ローカルバイナリと同じ結果（目標まで 4.328 m -> 0.010 m）になることを確認済み。
+イメージの検証は `simulator-cli` と crane を実際に繋いで行う。ローカルビルドの
+バイナリと同じ挙動になることを確認すること。
 
 **初回だけ手作業が要る。** ghcr のパッケージは最初の push で private として作られる。
 crane の compose はログイン無しの素の `image:` で pull するので、workflow が緑に
@@ -482,24 +472,12 @@ crane の compose はログイン無しの素の `image:` で pull するので�
 public 化は一度きりの操作で、間違えても**誰かが compose で使おうとするまで誰も
 気づかない**。そこで確認まで込みで 1 セットにする。
 
-```bash
-# 1. 匿名で pull できること（public 化そのものの確認）
-docker logout ghcr.io
-docker pull ghcr.io/ibis-ssl/orion-cm4-sim:latest
-
-# 2. 既定 entrypoint のまま起動してログが残ること（バッファリングの確認）
-docker run -d --name t --network host --entrypoint tini   ghcr.io/ibis-ssl/orion-cm4-sim:latest -- cm4_sim --robot-ids 0
-sleep 1 && docker stop t && docker logs t   # 起動バナーが出ること
-docker rm t
-
-# 3. crane の compose から起動できること
-```
+1. `docker logout ghcr.io` してから `docker pull` できること（public 化そのものの確認）
+2. 既定 entrypoint のまま起動し、`docker stop` 後に `docker logs` へ行が残ること
+3. crane の compose から起動できること
 
 **1 を落としやすい。** 手元は `docker login` 済みなので private のままでも pull が
-通り、「public にした」と思い込める。`docker logout ghcr.io` か、ログイン情報の無い
-環境で確かめること。同じ組織の `framework-simulatorcli` も、意識的に確認して
-初めて匿名 pull が通ると分かった。
-
+通り、「public にした」と思い込める。
 ### A/B 比較で数値を読むときの前提
 
 - `cm4_sim` の mode 3 素通し経路は、crane 断のとき速度ゼロと `STOP_EMERGENCY` を出す。
@@ -529,16 +507,8 @@ docker rm t
 3. `--command-timeout-ms` は新経路のチューニングノブでもあるため、感度解析を
    すると両者が連動する（A/B の独立変数が 2 つになる）
 
-**framework セッションがシミュレータ側で実測した結果、この乖離は数字になった。**
-
-| 経路 | シミュレータ実測 | 実機 | 乖離 |
-|---|---|---|---|
-| 新構成（mode 4） | 102.2 ms | 約 104 ms（CM4 の `STOP_EMERGENCY`） | ほぼ一致（約 2 ms） |
-| 基準側（mode 3 素通し） | 101.2 ms | 250 ms（G474 の `connected_ai`） | **約 2.5 倍速い** |
-
-つまり現状のシミュレータは、**新構成の停止タイミングは忠実に再現しているのに、
-基準側だけを実機より 2.5 倍速く止めている**。シミュレータ上では両者の差が 1 ms
-しかないが、実機では 2.5 倍違う。
+シミュレータ側で実測しても、新構成の停止タイミングは実機とほぼ一致する一方、
+基準側だけが実機より速く止まることが確認されている。
 
 これは実装の都合ではなく**基準側を何に合わせるかという設計判断**なので、
 コード側では変えていない。仮に分離するなら、既定値を 250 ms に変えるのではなく
@@ -561,13 +531,6 @@ docker rm t
 - `test_forward_ai_cmd_v2.py` — 実機ブリッジの結合スモークテスト（`--debug` + pty）。
   1 件だけ `--debug` なしの実運用モードで動かし、位置制御の状態表示が実際に出ることを検査する
 
-`test_cm4_sim_chain.py` は実 `simulator-cli` が要るので CI では走らない。
-
-```bash
-SIMULATOR_CLI=/home/hans/workspace/framework/build/bin/simulator-cli \
-  python3 -m unittest discover -s cm4/bridge -p 'test_cm4_sim_chain.py'
-```
-
 ### 未了（実機で確認すること）
 
 - `--passthrough` で旧構成と同じ挙動になること（ホストでは 72 バイトのバイト一致を確認済み）
@@ -577,12 +540,10 @@ SIMULATOR_CLI=/home/hans/workspace/framework/build/bin/simulator-cli \
 - **安全停止時の惰走距離**。G474 は `stop_emergency` で `omniStopAll()`（駆動力ゼロ）
   に入るので、実機も惰走する。CAN フレームにブレーキフラグが無く、duty 0 が空転か
   短絡制動かはモータボード側のファームウェア次第で、このリポジトリからは確定
-  できない。シミュレータでは 1.5 m/s から **能動制動 0.13 m に対し、`STOP_EMERGENCY`
-  経路の惰走が 0.63 m**（`doc/control_packet.md` の「104 ms は『駆動力が切れるまで』」）。
-  実機の惰走距離を測れば、この 0.63 m との差がそのまま忠実度ギャップになる。
-  **測るときはロボットが壁や他機に当たらない向き（+y）で、開始速度が実際に出て
-  いることを確かめること。** framework 側は塞がれた向きで測って 0.12〜0.40 m の
-  それらしい値を得てしまい、一度数値を訂正している
+  できない（`doc/control_packet.md` の「104 ms は『駆動力が切れるまで』」）。
+  **測るときはロボットが壁や他機に当たらない向きで、開始速度が実際に出ている
+  ことを確かめること。** 塞がれた向きでも「それらしい」値が出るので、読みからは
+  異常と分からない
 - crane を止めて車輪が止まるまでの時間。予算は `--command-timeout-ms`(100) +
   ポーリング 1 ms + UART 0.72 ms + G474 メインループ 2 ms = **約 104 ms**
   （`doc/control_packet.md` の「crane 断から車輪が止まるまでの時間」）
@@ -594,30 +555,13 @@ SIMULATOR_CLI=/home/hans/workspace/framework/build/bin/simulator-cli \
 
 **1. ログのブロックバッファリング**
 
-`ai_cmd_v2.out` と `cm4_sim.out` は `main()` の先頭で `setvbuf(stdout, ..., _IOLBF, 0)`
-を呼び、stdout を行バッファへ固定する（stderr は glibc の既定が「バッファ無し」で、
-行バッファより強いので触らない）。stdout が端末でないとき（docker
-のログ、systemd の journal、テストのパイプ）既定はブロックバッファリングで、
-SIGTERM で落とされると直前の数十行がバッファごと消える。**現地で一番読みたい
-ログが一番消えやすい**。framework 側は `simulator-cli` で実際にこれを踏み、
-「警告 0 行」という誤った結論を一度出している。
+`ai_cmd_v2.out` と `cm4_sim.out` は `main()` の先頭で stdout を行バッファへ固定する。
+stdout が端末でないとき（docker のログ、systemd の journal、テストのパイプ）既定は
+ブロックバッファリングで、SIGTERM で落とされると直前の数十行が消える。**現地で一番
+読みたいログが一番消えやすい。** 呼び出し側の `stdbuf -oL` には頼らない。
 
-呼び出し側の `stdbuf -oL` に頼らない。`docker stop` 後に `docker logs` へ起動
-バナーが残ることを確認済み。
-
-**stderr に同じことをしてはいけない。** stdout と stderr は出発点が違う。stdout は
-パイプ時にフルバッファ、stderr は既定でバッファ無しなので、同じ `_IOLBF` が片方には
-強化・もう片方には**弱化**として働く。framework セッションが改行で終わらない文字列を
-stderr へ出してから SIGTERM を投げて実測した結果:
-
-| stderr の設定 | SIGTERM 後に残ったバイト数 |
-|---|---|
-| 既定（glibc, バッファ無し） | 27 |
-| `setvbuf(_IOLBF)` | **0** |
-
-このリポジトリの `fprintf(stderr, ...)` は全て改行終端なので今のところ差は出ないが、
-「たまたま今は同じ」に依存する理由がない。`setvbuf` が stdout だけなのは書き忘れでは
-ない。
+**stderr に同じことをしてはいけない**（既定のバッファ無しの方が強い）。理由は
+`main()` のコメントにある。
 
 **2. `ai_cmd_v2.out` が不明なオプションで落ちるようになった**
 
@@ -628,14 +572,6 @@ stderr へ出してから SIGTERM を投げて実測した結果:
 既知オプションの一覧は別表ではなく、**引数解析が問い合わせた名前そのもの**
 （`g_value_options` / `g_flag_options`）である。別表にするとオプションを足した
 ときに片方だけ更新して、正しい指定を弾く事故になる。
-
-```
-$ ai_cmd_v2.out --Kp 3.0
-不明なオプションです: --Kp
-  -h で全オプションを表示します。
-$ ai_cmd_v2.out --tolerance
---tolerance には引数が必要です。
-```
 
 `cm4/lancher.py` が渡すのは `-s 1000000` だけなので、実機の起動経路には影響しない。
 
@@ -650,17 +586,8 @@ OS 任せで構わないときは `--multicast-if ''` と明示する。
 
 共有制御器が `reason` を返すのは、実機と sim のどちらでも「なぜ止まっているか」を
 言えるようにするためである。`cm4_sim` はそれを一切出していなかった。実機側と同じく
-**理由が変わった周期にだけ** 1 行出す。
-
-```
-cm4_sim: robot 0 FeedbackStale (r 0.000 m/s, fbXY  +0.00  +0.00)
-cm4_sim: robot 0 Ok (r 1.600 m/s, fbXY  +0.20  +0.00)
-cm4_sim: robot 0 CommandStale (r 0.000 m/s, fbXY  +0.20  +0.00)
-```
-
-終了時のサマリには `robot_packet.h` の 2 バイト固定小数クランプ回数も出す。劣化を
-注入して A/B の数値を取るのは `cm4_sim` 側なので、範囲外を黙って丸めた事実がここで
-消えては困る。
+**理由が変わった周期にだけ** 1 行出す。終了時のサマリには 2 バイト固定小数の
+クランプ回数も出す。
 
 **5. `cm4/update.sh` がデプロイ経路でテストを走らせなくなった**
 
@@ -672,21 +599,12 @@ cm4_sim: robot 0 CommandStale (r 0.000 m/s, fbXY  +0.20  +0.00)
 誤認する。`update.sh` は `build.sh --no-tests` を呼ぶ。検証は CI と
 `cm4/setup.sh`（初期セットアップ）が担う。
 
-### ビルドとテストの所要時間（2026-09-13）
+### ビルドの構成（2026-09-13）
 
-| | 変更前 | 変更後 |
-|---|---|---|
-| `build.sh --no-tests`（全 5 本） | 5.7 s | 2.7 s |
-| `build.sh --no-tests --targets=sim` | — | 1.1 s |
-| `build.sh`（ビルド + テスト一式） | 約 34 s | 19.7 s |
-
-- `position_controller.cpp` は `.o` を 1 つ作って 3 箇所でリンクする（従来は 3 回
-  コンパイルしていた）。同一ソースであることが実機と sim の挙動一致の保証なので、
-  オブジェクトも 1 つにするのが素直である
+- `position_controller.cpp` は `.o` を 1 つ作って 3 箇所でリンクする。同一ソースで
+  あることが実機と sim の挙動一致の保証なので、オブジェクトも 1 つにするのが素直
 - 5 本の `g++` は互いに独立なので並列に投げる
 - `--targets=sim` は `cm4_sim.out` に必要なものだけをビルドする。`cm4/Dockerfile`
-  がこれを使う（イメージに入るのは `cm4_sim.out` 1 本だけなので、実機ブリッジ 2 本と
-  テストバイナリ 2 本をビルドして捨てる必要はない）。boost も不要になった
-- テストの起動待ちは固定 `sleep` をやめ、`cm4_sim` は最初の 715B 出力を、
-  `ai_cmd_v2` は起動バナー最終行を待つ。遅いときに足りず速いときに待ちすぎる、が
-  両方消える
+  がこれを使う（イメージに入るのは `cm4_sim.out` 1 本だけ）。boost も不要になった
+- テストの起動待ちは固定 `sleep` ではなく、`cm4_sim` は最初の出力データグラムを、
+  `ai_cmd_v2` は起動バナー最終行を待つ
