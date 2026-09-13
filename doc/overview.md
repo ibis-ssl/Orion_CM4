@@ -410,10 +410,25 @@ crane が見失っている、または vision が古すぎるロボットの `t
 - 再配信ポートは `--feedback-relay-port-base`（既定 50100）で入力ポートと独立に指定する。
   crane の `crane_robot_receiver` は `robot_id = port - 50100` と直書きしているので、
   再配信先は **50100 固定**である。
-- 出力パケットの `VISION_GLOBAL_X/Y` には feedback 由来の実位置を詰める。simulator-cli は
-  コマンドの `vision_global_pos` を実位置と 0.5 m 以内で照合してチーム判定し、外れると
-  コマンドを無言で捨てるため。**実機では crane 由来の値をそのまま流す**（G474 が vision
-  融合に使うので、CM4 の推定値を書き戻すと自己帰還になる）。
+- 出力パケットの `VISION_GLOBAL_X/Y` には feedback 由来の実位置を詰める
+  （`--vision-echo feedback`、既定）。simulator-cli はコマンドの `vision_global_pos` を
+  実位置と 0.5 m 以内（`IBIS_POSITION_MATCH_THRESHOLD`）で照合してチーム判定し、
+  外れるとコマンドを**無言で捨てる**ため。パケットは届き続け `check_counter` も進むので、
+  「ロボットだけが動かない」という分かりにくい症状になる。
+
+  理由は 2 つある。**どちらか一方だけでも成立する。**
+  1. 劣化注入で crane 由来の値が古くなる。`--rx-delay-ms 200` 程度で 3 m/s なら 0.6 m
+     ずれ、全コマンドが捨てられて A/B 検証そのものが成立しない。
+  2. 劣化注入が無くても、crane の world model 推定が 0.5 m ずれれば同じことが起きる。
+
+  **実機では crane 由来の値をそのまま流す**（G474 が vision 融合に使うので、CM4 の
+  推定値を書き戻すと自己帰還になる）。素通し経路（mode 3）でも同じエコーがかかるので、
+  A/B の基準側もこの破棄に対して無防備にはならない。
+
+  framework PR #7 でこの破棄に警告が付いた（`command dropped` で grep できる)。
+  **起動直後に数行出て以降止まるのは正常**で、feedback 未受信の間は crane 由来の値を
+  そのまま流すブートストラップ期間だからである。**出続ける場合は feedback 経路が
+  繋がっていないサイン**なので、`--vision-echo feedback` の動作確認に使える。
 - `simulator-cli` のログに `POSITION_TARGET` の警告が出たら mode 変換の失敗である。
   デバッグの第一手掛かりにする。
 - ワイヤ上のバイト列を直接見たいときは framework の
