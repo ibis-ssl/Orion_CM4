@@ -295,6 +295,58 @@ class ForwardAiCmdV2Test(unittest.TestCase):
         self.assertEqual(frame[KICK_POWER], 0, "crane 断で古いキック指令を撃ち続けない")
         self.assertEqual(frame[DRIBBLE_POWER], 0)
 
+    def _measure_stop_latency_ms(self, port_base, tx_rate_hz):
+        """crane の最後の送信から STOP_EMERGENCY が出るまでの実測値 [ms]。"""
+        bridge = self.start(port_base, extra_args=[
+            "--command-timeout-ms", "100", "--tx-rate-hz", str(tx_rate_hz)])
+        command = build_command(1, POSITION_TARGET_WITH_TERMINAL_VELOCITY_MODE, target=(2.0, -1.0))
+        deadline = time.time() + 0.4
+        while time.time() < deadline:
+            bridge.send_command(command)
+            bridge.send_feedback(0.0, 0.0)
+            time.sleep(0.02)
+
+        # 最後の 1 通の時刻を原点にする。「送信ループを抜けた時刻」を原点にすると
+        # 最後の sendto から 1 周期ぶん (ここでは 20 ms) 短く出る。
+        bridge.send_command(command)
+        bridge.send_feedback(0.0, 0.0)
+        last_command_at = time.time()
+
+        # ここから crane だけ黙る。feedback は流し続ける。
+        stopped_at = None
+        while time.time() - last_command_at < 0.5:
+            bridge.send_feedback(0.0, 0.0)
+            frames = bridge.frames()
+            if frames and frames[-1][FLAGS] & (1 << STOP_EMERGENCY_BIT):
+                stopped_at = time.time()
+                break
+            time.sleep(0.002)
+        self.assertIsNotNone(stopped_at, f"--tx-rate-hz {tx_rate_hz} で停止指令が出なかった")
+        return (stopped_at - last_command_at) * 1000.0
+
+    def test_stop_latency_does_not_depend_on_tx_rate(self):
+        """停止指令は --tx-rate-hz のゲートを待たない。
+
+        停止理由が変わった周期はレートに関わらず即送信する
+        (forward_ai_cmd_v2.cpp の safety_changed)。これが壊れると、低い
+        --tx-rate-hz ではゲート 1 周期ぶん停止が遅れる。20 Hz なら最大 50 ms で、
+        「crane 断から約 104 ms」の予算を大きく超える。
+
+        「動かないこと」を検査にしておかないと、レートを上げ下げしたときに
+        停止レイテンシが一緒に動いても誰も気づかない。
+        """
+        fast = self._measure_stop_latency_ms(12470, tx_rate_hz=200)
+        slow = self._measure_stop_latency_ms(12475, tx_rate_hz=20)
+
+        # 予算は --command-timeout-ms(100) + ポーリング 1 ms + ログ検出の粒度。
+        for name, value in (("200 Hz", fast), ("20 Hz", slow)):
+            self.assertGreater(value, 90.0, f"{name}: {value:.1f} ms は timeout より早すぎる")
+            self.assertLess(value, 145.0, f"{name}: {value:.1f} ms は停止予算を超えている")
+
+        # 20 Hz のゲート 1 周期は 50 ms。待っていればここに出る。
+        self.assertLess(abs(fast - slow), 30.0,
+                        f"--tx-rate-hz で停止レイテンシが変わっている (200Hz {fast:.1f} ms / 20Hz {slow:.1f} ms)")
+
     def test_stops_when_feedback_goes_silent(self):
         """feedback は位置制御ループ内で唯一の位置信号。途絶したら止めるしかない。"""
         bridge = self.start(12460, extra_args=["--feedback-timeout-ms", "100"])
