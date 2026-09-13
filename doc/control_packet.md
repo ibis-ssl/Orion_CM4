@@ -392,6 +392,44 @@ CM4 側で巻き戻りを補正することは**しません**。実機 G474 と
 シミュレータ側の実測値は `doc/overview.md` の「A/B 比較で数値を読むときの前提」を
 参照してください（新構成 102.2 ms / 素通し 101.2 ms）。
 
+##### 104 ms は「駆動力が切れるまで」で、「止まるまで」ではありません
+
+**安全停止では実機も惰走します。** G474 の停止分岐（`Core/Src/state_func.c:314`）は
+`omniStopAll()` を呼び、4 輪のモータ電圧を 0 にして CAN へ duty `0.0` を送るだけです。
+
+```c
+} else if (sys->stop_flag || ai_cmd->stop_emergency ||
+           !ai_cmd->is_vision_available || ai_cmd->elapsed_time_ms_since_last_vision > 500) {
+  omniStopAll(output);        // motor_voltage[0..3] = 0 → CAN へ duty 0.0
+} else {
+  omniMoveIndiv(output, OMNI_OUTPUT_VOLTAGE_LIMIT);   // 車輪 PID が効く
+}
+```
+
+CAN フレーム（`Core/Src/actuator.c:12`）は 4 バイトの float duty だけで、
+**ブレーキフラグを持ちません**。duty 0 が空転か短絡制動かはモータボード側の
+ファームウェアが決めるので、このリポジトリからは確定できません（実機で測る項目）。
+
+重要なのは**同じ「止まれ」でも 2 通りある**ことです。
+
+| CM4 が送るもの | G474 が通る経路 | 挙動 |
+|---|---|---|
+| mode 3 で `r = 0`、`STOP_EMERGENCY` **なし** | `speedControl` → `omniMoveIndiv` | 車輪 PID が効く（能動制動） |
+| `STOP_EMERGENCY` **あり** | `omniStopAll` | 駆動力ゼロ（惰走） |
+
+`applySafetyStop()` は `STOP_EMERGENCY` を立てるので、**crane 断・feedback 断・
+vision 断の安全停止はすべて下段（惰走）**です。約 104 ms で駆動力が切れ、そこから
+慣性で転がります。
+
+framework セッションがシミュレータで同じ対照を取ったところ、1.5 m/s から
+**能動制動 0.126 m に対し惰走 0.573 m（4.5 倍）**でした。シミュレータの
+`SimRobot::begin()` も最後の指令から 0.1 s で standby に入り、車輪 PID に到達する
+手前で return するので、**この 2 経路の作り分けは実機とシミュレータで一致しています**。
+
+実機で「crane を止めて車輪が止まるまで」を測るときは、**駆動力が切れる時刻
+（約 104 ms、予算と照合する対象）と、機体が静止する時刻（惰走距離ぶん後ろ）**を
+分けて記録してください。
+
 判定は `position_controller` の中にあるので、**実機バイナリと `cm4_sim` が必ず同じ判定を
 通ります**。
 

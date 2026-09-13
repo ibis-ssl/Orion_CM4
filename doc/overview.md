@@ -574,6 +574,12 @@ SIMULATOR_CLI=/home/hans/workspace/framework/build/bin/simulator-cli \
 - crane を mode 4 送出に切り替えて `ai_cmd_v2.out` の表示に `mode 4` と `tarPos` が出ること
 - `--tx-rate-hz 500` での UART 占有率。G474 の `uart ORE/FE/NE/PE` と parser timeout
   カウンタが増えないことを ST-Link で確認する
+- **安全停止時の惰走距離**。G474 は `stop_emergency` で `omniStopAll()`（駆動力ゼロ）
+  に入るので、実機も惰走する。CAN フレームにブレーキフラグが無く、duty 0 が空転か
+  短絡制動かはモータボード側のファームウェア次第で、このリポジトリからは確定
+  できない。シミュレータでは 1.5 m/s から **能動制動 0.126 m に対し惰走 0.573 m**
+  だった（`doc/control_packet.md` の「104 ms は『駆動力が切れるまで』」）。
+  実機の惰走距離を測れば、この 0.573 m との差がそのまま忠実度ギャップになる
 - crane を止めて車輪が止まるまでの時間。予算は `--command-timeout-ms`(100) +
   ポーリング 1 ms + UART 0.72 ms + G474 メインループ 2 ms = **約 104 ms**
   （`doc/control_packet.md` の「crane 断から車輪が止まるまでの時間」）
