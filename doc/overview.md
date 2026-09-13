@@ -434,6 +434,15 @@ CM4_SIM_CMD="docker run --rm --network host --entrypoint tini ghcr.io/ibis-ssl/o
 
 ローカルバイナリと同じ結果（目標まで 4.328 m -> 0.010 m）になることを確認済み。
 
+**初回だけ手作業が要る。** ghcr のパッケージは最初の push で private として作られる。
+crane の compose はログイン無しの素の `image:` で pull するので、workflow が緑に
+なっても public にするまで `unauthorized` で失敗する。GitHub の Packages 設定で
+`orion-cm4-sim` を public にすること。同じ組織の `robot-manager` と
+`framework-simulatorcli` は既に public（匿名 pull が通ることを確認済み）。
+
+また `workflow_dispatch` は既定ブランチにファイルが無いと選べないので、
+**`:latest` が出るのはこのブランチが main へマージされたあと**である。
+
 ### A/B 比較で数値を読むときの前提
 
 - `cm4_sim` の mode 3 素通し経路は、crane 断のとき速度ゼロと `STOP_EMERGENCY` を出す。

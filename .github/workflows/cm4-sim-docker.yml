@@ -4,6 +4,13 @@
 #
 # pull_request では push せずビルドだけ行う。Dockerfile の破損を
 # マージ前に捕まえるため。
+#
+# 【初回だけ手作業が要る】ghcr のパッケージは最初の push で **private** として
+# 作られる。crane の compose はログイン無しの素の image: で pull するので、
+# この workflow が緑になっても public にするまで unauthorized で失敗する。
+# GitHub の Packages 設定で orion-cm4-sim を public にすること。
+# 同じ組織の robot-manager と framework-simulatorcli は既に public になっている
+# （匿名 pull が通ることを確認済み）ので、同じ手順で揃う。
 name: cm4-sim docker
 
 on:
@@ -41,11 +48,16 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # context は cm4/ のみ。build.sh・bridge・control がすべてここにある。
+      #
+      # load: true でローカルの image store にも入れる。setup-buildx-action は
+      # docker-container ドライバを既定にするので、これが無いと後段の docker run が
+      # 「image not found」で落ちる。ビルドは 1 回で済む。
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: ./cm4
           file: ./cm4/Dockerfile
+          load: true
           push: ${{ github.event_name != 'pull_request' }}
           tags: |
             ghcr.io/${{ github.repository_owner }}/orion-cm4-sim:latest
@@ -54,8 +66,8 @@ jobs:
           cache-to: type=gha,mode=max,scope=cm4-sim
 
       # compose 側の契約 (entrypoint: tini / command: cm4_sim) が満たされているか、
-      # イメージを実際に動かして確かめる。PR では push しないのでローカルへ load する。
+      # 直前に load したイメージを実際に動かして確かめる。
       - name: Verify compose contract
         run: |
-          docker build -t cm4-sim:verify -f ./cm4/Dockerfile ./cm4
-          docker run --rm --entrypoint tini cm4-sim:verify -- cm4_sim --help
+          docker run --rm --entrypoint tini \
+            ghcr.io/${{ github.repository_owner }}/orion-cm4-sim:latest -- cm4_sim --help
