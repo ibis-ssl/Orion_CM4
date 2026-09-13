@@ -334,6 +334,28 @@ sys->stop_flag || ai_cmd->stop_emergency || !ai_cmd->is_vision_available
 とくに `elapsed_time_ms_since_last_vision` は**無線劣化を注入すると真っ先に発火する**
 条件なので、ここを見ないと A/B 比較の数値が意味を失います。
 
+##### `VisionUnavailable` が主防壁、`VisionStale` は補助
+
+`elapsed_time_ms_since_last_vision` は crane 側に **fail-open が 2 箇所**あるので、
+単独では信用できません。
+
+1. **例外時に 0 を詰める** — `crane_sender/src/sender_base.cpp` の
+   `catch (...)` が `elapsed_time_ms_since_last_vision = 0`（完全に新鮮）にします。
+   world model からロボットを引けない状況、つまり**まさに vision を見失っている
+   状況**で「新鮮」と主張することになり、安全側と逆です。
+2. **uint16 の範囲外** — `crane_msgs/msg/control/RobotCommand.msg:36` は `uint16` で、
+   代入元は `elapsed.nanoseconds() / 1e6`（`double`）です。65535 ms を超えると
+   **範囲外の浮動小数から符号なし整数への変換**になり、結果は実装依存です
+   （きれいに巻き戻るとは限りません）。
+
+どちらも同じ状況で `is_vision_available` が false になるので実運用では救われます。
+したがって **`VisionUnavailable` が主防壁で、`VisionStale` は補助**という位置づけです。
+両方を見ているのはそのためで、片方だけでは足りません。
+
+CM4 側で巻き戻りを補正することは**しません**。実機 G474 と同じ 2 バイトを同じ
+`uint16_t` として読んでいるので、実機と同じ判定になることのほうが重要です。
+ここだけ賢くすると、実機と CM4 で挙動が分かれます（simulator-cli 側も同じ方針）。
+
 #### crane 断から車輪が止まるまでの時間
 
 `--command-timeout-ms`（既定 100 ms）に、下記が加算されます。

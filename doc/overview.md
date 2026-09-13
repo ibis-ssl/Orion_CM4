@@ -359,6 +359,11 @@ crane が見失っている、または vision が古すぎるロボットの `t
 これを見ないと「実機なら停まる状況で CM4 だけが走らせ続ける」ことになり A/B 比較が
 成立しない。
 
+ただし `elapsed_time_ms_since_last_vision` には crane 側に fail-open が 2 箇所ある
+（例外時に 0 を詰める / uint16 の範囲外）ので、**`VisionUnavailable` が主防壁で
+`VisionStale` は補助**である。両方を見ているのはそのため。詳細と、巻き戻りを
+あえて補正しない理由は [制御パケット](control_packet.md) を参照。
+
 テストを書くときは **FLAGS に bit0 を立てること**。立て忘れるとロボットは動かない。
 
 ### cm4_sim の使い方（ホスト PC 専用）
