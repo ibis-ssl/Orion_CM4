@@ -496,8 +496,9 @@ int main(int argc, char * argv[])
   // 既定はブロックバッファリングになる。異常時に SIGTERM で落とされると、その
   // 直前の数十行がバッファごと消える。現地で一番読みたいログが一番消えやすい
   // ので、行バッファへ固定する。呼び出し側の stdbuf -oL に頼らない。
+  //
+  // stderr は触らない。glibc の既定が「バッファ無し」で、行バッファより強い。
   setvbuf(stdout, nullptr, _IOLBF, 0);
-  setvbuf(stderr, nullptr, _IOLBF, 0);
 
   Options opt;
   if (!parseOptions(argc, argv, &opt)) return 1;

@@ -523,7 +523,8 @@ SIMULATOR_CLI=/home/hans/workspace/framework/build/bin/simulator-cli \
 **1. ログのブロックバッファリング**
 
 `ai_cmd_v2.out` と `cm4_sim.out` は `main()` の先頭で `setvbuf(stdout, ..., _IOLBF, 0)`
-を呼び、stdout / stderr を行バッファへ固定する。stdout が端末でないとき（docker
+を呼び、stdout を行バッファへ固定する（stderr は glibc の既定が「バッファ無し」で、
+行バッファより強いので触らない）。stdout が端末でないとき（docker
 のログ、systemd の journal、テストのパイプ）既定はブロックバッファリングで、
 SIGTERM で落とされると直前の数十行がバッファごと消える。**現地で一番読みたい
 ログが一番消えやすい**。framework 側は `simulator-cli` で実際にこれを踏み、
