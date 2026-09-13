@@ -579,7 +579,8 @@ SIMULATOR_CLI=/home/hans/workspace/framework/build/bin/simulator-cli \
   短絡制動かはモータボード側のファームウェア次第で、このリポジトリからは確定
   できない。シミュレータでは 1.5 m/s から **能動制動 0.126 m に対し惰走 0.573 m**
   だった（`doc/control_packet.md` の「104 ms は『駆動力が切れるまで』」）。
-  実機の惰走距離を測れば、この 0.573 m との差がそのまま忠実度ギャップになる
+  `STOP_EMERGENCY` 経路そのものは framework PR #10 後で **0.571 m**。
+  実機の惰走距離を測れば、この 0.571 m との差がそのまま忠実度ギャップになる
 - crane を止めて車輪が止まるまでの時間。予算は `--command-timeout-ms`(100) +
   ポーリング 1 ms + UART 0.72 ms + G474 メインループ 2 ms = **約 104 ms**
   （`doc/control_packet.md` の「crane 断から車輪が止まるまでの時間」）
