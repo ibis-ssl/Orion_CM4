@@ -348,6 +348,34 @@ static void testVisionUnavailableStops(void)
   checkReason(computePositionControl(stale, cfg).reason, PositionControllerReason::CommandStale, "VisionUnavailable: crane 断のほうが優先");
 }
 
+// crane の vision が古すぎるときは止めること。
+//
+// 実機 G474 は state_func.c:314 で `elapsed_time_ms_since_last_vision > 500` を
+// 停止条件に入れている。境界 (500 は動く / 501 は止まる) まで実機と揃える。
+// 無線劣化を注入すると真っ先に発火する条件なので、A/B 比較の前提として重要。
+static void testStaleVisionStops(void)
+{
+  PositionControllerConfig cfg;
+  PositionControllerInput in = freshInput();
+  in.target_global_pos[0] = 5.0f;
+  in.linear_velocity_limit = 3.0f;
+
+  in.elapsed_time_ms_since_last_vision = 501;
+  const PositionControllerOutput out = computePositionControl(in, cfg);
+  checkClose(out.polar_velocity_r, 0.0f, 1e-6f, "VisionStale: 速度ゼロ");
+  checkReason(out.reason, PositionControllerReason::VisionStale, "VisionStale: reason");
+  check(out.stop_emergency, "VisionStale: STOP_EMERGENCY を立てる");
+
+  // 実機の `> 500` と同じ境界。500 はまだ動く。
+  in.elapsed_time_ms_since_last_vision = 500;
+  checkReason(computePositionControl(in, cfg).reason, PositionControllerReason::Ok, "VisionStale: 境界 500 は動く");
+
+  // 素の uint16 なのでゼロ埋めは正しく「最新」になる
+  // (2 バイト固定小数のフィールドと違って -32.767 に化けない)。
+  in.elapsed_time_ms_since_last_vision = 0;
+  checkReason(computePositionControl(in, cfg).reason, PositionControllerReason::Ok, "VisionStale: 0 は最新として扱う");
+}
+
 // 時刻が巻き戻っても unsigned underflow で誤判定しないこと。
 // G474 の USART2 パーサが 2026-08 に同じ形のバグで不安定化した前例がある。
 static void testNoUnsignedUnderflow(void)
@@ -503,6 +531,7 @@ int main(void)
   testFeedbackTimeout();
   testNoUnsignedUnderflow();
   testVisionUnavailableStops();
+  testStaleVisionStops();
 
   printf("\n%s (%d failure%s)\n", g_failures == 0 ? "PASS" : "FAIL", g_failures, g_failures == 1 ? "" : "s");
   return g_failures == 0 ? 0 : 1;

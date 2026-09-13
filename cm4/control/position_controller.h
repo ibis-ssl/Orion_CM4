@@ -41,6 +41,13 @@ struct PositionControllerConfig
   // G474 feedback が途絶してから速度指令をゼロにするまで [ms]。
   // feedback は位置制御ループ内で唯一の位置信号なので、途絶したら止めるしかない。
   uint32_t feedback_timeout_ms = 100;
+  // crane の vision がこのロボットを最後に捉えてからの許容経過時間 [ms]。
+  //
+  // これは実機ファームウェアの定数と一致させるための値であって、調整パラメータでは
+  // ない。G474 の state_func.c:314 が `> 500` で止めるので 500 にしてある。
+  // CLI オプションを生やしていないのは、実機と食い違った値を現地で設定できて
+  // しまうと「CM4 は走らせているのに G474 は止めている」状態を作れるからである。
+  uint32_t vision_age_limit_ms = 500;
 };
 
 struct PositionControllerInput
@@ -59,6 +66,11 @@ struct PositionControllerInput
   // 何もしない (src/simulator/ibis_protocol.h:145)。ここで止めないと実機は
   // 止まり sim は走るという食い違いが生まれ、A/B 比較の数値が意味を失う。
   bool vision_available = false;
+  // byte 20..21。crane の vision がこのロボットを最後に捉えてからの経過時間 [ms]。
+  //
+  // 素の uint16 なので、2 バイト固定小数のフィールドと違ってゼロ埋めは正しく 0
+  // （= 最新）になる。同じパケットに 2 種類の符号化が同居しているので注意すること。
+  uint16_t elapsed_time_ms_since_last_vision = 0;
   bool has_command = false;                  // crane パケットを 1 度でも受けたか
   uint64_t command_time_ms = 0;              // 最後に crane パケットを受けた時刻
 
@@ -87,6 +99,7 @@ enum class PositionControllerReason {
   CommandStale,    // crane からのパケットが途絶した
   FeedbackStale,   // G474 feedback が途絶した（起動直後の未受信を含む）
   VisionUnavailable,  // crane がこのロボットを vision で捉えていない (byte 22 bit0 = 0)
+  VisionStale,        // crane の vision がこのロボットを捉えてから時間が経ちすぎた
   InvalidCommand,  // 位置が物理的にありえない値（未設定フィールドの復号結果）
 };
 

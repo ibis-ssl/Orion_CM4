@@ -290,6 +290,7 @@ mode 4 を受けると `cm4/control/position_controller.cpp` を通します。�
 | crane からのパケットが途絶 | `CommandStale` | `--command-timeout-ms 100` |
 | G474 feedback が途絶（起動直後の未受信を含む） | `FeedbackStale` | `--feedback-timeout-ms 100` |
 | crane が vision でこのロボットを見失っている | `VisionUnavailable` | — |
+| crane の vision がこのロボットを捉えてから時間が経ちすぎた | `VisionStale` | 500 ms（実機 FW 固定） |
 | 目標位置・現在位置が物理的にありえない値 | `InvalidCommand` | — |
 
 判定はこの表の順で、先に成立したものが理由になります。
@@ -308,18 +309,30 @@ mode 4 の `terminal_velocity_x/y` はフィードフォワードとして速度
 `linear_velocity_limit` 自体が未設定なら `max(0, -32.767) = 0` となって停止側に倒れるためです。
 `test_position_controller.cpp` の `testFeedforwardCannotExceedVelocityLimit` で固定しています。
 
-#### IS_VISION_AVAILABLE (byte 22 bit0) を CM4 でも見ます
+#### vision の健全性 (byte 22 bit0 と byte 20..21) を CM4 でも見ます
 
 crane が見失っている間の `target_global_pos` は「見えていないロボット」に対する
 推測値なので、そこへ向かって走らせてはいけません。
 
-実機 G474 は `Core/Src/state_func.c:314` で `!is_vision_available` のときホイールを
-止めるので、**実機の挙動はこれまでと変わりません**。変わるのは sim 側です。
-simulator-cli はこのビットを復号するだけで何にも使っていない
-（`src/simulator/ibis_protocol.h:145`）ので、CM4 で止めないと
-「実機は止まるが sim は走る」という食い違いが残り、A/B 比較の数値が意味を失います。
+実機 G474 の停止条件は `Core/Src/state_func.c:314` の 4 つです。
+
+```c
+sys->stop_flag || ai_cmd->stop_emergency || !ai_cmd->is_vision_available
+  || ai_cmd->elapsed_time_ms_since_last_vision > 500
+```
+
+このうち **`is_vision_available`（byte 22 bit0）と
+`elapsed_time_ms_since_last_vision`（byte 20..21）の 2 つ**を CM4 でも見ます。
+どちらも実機 G474 が同条件で止めるので、**実機の挙動はこれまでと変わりません**。
+
+`vision_age_limit_ms`（500 ms）に CLI オプションを生やしていないのは意図的です。
+これは調整パラメータではなく実機ファームウェアの定数と一致させるための値で、
+現地で食い違った値を設定できると「CM4 は走らせているのに G474 は止めている」
+状態を作れてしまいます。境界（500 は動く / 501 は止まる）まで実機と揃えてあります。
 
 判定は `position_controller` にあるので、実機バイナリと `cm4_sim` が同じ経路を通ります。
+とくに `elapsed_time_ms_since_last_vision` は**無線劣化を注入すると真っ先に発火する**
+条件なので、ここを見ないと A/B 比較の数値が意味を失います。
 
 #### crane 断から車輪が止まるまでの時間
 

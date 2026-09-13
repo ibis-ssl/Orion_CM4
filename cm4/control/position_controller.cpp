@@ -81,6 +81,15 @@ PositionControllerOutput computePositionControl(const PositionControllerInput & 
     // 変わるのは sim 側で、これで実機と揃う。
     return stopped(PositionControllerReason::VisionUnavailable, true);
   }
+  if (input.elapsed_time_ms_since_last_vision > config.vision_age_limit_ms) {
+    // vision が古すぎる target_global_pos も同じく推測値。実機 G474 は
+    // state_func.c:314 の同じ式 (`> 500`) で止める。
+    //
+    // 無線劣化を注入すると真っ先に発火する条件なので、ここを見ないと
+    // 「実機なら停まる状況で CM4 だけが走らせ続ける」ことになり、A/B 比較の
+    // 数値が意味を失う。
+    return stopped(PositionControllerReason::VisionStale, true);
+  }
 
   // --- 未設定フィールドの防御（kImplausibleMagnitude の説明を参照） ---
   //
@@ -150,6 +159,8 @@ const char * toString(PositionControllerReason reason)
       return "FeedbackStale";
     case PositionControllerReason::VisionUnavailable:
       return "VisionUnavailable";
+    case PositionControllerReason::VisionStale:
+      return "VisionStale";
     case PositionControllerReason::InvalidCommand:
       return "InvalidCommand";
   }

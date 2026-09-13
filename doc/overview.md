@@ -335,15 +335,29 @@ mode 3 の素通し経路（`--passthrough` を含む）では従来どおり cr
 テストを書くときは **使わないフィールドも明示的に `0.0` をエンコードして埋めること**。
 `bytearray(64)` のままだと全フィールドが `-32.767` になる。
 
-### IS_VISION_AVAILABLE を CM4 でも見る
+ただし **同じパケットに 2 種類の符号化が同居している**点に注意する。
+byte 18..21（`latency_time_ms` / `elapsed_time_ms_since_last_vision`）は素の
+`uint16` なので、ゼロ埋めは正しく `0` になる。±range の 2 バイト固定小数だけが
+`-32.767` に化ける。
 
-crane が vision で見失っているロボットの `target_global_pos` は推測値なので、
-`position_controller` は byte 22 bit0 が 0 のとき停止する（`reason = VisionUnavailable`）。
+### vision の健全性を CM4 でも見る
 
-実機 G474 は `state_func.c:314` の同じ条件でホイールを止めるので**実機の挙動は変わらない**。
-変わるのは sim 側で、simulator-cli はこのビットを復号するだけで何にも使っていない
-（`src/simulator/ibis_protocol.h:145`）。CM4 で止めないと「実機は止まるが sim は走る」
-という食い違いが残り、A/B 比較の数値が意味を失う。
+crane が見失っている、または vision が古すぎるロボットの `target_global_pos` は
+推測値なので、`position_controller` は次の 2 つで停止する。
+
+| 条件 | バイト | `reason` |
+|---|---|---|
+| `is_vision_available` が 0 | byte 22 bit0 | `VisionUnavailable` |
+| `elapsed_time_ms_since_last_vision > 500` | byte 20..21 | `VisionStale` |
+
+実機 G474 は `state_func.c:314` でこの 2 つを含む 4 条件でホイールを止めるので
+**実機の挙動は変わらない**。500 ms は調整パラメータではなく実機ファームウェアの
+定数なので、CLI オプションを生やしていない。境界（500 は動く / 501 は止まる）まで
+実機と揃えてある。
+
+`elapsed_time_ms_since_last_vision` は**無線劣化を注入すると真っ先に発火する**条件で、
+これを見ないと「実機なら停まる状況で CM4 だけが走らせ続ける」ことになり A/B 比較が
+成立しない。
 
 テストを書くときは **FLAGS に bit0 を立てること**。立て忘れるとロボットは動かない。
 
