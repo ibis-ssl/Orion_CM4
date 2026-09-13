@@ -1,12 +1,39 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
-build/*
+*.py[cod]
+*$py.class
+
+# C/C++ build outputs
+build/
+*out
+cm4/bin/
+cm4/camera/build/
+cm4/camera/dist/
+
+# Distribution / packaging
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Testing & Tooling caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Runtime / temporary files
 runtime/*.json
 runtime/*.tmp
 cm4/runtime/*.json
 cm4/runtime/*.tmp
-cm4/camera/build
-cm4/camera/dist
-cm4/bin
-*.egg-info/
-*out
+
+# OS & Editor specific
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.claude/
