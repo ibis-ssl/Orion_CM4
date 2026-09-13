@@ -40,6 +40,8 @@
 #include <vector>
 
 #include "../control/position_controller.h"
+#include "robot_command_ops.h"
+#include "robot_feedback_packet.h"
 #include "robot_packet.h"
 
 namespace
@@ -49,13 +51,8 @@ constexpr int kRobotSlots = 11;
 constexpr int kCmdSize = 64;
 constexpr int kSlotSize = kCmdSize + 1;
 constexpr int kPacketSize = kSlotSize * kRobotSlots;  // 715
-constexpr int kFeedbackSize = 128;
-
-// feedback 128 バイトのうち位置だけを使う (byte 44..51, little-endian float)。
-// yaw (byte 4..7) は実機が度・simulator-cli がラジアンでずれているので使わない。
-// 詳細は doc/feedback_packet.md を参照。
-constexpr int kFeedbackPosXOffset = 44;
-constexpr int kFeedbackPosYOffset = 48;
+// feedback のレイアウトと位置の取り出しは robot_feedback_packet.h が正本。
+constexpr int kFeedbackSize = FEEDBACK_PACKET_SIZE;
 
 constexpr uint8_t kEmptySlotRobotId = 0xFF;  // 担当しないスロットの印
 
@@ -151,7 +148,6 @@ bool parseIntList(const char * s, std::vector<int> * out)
 bool parseOptions(int argc, char * argv[], Options * o)
 {
   for (int i = 0; i < kRobotSlots; ++i) o->robot_ids.push_back(i);
-  bool relay_port_explicit = false;
 
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
@@ -186,7 +182,6 @@ bool parseOptions(int argc, char * argv[], Options * o)
     } else if (a == "--feedback-relay-port-base") {
       if (!next(&v)) return false;
       o->feedback_relay_port_base = atoi(v);
-      relay_port_explicit = true;
     } else if (a == "--multicast-if") {
       if (!next(&v)) return false;
       o->multicast_if = v;
@@ -244,7 +239,6 @@ bool parseOptions(int argc, char * argv[], Options * o)
   // --feedback-port-base だけを動かしたときに再配信先が一緒に動くと、
   // crane の crane_robot_receiver (50100+id 固定) から外れて
   // 「再配信が来ない」という誤診を招く。既定のまま据え置く。
-  (void)relay_port_explicit;
   if (o->rx_loss_rate < 0.0) o->rx_loss_rate = 0.0;
   if (o->rx_loss_rate > 1.0) o->rx_loss_rate = 1.0;
   return true;
@@ -376,7 +370,6 @@ struct RobotState
   bool has_feedback = false;
   uint64_t feedback_time_ms = 0;
 
-  orion::PositionControllerReason last_reason = orion::PositionControllerReason::FeedbackStale;
 };
 
 // ---------------------------------------------------------------------------
@@ -430,11 +423,6 @@ int bindUdp(const char * addr, int port, bool reuse_addr)
 // 出力パケットの組み立て
 // ---------------------------------------------------------------------------
 
-void writeTwoByte(uint8_t * data, int offset, float value, float range)
-{
-  forward(&data[offset], &data[offset + 1], value, range);
-}
-
 // 担当スロットは受信した 64 バイトをコピーして必要な箇所だけ差し替える。
 //
 // passthrough は受信 mode 3 をそのまま転送する経路 (旧構成の A/B 基準)。
@@ -458,9 +446,7 @@ void buildPassthroughSlot(uint8_t * slot_cmd, const RobotState & st, bool stale,
     slot_cmd[CHECK_COUNTER] = static_cast<uint8_t>(slot_cmd[CHECK_COUNTER] + 1);
     writeTwoByte(slot_cmd, CONTROL_MODE_ARGS + 0, 0.f, 32.767f);
     writeTwoByte(slot_cmd, CONTROL_MODE_ARGS + 2, 0.f, 32.767f);
-    slot_cmd[FLAGS] |= static_cast<uint8_t>(1u << STOP_EMERGENCY);
-    slot_cmd[KICK_POWER] = 0;
-    slot_cmd[DRIBBLE_POWER] = 0;
+    applySafetyStop(slot_cmd);
   }
 }
 
@@ -482,16 +468,10 @@ void buildSlot(uint8_t * slot_cmd, const RobotState & st, const orion::PositionC
     writeTwoByte(slot_cmd, VISION_GLOBAL_Y_HIGH, st.feedback_pos[1], 32.767f);
   }
 
-  slot_cmd[CONTROL_MODE] = POLAR_VELOCITY_TARGET_MODE;
-  writeTwoByte(slot_cmd, CONTROL_MODE_ARGS + 0, out.polar_velocity_r, 32.767f);
-  writeTwoByte(slot_cmd, CONTROL_MODE_ARGS + 2, out.polar_velocity_theta, 32.767f);
+  applyPolarVelocity(slot_cmd, out.polar_velocity_r, out.polar_velocity_theta);
 
   if (out.stop_emergency) {
-    slot_cmd[FLAGS] |= static_cast<uint8_t>(1u << STOP_EMERGENCY);
-    // crane 断・feedback 断で古いキック/ドリブル指令を撃ち続けない (実機と同じ)。
-    slot_cmd[KICK_POWER] = 0;
-    slot_cmd[DRIBBLE_POWER] = 0;
-    slot_cmd[FLAGS] &= static_cast<uint8_t>(~(1u << ENABLE_CHIP));
+    applySafetyStop(slot_cmd);
   }
 }
 
@@ -577,63 +557,44 @@ int main(int argc, char * argv[])
 
   // --- crane からの受信を劣化キューへ積む（ノンブロッキング） ---
   auto drainCraneInput = [&]() {
-    int arrived = 0;
     while (true) {
       // MSG_TRUNC でデータグラムの実長を得る。付けないと 716 バイトが
       // 715 バイトへ切り詰められ「正常な全ゼロパケット」に化ける。
       const ssize_t n = recv(in_sock, rx, sizeof(rx), MSG_DONTWAIT | MSG_TRUNC);
       if (n < 0) break;
       if (n != kPacketSize) continue;  // 715 バイト以外は捨てる
-      arrived++;
       degrader.push(rx, clock.nowMs());
     }
-    return arrived;
   };
 
   // --- 劣化キューから期限到来分を取り出してロボット状態へ反映 ---
   auto applyDeliveredCommands = [&]() {
     uint8_t pkt[kPacketSize];
-    int applied = 0;
     while (degrader.pop(clock.nowMs(), pkt)) {
-      applied++;
       for (int slot = 0; slot < kRobotSlots; ++slot) {
         const int offset = slot * kSlotSize;
         const uint8_t robot_id = pkt[offset];
         if (robot_id >= kRobotSlots || !robots[robot_id].handled) continue;
         const uint8_t * cmd = pkt + offset + 1;
-        // 空スロット (コマンド 64 バイトが全ゼロ) はスキップ
-        bool empty = true;
-        for (int i = 0; i < kCmdSize; ++i) {
-          if (cmd[i] != 0) {
-            empty = false;
-            break;
-          }
-        }
-        if (empty) continue;
+        // 空スロット (コマンド 64 バイトが全ゼロ) はスキップ。
+        // 判定は実機経路と共有する (robot_command_ops.h)。
+        if (commandSlotIsEmpty(cmd)) continue;
         memcpy(robots[robot_id].command, cmd, kCmdSize);
         robots[robot_id].has_command = true;
         robots[robot_id].command_time_ms = clock.nowMs();
       }
     }
-    return applied;
   };
 
   // --- feedback をノンブロッキングで全部吸い出し、multicast へ再配信 ---
   auto drainFeedback = [&]() {
-    int received = 0;
     for (int id : opt.robot_ids) {
       while (true) {
         const ssize_t n = recv(robots[id].feedback_sock, fb, sizeof(fb), MSG_DONTWAIT);
         if (n < 0) break;
-        if (n != kFeedbackSize || fb[0] != 0xAB || fb[1] != 0xEA) continue;
-        float x = 0.f, y = 0.f;
-        memcpy(&x, &fb[kFeedbackPosXOffset], sizeof(float));
-        memcpy(&y, &fb[kFeedbackPosYOffset], sizeof(float));
-        robots[id].feedback_pos[0] = x;
-        robots[id].feedback_pos[1] = y;
+        if (!decodeFeedbackPosition(fb, static_cast<size_t>(n), robots[id].feedback_pos)) continue;
         robots[id].has_feedback = true;
         robots[id].feedback_time_ms = clock.nowMs();
-        received++;
 
         if (relay_sock >= 0) {
           char group[32];
@@ -647,7 +608,6 @@ int main(int argc, char * argv[])
         }
       }
     }
-    return received;
   };
 
   // --- 1 制御周期ぶんの出力データグラムを作って送る ---
@@ -675,23 +635,15 @@ int main(int argc, char * argv[])
       // 注入実装が両構成で完全に一致し、独立変数が「位置ループをどこで閉じるか」
       // だけになる。
       if (cmd.control_mode != POSITION_TARGET_WITH_TERMINAL_VELOCITY_MODE) {
-        const bool stale = (clock.nowMs() - st.command_time_ms) > opt.control.command_timeout_ms;
+        // 判定は位置制御側と共有する。素通し経路でも crane 断の扱いを揃えるため。
+      const bool stale = orion::isCommandStale(st.has_command, st.command_time_ms, clock.nowMs(), opt.control);
         out_slot[0] = static_cast<uint8_t>(slot);
         buildPassthroughSlot(out_slot + 1, st, stale, opt.vision_echo_feedback);
-        st.last_reason = stale ? orion::PositionControllerReason::CommandStale : orion::PositionControllerReason::Ok;
         continue;
       }
 
       orion::PositionControllerInput in;
-      in.target_global_pos[0] = cmd.target_global_pos[0];
-      in.target_global_pos[1] = cmd.target_global_pos[1];
-      in.terminal_velocity_xy[0] = cmd.mode_args.position_target.terminal_velocity_x;
-      in.terminal_velocity_xy[1] = cmd.mode_args.position_target.terminal_velocity_y;
-      in.terminal_velocity = cmd.terminal_velocity;
-      in.linear_velocity_limit = cmd.linear_velocity_limit;
-      in.stop_emergency = cmd.stop_emergency;
-      in.vision_available = cmd.is_vision_available;
-      in.elapsed_time_ms_since_last_vision = cmd.elapsed_time_ms_since_last_vision;
+      fillCommandFields(&in, cmd);
       in.has_command = st.has_command;
       in.command_time_ms = st.command_time_ms;
       in.current_pos[0] = st.feedback_pos[0];
@@ -701,7 +653,6 @@ int main(int argc, char * argv[])
       in.now_ms = clock.nowMs();
 
       const orion::PositionControllerOutput out = computePositionControl(in, opt.control);
-      st.last_reason = out.reason;
       if (out.feedforward_rejected) {
         // 2 バイト固定小数の未設定フィールドは 0.0 ではなく -32.767 として復号される。
         // 黙って無視すると crane 側のフィールド書き忘れに誰も気付かない。

@@ -60,13 +60,18 @@ PositionControllerOutput stopped(PositionControllerReason reason, bool stop_emer
 
 }  // namespace
 
+bool isCommandStale(bool has_command, uint64_t command_time_ms, uint64_t now_ms, const PositionControllerConfig & config)
+{
+  return !has_command || elapsedMs(now_ms, command_time_ms) > config.command_timeout_ms;
+}
+
 PositionControllerOutput computePositionControl(const PositionControllerInput & input, const PositionControllerConfig & config)
 {
   // --- 安全停止の判定（実機バイナリと cm4_sim が必ず同じ判定を通る） ---
   if (input.stop_emergency) {
     return stopped(PositionControllerReason::StopEmergency, true);
   }
-  if (!input.has_command || elapsedMs(input.now_ms, input.command_time_ms) > config.command_timeout_ms) {
+  if (isCommandStale(input.has_command, input.command_time_ms, input.now_ms, config)) {
     // crane 無通信。G474 の connected_ai は CM4 が check_counter を採番する以上
     // crane の生存を意味しないので、ここで止めるしかない。
     return stopped(PositionControllerReason::CommandStale, true);

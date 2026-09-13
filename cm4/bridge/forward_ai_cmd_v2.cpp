@@ -39,6 +39,8 @@
 #include <cstring>
 
 #include "../control/position_controller.h"
+#include "robot_command_ops.h"
+#include "robot_feedback_packet.h"
 #include "robot_packet.h"
 
 // CM4のprimary UARTを示す安定名。現在はPL011 (/dev/ttyAMA0) に割り当てる。
@@ -53,10 +55,8 @@ constexpr int CAM_BUF_SIZE = 7;                                      // camera 7
 constexpr int UART_PACKET_SIZE = AI_CMD_V2_SIZE + CAM_BUF_SIZE + 1;  // local cam + ck
 constexpr long long LOCAL_CAMERA_TIMEOUT_MS = 100;
 
-// G474 feedback パケット。robot_feedback.out が loopback unicast で渡してくる。
-constexpr int FEEDBACK_PACKET_SIZE = 128;
-constexpr int FEEDBACK_POS_X_OFFSET = 44;  // vision_based_position_x (float LE)
-constexpr int FEEDBACK_POS_Y_OFFSET = 48;  // vision_based_position_y (float LE)
+// G474 feedback パケット (robot_feedback.out が loopback unicast で渡してくる) の
+// レイアウトと位置の取り出しは robot_feedback_packet.h が正本。
 
 // 位置制御パスの既定 UART 送信レート [Hz]。
 //
@@ -111,71 +111,37 @@ int get_machine_id()
   return -1;
 }
 
-int getUartBaudrate(int argc, char * argv[])
+// コマンドライン引数の走査。値の欠落時の扱いを 1 箇所に閉じる。
+//
+// --ai-cmd-port / --local-cam-port / --robot-id などはホスト PC でのテスト用。
+// 既定値は実機構成 (AI 指令 12345 / ローカルカメラ 8890)。
+const char * getRawOption(int argc, char * argv[], const char * name)
 {
-  int speed = 1000000;
-
-  // Parse command line arguments
   for (int i = 1; i < argc; ++i) {
-    if (strcmp(argv[i], "-s") == 0) {
-      if (i + 1 < argc) {
-        speed = std::stoi(argv[++i]);
-      } else {
-        printf("Error: -s option requires an integer argument.");
-      }
-    }
+    if (strcmp(argv[i], name) != 0) continue;
+    if (i + 1 < argc) return argv[i + 1];
+    fprintf(stderr, "%s には引数が必要です。既定値を使います。\n", name);
+    return nullptr;
   }
-  return speed;
+  return nullptr;
 }
 
-const char * getSerialPort(int argc, char * argv[])
-{
-  const char * port = DEFAULT_SERIAL_PORT;
-
-  for (int i = 1; i < argc; ++i) {
-    if (strcmp(argv[i], "--serial-port") == 0) {
-      if (i + 1 < argc) {
-        port = argv[++i];
-      } else {
-        printf("Error: --serial-port option requires a path argument.");
-      }
-    }
-  }
-  return port;
-}
-
-// --ai-cmd-port / --local-cam-port はホストPCでのテスト用。
-// 既定値は実機構成（AI 指令 12345 / ローカルカメラ 8890）。
 int getIntOption(int argc, char * argv[], const char * name, int default_value)
 {
-  int value = default_value;
-
-  for (int i = 1; i < argc; ++i) {
-    if (strcmp(argv[i], name) == 0) {
-      if (i + 1 < argc) {
-        value = std::stoi(argv[++i]);
-      } else {
-        printf("Error: %s option requires an integer argument.", name);
-      }
-    }
-  }
-  return value;
+  const char * raw = getRawOption(argc, argv, name);
+  return raw ? std::stoi(raw) : default_value;
 }
 
 float getFloatOption(int argc, char * argv[], const char * name, float default_value)
 {
-  float value = default_value;
+  const char * raw = getRawOption(argc, argv, name);
+  return raw ? std::stof(raw) : default_value;
+}
 
-  for (int i = 1; i < argc; ++i) {
-    if (strcmp(argv[i], name) == 0) {
-      if (i + 1 < argc) {
-        value = std::stof(argv[++i]);
-      } else {
-        printf("Error: %s option requires a float argument.", name);
-      }
-    }
-  }
-  return value;
+const char * getStringOption(int argc, char * argv[], const char * name, const char * default_value)
+{
+  const char * raw = getRawOption(argc, argv, name);
+  return raw ? raw : default_value;
 }
 
 bool hasFlag(int argc, char * argv[], const char * name)
@@ -295,8 +261,8 @@ int main(int argc, char * argv[])
 
   printf("start!! foward ai cmd V2 (multi cast packet), arg : %d\n", argc);
 
-  int uart_baudrate = getUartBaudrate(argc, argv);
-  const char * serial_port_path = getSerialPort(argc, argv);
+  int uart_baudrate = getIntOption(argc, argv, "-s", 1000000);
+  const char * serial_port_path = getStringOption(argc, argv, "--serial-port", DEFAULT_SERIAL_PORT);
   int ai_cmd_port = getIntOption(argc, argv, "--ai-cmd-port", 12345);
   int local_cam_port = getIntOption(argc, argv, "--local-cam-port", 8890);
   bool debug_mode_enabled = isDebugMode(argc, argv);
@@ -451,17 +417,10 @@ int main(int argc, char * argv[])
         const int offset = i * AI_CMD_V2_SLOT_SIZE;
         if ((uint8_t)ai_cmd_buf[offset] != (uint8_t)machine_id) continue;
         // 空スロット (コマンド 64 バイトが全ゼロ) は指令ではないので採用しない。
-        // framework の ibisSlotIsEmpty() と同じ判定で、cm4_sim も同じ扱いをする。
-        // 全ゼロを採用してしまうと、位置制御では target_global_pos が
-        // (-32.767, -32.767) として復号される。
-        bool empty = true;
-        for (int b = 0; b < AI_CMD_V2_SIZE; b++) {
-          if (ai_cmd_buf[offset + 1 + b] != 0) {
-            empty = false;
-            break;
-          }
-        }
-        if (empty) continue;
+        // framework の ibisSlotIsEmpty() と同じ判定で、cm4_sim も同じ実装を使う
+        // (robot_command_ops.h)。全ゼロを採用してしまうと、位置制御では
+        // target_global_pos が (-32.767, -32.767) として復号される。
+        if (commandSlotIsEmpty((const uint8_t *)&ai_cmd_buf[offset + 1])) continue;
         // コマンドは 64 バイト。旧実装は sizeof(uart_tx_buf) = 72 バイト読んでおり、
         // i == 10 で ai_cmd_buf[651..722] の 8 バイト境界外読み出しになっていた。
         memcpy(latest_cmd, &ai_cmd_buf[offset + 1], AI_CMD_V2_SIZE);
@@ -474,14 +433,10 @@ int main(int argc, char * argv[])
     while (1) {
       const int fb_n = recv(feedback_sock, feedback_buf, sizeof(feedback_buf), MSG_TRUNC);
       if (fb_n < 0) break;
-      if (fb_n != FEEDBACK_PACKET_SIZE || (uint8_t)feedback_buf[0] != 0xAB || (uint8_t)feedback_buf[1] != 0xEA) {
+      if (!decodeFeedbackPosition(feedback_buf, (size_t)fb_n, feedback_pos)) {
         feedback_discard_count++;
         continue;
       }
-      // byte 44..51 = vision_based_position_x/y [m]。yaw (byte 4..7) は実機が度・
-      // シミュレータがラジアンでずれており、制御則も使わないので読まない。
-      memcpy(&feedback_pos[0], &feedback_buf[FEEDBACK_POS_X_OFFSET], sizeof(float));
-      memcpy(&feedback_pos[1], &feedback_buf[FEEDBACK_POS_Y_OFFSET], sizeof(float));
       has_feedback = true;
       feedback_time_ms = now_ms;
     }
@@ -511,15 +466,7 @@ int main(int argc, char * argv[])
       const RobotCommandV2 cmd = RobotCommandSerializedV2_deserialize(&serialized);
 
       orion::PositionControllerInput in;
-      in.target_global_pos[0] = cmd.target_global_pos[0];
-      in.target_global_pos[1] = cmd.target_global_pos[1];
-      in.terminal_velocity_xy[0] = cmd.mode_args.position_target.terminal_velocity_x;
-      in.terminal_velocity_xy[1] = cmd.mode_args.position_target.terminal_velocity_y;
-      in.terminal_velocity = cmd.terminal_velocity;
-      in.linear_velocity_limit = cmd.linear_velocity_limit;
-      in.stop_emergency = cmd.stop_emergency;
-      in.vision_available = cmd.is_vision_available;
-      in.elapsed_time_ms_since_last_vision = cmd.elapsed_time_ms_since_last_vision;
+      fillCommandFields(&in, cmd);
       in.has_command = has_command;
       in.command_time_ms = (uint64_t)command_time_ms;
       // crane の vision_global_pos ではなく G474 feedback の位置で閉じる。
@@ -537,19 +484,14 @@ int main(int argc, char * argv[])
       // 「変化していること」だけを見るので、毎送信で変えなければならない。
       // 1 バイトなので 100Hz なら約 2 秒で一巡する。ロス検出用のシーケンス番号には
       // 使えない（doc/control_packet.md）。
-      tx_check_counter = (tx_check_counter >= 200) ? 0 : (uint8_t)(tx_check_counter + 1);
+      tx_check_counter = nextCheckCounter(tx_check_counter);
       uart_tx_buf[CHECK_COUNTER] = (char)tx_check_counter;
 
-      uart_tx_buf[CONTROL_MODE] = (char)POLAR_VELOCITY_TARGET_MODE;
-      forward((uint8_t *)&uart_tx_buf[CONTROL_MODE_ARGS + 0], (uint8_t *)&uart_tx_buf[CONTROL_MODE_ARGS + 1], control_out.polar_velocity_r, 32.767);
-      forward((uint8_t *)&uart_tx_buf[CONTROL_MODE_ARGS + 2], (uint8_t *)&uart_tx_buf[CONTROL_MODE_ARGS + 3], control_out.polar_velocity_theta, 32.767);
+      applyPolarVelocity((uint8_t *)uart_tx_buf, control_out.polar_velocity_r, control_out.polar_velocity_theta);
 
       if (control_out.stop_emergency) {
-        uart_tx_buf[FLAGS] = (char)((uint8_t)uart_tx_buf[FLAGS] | (uint8_t)(1u << STOP_EMERGENCY));
-        // crane 断・feedback 断のときに古いキック/ドリブル指令を撃ち続けない。
-        uart_tx_buf[KICK_POWER] = 0;
-        uart_tx_buf[DRIBBLE_POWER] = 0;
-        uart_tx_buf[FLAGS] = (char)((uint8_t)uart_tx_buf[FLAGS] & (uint8_t)~(1u << ENABLE_CHIP));
+        // 古いキック/ドリブル指令を撃ち続けないよう kick・dribble・chip も落とす。
+        applySafetyStop((uint8_t *)uart_tx_buf);
       }
 
       // vision_global_pos (byte 2..5) は crane 由来のまま流す。
@@ -589,7 +531,7 @@ int main(int argc, char * argv[])
       // crane 断の検出から最大 1/tx_rate_hz (既定 10ms) だけ停止指令が遅れ、
       // 「crane 断から command_timeout_ms 以内に止まる」を満たせなくなる。
       do_send = safety_changed || (now_ms - last_tx_time_ms >= tx_period_ms);
-    } else if (pre_check_cnt != uart_tx_buf[CHECK_COUNTER]) {
+    } else if (pre_check_cnt != latest_cmd[CHECK_COUNTER]) {
       do_send = true;
     }
 

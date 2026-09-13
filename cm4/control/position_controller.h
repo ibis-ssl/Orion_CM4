@@ -125,6 +125,15 @@ struct PositionControllerOutput
   bool feedforward_rejected = false;
 };
 
+// crane からのパケットが途絶したか。
+//
+// mode 3 の素通し経路もこの述語を使うこと。素通し側で同じ式を書き直すと、
+// 判定に境界変更やヒステリシスが入ったときに片方だけ据え置かれ、A/B 比較の
+// 独立変数が「位置ループをどこで閉じるか」以外にも増えてしまう。
+// 内部で単調時刻の差分を取るので、時刻の巻き戻りによる unsigned underflow も
+// ここで潰れる (生の引き算を書くとアンダーフローで巨大値になる)。
+bool isCommandStale(bool has_command, uint64_t command_time_ms, uint64_t now_ms, const PositionControllerConfig & config);
+
 // 位置指令から速度指令を計算する。状態を持たない純関数なので決定論的。
 PositionControllerOutput computePositionControl(const PositionControllerInput & input, const PositionControllerConfig & config);
 

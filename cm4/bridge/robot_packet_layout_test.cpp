@@ -22,6 +22,7 @@
 #include <string.h>
 
 #include "robot_packet.h"
+#include "robot_feedback_packet.h"
 
 // ---------------------------------------------------------------------------
 // 1. バイトオフセット (crane 版 enum Address の数値)
@@ -65,6 +66,32 @@ static_assert(TERMINAL_VELOCITY_LOW == 37, "TERMINAL_VELOCITY_LOW");
 // 2. サイズ
 // ---------------------------------------------------------------------------
 static_assert(sizeof(RobotCommandSerializedV2) == 64, "RobotCommandSerializedV2 must be 64 bytes");
+
+// --- G474 feedback パケット (robot_feedback_packet.h) ---
+//
+// 制御パケットと違い、こちらは過去にドリフトしていない。だが CM4 が位置ループを
+// 閉じるようになって消費者が 1 つから 3 つに増え、byte 44..51 は位置制御ループ内で
+// 唯一の位置信号になった。G474 がこの手前にフィールドを 1 つ挿入すると、実機は
+// 目標と無関係な位置へ走り出すのに単体テストは緑のままになる。ここで止める。
+static_assert(sizeof(RobotFeedbackPacket) == 128, "feedback packet must be 128 bytes");
+static_assert(offsetof(RobotFeedbackPacket, header) == 0, "feedback header offset");
+static_assert(offsetof(RobotFeedbackPacket, imu_yaw_deg) == 4, "feedback imu_yaw_deg offset");
+static_assert(offsetof(RobotFeedbackPacket, battery_voltage_bldc_right) == 8, "feedback battery offset");
+static_assert(offsetof(RobotFeedbackPacket, ball_detection) == 12, "feedback ball_detection offset");
+// byte 14 は ball_detection の 3 つ目ではなく送信サイクルカウンタ
+// (STM32 ai_comm.c の `buf[14] = tx_cycle_count;`)。doc/feedback_packet.md 参照。
+static_assert(offsetof(RobotFeedbackPacket, tx_cycle_count) == 14, "feedback tx_cycle_count offset");
+static_assert(offsetof(RobotFeedbackPacket, kick_state_div10) == 15, "feedback kick_state offset");
+static_assert(offsetof(RobotFeedbackPacket, capacitor_boost_voltage) == 40, "feedback capacitor offset");
+static_assert(offsetof(RobotFeedbackPacket, vision_based_position_x) == 44, "feedback pos x offset");
+static_assert(offsetof(RobotFeedbackPacket, vision_based_position_y) == 48, "feedback pos y offset");
+static_assert(offsetof(RobotFeedbackPacket, global_odom_speed_x) == 52, "feedback odom x offset");
+static_assert(offsetof(RobotFeedbackPacket, global_odom_speed_y) == 56, "feedback odom y offset");
+static_assert(offsetof(RobotFeedbackPacket, camera_pos_x_div2) == 60, "feedback camera offset");
+static_assert(offsetof(RobotFeedbackPacket, tx_value_array) == 64, "feedback tx_value_array offset");
+static_assert(offsetof(RobotFeedbackPacket, reserved) == 120, "feedback reserved offset");
+static_assert(FEEDBACK_POS_X_OFFSET == 44, "decodeFeedbackPosition reads byte 44");
+static_assert(FEEDBACK_POS_Y_OFFSET == 48, "decodeFeedbackPosition reads byte 48");
 static_assert(TERMINAL_VELOCITY_LOW < 64, "packet fields must fit in 64 bytes");
 
 // ---------------------------------------------------------------------------

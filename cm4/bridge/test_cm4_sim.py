@@ -39,6 +39,7 @@ MODE_POLAR_VELOCITY = 3
 MODE_POSITION_TARGET = 4
 KICK_POWER = 10
 DRIBBLE_POWER = 11
+ENABLE_CHIP_BIT = 1
 
 # 既定 (12345 / 12346 / 50100) から離す
 # ポートはテストごとにずらし、さらにプロセスごとにもずらす。
@@ -82,7 +83,7 @@ def decode_two_byte(data, offset, value_range):
 def build_command(counter, target=(1.0, 0.0), vision=(0.0, 0.0), mode=MODE_POSITION_TARGET,
                   terminal_velocity_xy=(0.0, 0.0), terminal_velocity=0.0,
                   linear_velocity_limit=3.0, stop_emergency=False, vision_available=True,
-                  elapsed_ms_since_last_vision=0):
+                  elapsed_ms_since_last_vision=0, kick_power=0, dribble_power=0, enable_chip=False):
     d = bytearray(CMD_SIZE)
     d[CHECK_COUNTER] = counter & 0xFF
     d[VISION_GLOBAL_X_HIGH:VISION_GLOBAL_X_HIGH + 2] = encode_two_byte(vision[0], 32.767)
@@ -96,7 +97,11 @@ def build_command(counter, target=(1.0, 0.0), vision=(0.0, 0.0), mode=MODE_POSIT
     # ゼロ埋めが正しく 0 (= 最新) になる。
     d[20] = (elapsed_ms_since_last_vision >> 8) & 0xFF
     d[21] = elapsed_ms_since_last_vision & 0xFF
-    d[FLAGS] = (0x01 if vision_available else 0x00) | ((1 << STOP_EMERGENCY_BIT) if stop_emergency else 0)
+    d[KICK_POWER] = kick_power
+    d[DRIBBLE_POWER] = dribble_power
+    d[FLAGS] = ((0x01 if vision_available else 0x00)
+                | ((1 << STOP_EMERGENCY_BIT) if stop_emergency else 0)
+                | ((1 << ENABLE_CHIP_BIT) if enable_chip else 0))
     d[CONTROL_MODE] = mode
     d[CONTROL_MODE_ARGS:CONTROL_MODE_ARGS + 2] = encode_two_byte(terminal_velocity_xy[0], 32.767)
     d[CONTROL_MODE_ARGS + 2:CONTROL_MODE_ARGS + 4] = encode_two_byte(terminal_velocity_xy[1], 32.767)
@@ -609,7 +614,10 @@ class Cm4SimSmokeTest(unittest.TestCase):
         """
         sim = Cm4Sim(robot_ids="0", extra_args=["--command-timeout-ms", "100"])
         try:
-            command = build_command(7, mode=MODE_POLAR_VELOCITY, terminal_velocity_xy=(1.25, 0.0))
+            # キック/ドリブル/チップを立てておく。安全停止でこれらが落ちることを
+            # 検査するため（素通し経路だけ ENABLE_CHIP のクリアが漏れていた）。
+            command = build_command(7, mode=MODE_POLAR_VELOCITY, terminal_velocity_xy=(1.25, 0.0),
+                                    kick_power=200, dribble_power=100, enable_chip=True)
             for _ in range(20):
                 sim.send_command(build_packet(0, command))
                 sim.send_feedback(0, 1, 0.0, 0.0)
@@ -623,6 +631,10 @@ class Cm4SimSmokeTest(unittest.TestCase):
             self.assertEqual(cmd[CONTROL_MODE], MODE_POLAR_VELOCITY)
             self.assertAlmostEqual(decode_two_byte(cmd, CONTROL_MODE_ARGS, 32.767), 0.0, delta=2e-3)
             self.assertTrue(cmd[FLAGS] & (1 << STOP_EMERGENCY_BIT))
+            # 古いキック指令を撃ち続けない。位置制御経路と同じ扱いにすること。
+            self.assertEqual(cmd[KICK_POWER], 0, "crane 断で古いキック指令が残っている")
+            self.assertEqual(cmd[DRIBBLE_POWER], 0)
+            self.assertFalse(cmd[FLAGS] & (1 << ENABLE_CHIP_BIT), "crane 断で ENABLE_CHIP が落ちていない")
         finally:
             sim.close()
 
