@@ -390,6 +390,9 @@ crane が vision で見失っているロボットの `target_global_pos` は推
   融合に使うので、CM4 の推定値を書き戻すと自己帰還になる）。
 - `simulator-cli` のログに `POSITION_TARGET` の警告が出たら mode 変換の失敗である。
   デバッグの第一手掛かりにする。
+- ワイヤ上のバイト列を直接見たいときは framework の
+  `data/scripts/ibis-packet-tap.py` を経路に挟む。crane → cm4_sim → simulator-cli の
+  どの区間で何が化けたかを、こちら側にデバッグ表示を足さずに切り分けられる。
 - 劣化注入（`--rx-delay-ms` / `--rx-jitter-ms` / `--rx-loss-rate` / `--seed`）は
   **crane → CM4 の入力側にのみ**適用する。mode 3 素通しでも mode 4 位置制御でも同じように
   かかるので、A/B 比較の独立変数が「位置ループをどこで閉じるか」だけになる。
