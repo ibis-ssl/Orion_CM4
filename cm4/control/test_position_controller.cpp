@@ -221,6 +221,29 @@ static void testRespectsVelocityLimitEveryStep(void)
   check(!exceeded, "VelocityLimit: 経路上のどの位置でも上限を超えない");
 }
 
+// フィードフォワードがどれだけ大きくても出力は linear_velocity_limit を超えないこと。
+//
+// 未設定シグネチャ (|v| >= 32) は InvalidCommand / feedforward_rejected で弾くが、
+// 「もっともらしいが間違っている」終端速度はどんな検査でも見分けられない。
+// その場合でも出力の大きさは linear_velocity_limit で頭打ちになる、というのが
+// この制御則の最後の砦なので、明示的に固定しておく。
+static void testFeedforwardCannotExceedVelocityLimit(void)
+{
+  PositionControllerConfig cfg;
+  PositionControllerInput in = freshInput();
+  in.target_global_pos[0] = 0.05f;  // ほぼ到達済み。速度は ff が支配する
+  in.linear_velocity_limit = 1.25f;
+  // 終端速度スカラを 0 (= クランプしない) にしたうえで、もっともらしい範囲で
+  // 目標と無関係な向きの巨大な ff を入れる。
+  in.terminal_velocity = 0.0f;
+  in.terminal_velocity_xy[0] = -20.0f;
+  in.terminal_velocity_xy[1] = -20.0f;
+
+  const PositionControllerOutput out = computePositionControl(in, cfg);
+  check(!out.feedforward_rejected, "FeedforwardLimit: もっともらしい値は未設定扱いしない");
+  check(out.polar_velocity_r <= 1.25f + 1e-5f, "FeedforwardLimit: ff が巨大でも上限を超えない");
+}
+
 // linear_velocity_limit = 0 の解釈を固定する。
 // crane の clampNorm は max_norm <= 0 で零ベクトルを返す = 「停止」。
 // framework の ibis_protocol.h は同じフィールドを「0 = 無制限」と定義しているが、
@@ -463,6 +486,7 @@ int main(void)
   printf("\n-- 本構成に固有の要件 --\n");
   testConvergesWithoutOvershoot();
   testRespectsVelocityLimitEveryStep();
+  testFeedforwardCannotExceedVelocityLimit();
   testZeroVelocityLimitMeansStop();
   testOutputDirectionIsGlobal();
   testTerminalVelocityClamp();

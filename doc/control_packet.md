@@ -297,6 +297,17 @@ mode 4 を受けると `cm4/control/position_controller.cpp` を通します。�
 安全停止時は `KICK_POWER` / `DRIBBLE_POWER` / `ENABLE_CHIP` も落とします。
 古いキック指令を撃ち続けないためです。
 
+#### フィードフォワードの上限
+
+mode 4 の `terminal_velocity_x/y` はフィードフォワードとして速度に直接足されます。
+未設定シグネチャ（`|v| >= 32`）は 0 とみなして P 制御を続けますが、
+「もっともらしいが間違っている」終端速度は検査では見分けられません。
+
+その場合でも **出力の大きさは `linear_velocity_limit`（byte 14..15）で頭打ち**になります。
+制御則の最後に `clampNorm(v, min(linear_velocity_limit, 制動エンベロープ))` が入っており、
+`linear_velocity_limit` 自体が未設定なら `max(0, -32.767) = 0` となって停止側に倒れるためです。
+`test_position_controller.cpp` の `testFeedforwardCannotExceedVelocityLimit` で固定しています。
+
 #### IS_VISION_AVAILABLE (byte 22 bit0) を CM4 でも見ます
 
 crane が見失っている間の `target_global_pos` は「見えていないロボット」に対する
