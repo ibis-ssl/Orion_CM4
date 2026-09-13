@@ -110,17 +110,23 @@ def build_packet(robot_id, command):
 
 
 def build_feedback(robot_id, counter, x, y):
-    """simulator-cli の ibisBuildFeedbackPacket と同じバイト配置。"""
+    """simulator-cli の ibisBuildFeedbackPacket と同じバイト配置。
+
+    framework PR #4 (2026-09-13 マージ) で実機フォーマットに揃ったので、
+    byte 2 は定数 10、byte 14 は tx_cycle_count、byte 60..63 は 0 である。
+    robot_id は宛先ポートの選択にだけ使い、パケットには載らない。
+    cm4_sim が読むのは byte 44..51 だけなので制御には影響しない。
+    """
     d = bytearray(FEEDBACK_SIZE)
     d[0], d[1] = 0xAB, 0xEA
-    d[2] = robot_id
-    d[3] = counter & 0xFF
-    struct.pack_into("<f", d, 4, 0.0)    # yaw (制御では使わない)
+    d[2] = 10                            # 定数。チェックサムではない
+    d[3] = counter & 0xFF                # 実機は指令の check_counter の反射、sim は自走
+    struct.pack_into("<f", d, 4, 0.0)    # imu_yaw_deg [deg] (制御では使わない)
+    d[14] = counter & 0xFF               # tx_cycle_count
     struct.pack_into("<f", d, 44, x)     # vision_based_position_x
     struct.pack_into("<f", d, 48, y)     # vision_based_position_y
     struct.pack_into("<f", d, 52, 0.0)   # 速度
     struct.pack_into("<f", d, 56, 0.0)
-    d[60] = 0x01
     return bytes(d)
 
 
