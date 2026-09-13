@@ -228,7 +228,8 @@ CM4 では**上流（位置制御器）の解釈が先に勝ちます**。`linea
 期待挙動）。位置制御経路は CM4 が `check_counter` を採番するのでそのゲートが成立せず
 （常に変化してしまう）、時間ベースのレートで送ります。
 
-`--passthrough` は mode 4 が来ても強制的に素通しします。旧構成との A/B 比較用です。
+`--passthrough` は mode 4 が来ても強制的に素通しします。旧構成の挙動を再現したいとき
+（位置制御を疑う前に切り分けたいとき）に使います。
 
 ### 送信レートとポーリング
 
@@ -331,8 +332,8 @@ sys->stop_flag || ai_cmd->stop_emergency || !ai_cmd->is_vision_available
 状態を作れてしまいます。境界（500 は動く / 501 は止まる）まで実機と揃えてあります。
 
 判定は `position_controller` にあるので、実機バイナリと `cm4_sim` が同じ経路を通ります。
-とくに `elapsed_time_ms_since_last_vision` は**無線劣化を注入すると真っ先に発火する**
-条件なので、ここを見ないと A/B 比較の数値が意味を失います。
+なお `elapsed_time_ms_since_last_vision` は**無線が劣化すると真っ先に発火する**条件です。
+「位置制御が効いていない」ように見えたときは、まずここを疑ってください。
 
 ##### `VisionUnavailable` が主防壁、`VisionStale` は補助
 
