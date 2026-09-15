@@ -372,6 +372,12 @@ class Cm4SimSmokeTest(unittest.TestCase):
             time.sleep(0.05)
             self.assertAlmostEqual(self._steady_state_speed(sim, first_counter=40), 0.4, delta=5e-3,
                                    msg="kp=4.0 を適用したあとの速度指令")
+            # 他機宛は取り込まない。担当 ID の判定だけが実機 (1 台) と
+            # cm4_sim (N 台) で分岐するので、ここで押さえておく。
+            sim.send_config(kp=8.0, decel=3.0, tolerance=0.01, robot_id=1)
+            time.sleep(0.05)
+            self.assertAlmostEqual(self._steady_state_speed(sim, first_counter=80), 0.4, delta=5e-3,
+                                   msg="担当外 ID 宛の設定は無視すること")
         finally:
             sim.close()
 
