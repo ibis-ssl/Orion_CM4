@@ -39,7 +39,7 @@ from packet_codec import (  # noqa: E402
     CHECK_COUNTER, CMD_SIZE, CONTROL_MODE, CONTROL_MODE_ARGS, DRIBBLE_POWER, FEEDBACK_POS_X_OFFSET,
     FEEDBACK_POS_Y_OFFSET, FEEDBACK_SIZE, FEEDBACK_SYNC, FLAGS, KICK_POWER,
     LINEAR_VELOCITY_LIMIT_HIGH, PACKET_SIZE, STOP_EMERGENCY_BIT, TARGET_GLOBAL_POS_X_HIGH,
-    TERMINAL_VELOCITY_HIGH, build_packet, encode_two_byte as enc)
+    TERMINAL_VELOCITY_HIGH, build_config_packet, build_packet, encode_two_byte as enc)
 from packet_codec import MODE_POLAR_VELOCITY as POLAR_VELOCITY_TARGET_MODE  # noqa: E402
 from packet_codec import MODE_POSITION_TARGET as POSITION_TARGET_WITH_TERMINAL_VELOCITY_MODE  # noqa: E402
 
@@ -105,6 +105,7 @@ class Bridge(object):
         self.cmd_port = port_base
         self.cam_port = port_base + 1
         self.feedback_port = port_base + 2
+        self.config_port = port_base + 3
         self.robot_id = robot_id
         self.master, self.slave = pty.openpty()
         args = [BIN] + (["--debug"] if debug else [])
@@ -112,7 +113,10 @@ class Bridge(object):
                 "--robot-id", str(robot_id),
                 "--ai-cmd-port", str(self.cmd_port),
                 "--local-cam-port", str(self.cam_port),
-                "--feedback-port", str(self.feedback_port)]
+                "--feedback-port", str(self.feedback_port),
+                # 既定の 12350 のままだと、テストを並べたときに 2 プロセス目の
+                # bind が失敗する (設定ポートには意図的に SO_REUSEADDR を付けていない)。
+                "--config-port", str(self.config_port)]
         if extra_args:
             args += extra_args
         self.log_path = "/tmp/test_ai_cmd_v2_%d.log" % port_base
@@ -168,6 +172,9 @@ class Bridge(object):
 
     def send_feedback(self, x, y):
         self.tx.sendto(build_feedback(x, y), ("127.0.0.1", self.feedback_port))
+
+    def send_config(self, kp, decel, tolerance, robot_id=0xFF):
+        self.tx.sendto(build_config_packet(kp, decel, tolerance, robot_id), ("127.0.0.1", self.config_port))
 
     def frames(self):
         """--debug 出力を 72 バイトのリスト列として返す（送信順）。"""
@@ -268,6 +275,33 @@ class ForwardAiCmdV2Test(unittest.TestCase):
         self.assertTrue(len(set(counters)) > 5, "check_counter が変化しないと G474 の connected_ai が落ちる")
         for a, b in zip(counters, counters[1:]):
             self.assertNotEqual(a, b)
+
+    def test_config_packet_updates_gain_while_running(self):
+        """crane からの設定パケットで位置制御ゲインが稼働中に変わること。
+
+        実機バイナリ側でも同じ経路 (config_packet.h) を通ることを押さえる。
+        シミュレータ側だけ検査していると、現地で効かないことに実機で気付く。
+        """
+        bridge = self.start(12490)
+
+        def drive_and_measure(seconds=0.4):
+            # 目標まで 0.1 m。制動エンベロープ sqrt(2*3*0.1)=0.77 m/s なので
+            # kp を 2 -> 4 にしても (0.2 -> 0.4) クランプに当たらない。
+            command = build_command(1, POSITION_TARGET_WITH_TERMINAL_VELOCITY_MODE, target=(0.1, 0.0))
+            deadline = time.time() + seconds
+            while time.time() < deadline:
+                bridge.send_command(command)
+                bridge.send_feedback(0.0, 0.0)
+                time.sleep(0.02)
+            frames = [f for f in bridge.frames() if f[FLAGS] & (1 << STOP_EMERGENCY_BIT) == 0]
+            self.assertTrue(frames, "feedback が届いていれば安全停止せず速度が出るはず")
+            return dec(frames[-1][CONTROL_MODE_ARGS], frames[-1][CONTROL_MODE_ARGS + 1], 32.767)
+
+        self.assertAlmostEqual(drive_and_measure(), 0.2, delta=0.01, msg="既定ゲイン kp=2.0")
+        bridge.send_config(kp=4.0, decel=3.0, tolerance=0.01)
+        time.sleep(0.05)
+        self.assertAlmostEqual(drive_and_measure(), 0.4, delta=0.01, msg="kp=4.0 適用後")
+        self.assertIn("位置制御の設定を更新", bridge._read_log())
 
     def test_stops_when_crane_goes_silent(self):
         """検収条件 4: crane 無通信で速度指令がゼロになること。"""

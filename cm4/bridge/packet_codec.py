@@ -9,6 +9,8 @@ static_assert で守っているが、Python テストが独自にオフセッ�
 正本は cm4/bridge/robot_packet.h の enum Address / FlagAddress / ControlMode。
 """
 
+import struct
+
 CMD_SIZE = 64
 SLOTS = 11
 SLOT_SIZE = CMD_SIZE + 1
@@ -71,3 +73,16 @@ def build_packet(robot_id, command):
     for slot in range(SLOTS):
         pkt += bytes([slot]) + (command if slot == robot_id else bytes(CMD_SIZE))
     return bytes(pkt)
+
+
+# --- 位置制御の設定パケット (config_packet.h) ---
+# crane が位置制御ゲインを稼働中に変更するための 20 バイト。指令パケットとは
+# 別ポートで、2 バイト固定小数ではなく素の float32 little endian を使う。
+CONFIG_PACKET_SIZE = 20
+CONFIG_PACKET_VERSION = 1
+CONFIG_BROADCAST_ID = 0xFF
+CONFIG_PACKET_FORMAT = "<4sBBHfff"
+
+
+def build_config_packet(kp, decel, tolerance, robot_id=CONFIG_BROADCAST_ID):
+    return struct.pack(CONFIG_PACKET_FORMAT, b"OC4C", CONFIG_PACKET_VERSION, robot_id, 0, kp, decel, tolerance)

@@ -40,6 +40,7 @@
 #include <vector>
 
 #include "../control/position_controller.h"
+#include "config_packet.h"
 #include "robot_command_ops.h"
 #include "robot_feedback_packet.h"
 #include "robot_packet.h"
@@ -67,6 +68,8 @@ struct Options
   std::string out_addr = "127.0.0.1";
   int out_port = 12346;
   int feedback_port_base = 50100;
+  // crane からの位置制御設定パケット (config_packet.h) を受けるポート。
+  int config_port = orion::kDefaultConfigPort;
   // 再配信先は入力ポートと独立。simulator-cli の feedback を別ポートで受けても、
   // crane の crane_robot_receiver は 50100+id 固定なので再配信先は動かせない。
   int feedback_relay_port_base = 50100;
@@ -119,11 +122,12 @@ void printUsage(const char * argv0)
     "  --rx-jitter-ms 0          同 ジッタ (一様分布 +-)\n"
     "  --rx-loss-rate 0.0        同 パケットロス率 0.0..1.0\n"
     "  --seed 0                  劣化注入の乱数シード (再現性のため)\n"
+    "  --config-port %d          crane からの位置制御設定パケット (20B) を受けるポート\n"
     "  --vision-echo feedback|crane\n"
     "                            出力パケットの VISION_GLOBAL_X/Y に何を入れるか\n"
     "  --kp / --decel / --tolerance / --command-timeout-ms / --feedback-timeout-ms\n"
     "  -h, --help\n",
-    argv0);
+    argv0, orion::kDefaultConfigPort);
 }
 
 bool parseIntList(const char * s, std::vector<int> * out)
@@ -179,6 +183,9 @@ bool parseOptions(int argc, char * argv[], Options * o)
     } else if (a == "--feedback-port-base") {
       if (!next(&v)) return false;
       o->feedback_port_base = atoi(v);
+    } else if (a == "--config-port") {
+      if (!next(&v)) return false;
+      o->config_port = atoi(v);
     } else if (a == "--feedback-relay-port-base") {
       if (!next(&v)) return false;
       o->feedback_relay_port_base = atoi(v);
@@ -516,6 +523,10 @@ int main(int argc, char * argv[])
   const int in_sock = bindUdp(nullptr, opt.in_port, /*reuse_addr=*/false);
   if (in_sock < 0) return 1;
 
+  // crane からの位置制御設定。crane は broadcast で送るので INADDR_ANY に bind する。
+  const int config_sock = orion::openConfigSocket(opt.config_port);
+  if (config_sock < 0) return 1;
+
   // simulator-cli への出力
   const int out_sock = makeUdpSocket(/*reuse_addr=*/false);
   if (out_sock < 0) return 1;
@@ -567,6 +578,7 @@ int main(int argc, char * argv[])
   printf("  crane 入力      : 0.0.0.0:%d (mode 4, 715B)\n", opt.in_port);
   printf("  simulator 出力  : %s:%d (mode 3, 715B)\n", opt.out_addr.c_str(), opt.out_port);
   printf("  feedback 入力   : 127.0.0.1:%d+id\n", opt.feedback_port_base);
+  printf("  設定入力        : 0.0.0.0:%d (20B)\n", opt.config_port);
   if (opt.feedback_relay) printf("  feedback 再配信 : 224.5.20.(100+id):%d+id\n", opt.feedback_relay_port_base);
   printf("  担当スロット    :");
   for (int id : opt.robot_ids) printf(" %d", id);
@@ -719,7 +731,12 @@ int main(int argc, char * argv[])
   // 実機の forward_ai_cmd_v2.cpp の usleep(1000) ポーリングと同じ構造にしてある。
   // (simulator-cli の ibis ブランチに lockstep は存在しないので、同期モードは持たない)
   const useconds_t period_us = static_cast<useconds_t>(1000000 / opt.rate_hz);
+  orion::ConfigReceiver config_receiver;
   while (!g_stop) {
+    // 受信・検証・適用・ログは実機の forward_ai_cmd_v2 と共有する (config_packet.h)。
+    // cm4_sim は 11 台を 1 プロセスで代行するので、設定はプロセス全体へ適用される。
+    // 台ごとに別のゲインを試すときは --robot-ids と --config-port を分けて起動する。
+    orion::drainConfigSocket(config_sock, opt.robot_ids.data(), opt.robot_ids.size(), &opt.control, &config_receiver);
     drainCraneInput();
     applyDeliveredCommands();
     drainFeedback();
@@ -745,6 +762,7 @@ int main(int argc, char * argv[])
   }
   fflush(stdout);
 
+  close(config_sock);
   close(in_sock);
   close(out_sock);
   if (relay_sock >= 0) close(relay_sock);

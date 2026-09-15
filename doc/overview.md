@@ -297,6 +297,18 @@ CM4 の位置制御は `cm4_sim.out` が担当し、**実機と同一のソー�
 （`cm4/control/position_controller.cpp`）をリンクする。コピーを作らないことが、
 実機とシミュレータの挙動が一致することの唯一の保証である。
 
+### 位置制御ゲインは crane から実行中に変えられる
+
+ゲインの正本は CM4 の `position_controller` だが、現地で詰めるために crane が
+**UDP 12350 へ 20 バイトの設定パケットを broadcast** して稼働中に上書きできる。
+再起動は要らない。`ai_cmd_v2.out` と `cm4_sim.out` は同じ `config_packet.h` を
+通るので、sim で確かめた値は実機でも同じ扱いになる。
+
+変えられるのは `position_gain` / `deceleration` / `position_tolerance` の 3 つだけで、
+安全停止のタイムアウトと `vision_age_limit_ms` は遠隔から動かせない。範囲外の値は
+クランプせずデータグラムごと捨てる。形式と範囲は
+[制御パケット](control_packet.md#位置制御設定パケットudp-12350)を参照。
+
 ### `check_counter` の採番者が CM4 に移った
 
 mode 4 を受けて位置制御を回す経路では、**CM4 が `check_counter` を採番する**。
@@ -385,6 +397,7 @@ crane が見失っている、または vision が古すぎるロボットの `t
 | crane からの mode 4 | bind `0.0.0.0:12345` |
 | simulator-cli への mode 3 | `127.0.0.1:12346`（`--ibis-port` と揃える） |
 | simulator-cli からの feedback | bind `127.0.0.1:50100+id` |
+| crane からの設定パケット | bind `0.0.0.0:12350`（`--config-port`） |
 | feedback 再配信 | `224.5.20.(100+id):50100+id`（実機と同じ） |
 
 注意点:

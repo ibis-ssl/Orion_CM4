@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "config_packet.h"
 #include "robot_packet.h"
 #include "robot_feedback_packet.h"
 
@@ -357,6 +358,11 @@ void dumpOffsets(void)
   printf("FEEDBACK_SIZE=%d\n", FEEDBACK_PACKET_SIZE);
   printf("FEEDBACK_POS_X_OFFSET=%d\n", (int)FEEDBACK_POS_X_OFFSET);
   printf("FEEDBACK_POS_Y_OFFSET=%d\n", (int)FEEDBACK_POS_Y_OFFSET);
+  // 位置制御の設定パケット (config_packet.h)。crane との取り決めなので、
+  // Python 側の組み立てがずれたら気付けるようにここへ出す。
+  printf("CONFIG_PACKET_SIZE=%d\n", (int)orion::kConfigPacketSize);
+  printf("CONFIG_PACKET_VERSION=%d\n", (int)orion::kConfigPacketVersion);
+  printf("CONFIG_BROADCAST_ID=%d\n", (int)orion::kConfigPacketBroadcastId);
 }
 
 int main(int argc, char * argv[])

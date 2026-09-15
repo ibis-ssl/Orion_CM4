@@ -41,6 +41,7 @@
 #include <vector>
 
 #include "../control/position_controller.h"
+#include "config_packet.h"
 #include "robot_command_ops.h"
 #include "robot_feedback_packet.h"
 #include "robot_packet.h"
@@ -280,13 +281,14 @@ void printUsage()
     "  --ai-cmd-port <port>        crane からの 715B 受信ポート (既定 12345)\n"
     "  --local-cam-port <port>     ローカルカメラ受信ポート (既定 8890)\n"
     "  --feedback-port <port>      G474 feedback の loopback 受信ポート (既定 50000+100+id)\n"
+    "  --config-port <port>        crane からの位置制御設定パケット受信ポート (既定 %d)\n"
     "  --tx-rate-hz <hz>           位置制御パスの UART 送信レート (既定 %d)\n"
     "  --passthrough               mode 4 でも位置制御せず素通しする (A/B 比較用)\n"
     "  --kp / --decel / --tolerance                位置制御のゲイン・許容誤差\n"
     "  --command-timeout-ms / --feedback-timeout-ms  安全停止までの無通信時間\n"
     "  --debug                     UART へ送らず 72 バイトを 16 進表示する\n"
     "  -h, --help                  この表示\n",
-    DEFAULT_SERIAL_PORT, DEFAULT_TX_RATE_HZ);
+    DEFAULT_SERIAL_PORT, orion::kDefaultConfigPort, DEFAULT_TX_RATE_HZ);
 }
 
 int main(int argc, char * argv[])
@@ -342,6 +344,9 @@ int main(int argc, char * argv[])
   control_config.position_tolerance = getFloatOption(argc, argv, "--tolerance", control_config.position_tolerance);
   control_config.command_timeout_ms = (uint32_t)getIntOption(argc, argv, "--command-timeout-ms", (int)control_config.command_timeout_ms);
   control_config.feedback_timeout_ms = (uint32_t)getIntOption(argc, argv, "--feedback-timeout-ms", (int)control_config.feedback_timeout_ms);
+  // --kp / --decel / --tolerance は起動時の初期値。crane が設定パケットを送ってくると
+  // 稼働中に上書きされる (config_packet.h)。タイムアウト 2 つは遠隔から変えられない。
+  int config_port = getIntOption(argc, argv, "--config-port", orion::kDefaultConfigPort);
 
   // 全オプションの問い合わせが終わったここで検証する。
   if (!validateOptions(argc, argv)) return 1;
@@ -349,7 +354,7 @@ int main(int argc, char * argv[])
   printf("debug mode : %d\n", debug_mode_enabled);
   printf("UART %s %d bps\n", serial_port_path, uart_baudrate);
   printf("ID %d%s\n", machine_id, robot_id_explicit ? " (--robot-id 指定)" : " (wlan0 から検出)");
-  printf("AI cmd UDP %d / local cam UDP %d / feedback UDP 127.0.0.1:%d\n", ai_cmd_port, local_cam_port, feedback_port);
+  printf("AI cmd UDP %d / local cam UDP %d / feedback UDP 127.0.0.1:%d / config UDP %d\n", ai_cmd_port, local_cam_port, feedback_port, config_port);
   printf("passthrough %d / tx rate %d Hz (%lld ms)\n", passthrough_forced, tx_rate_hz, tx_period_ms);
   printf("control kp %.2f decel %.2f tol %.3f cmd-timeout %u ms fb-timeout %u ms\n", control_config.position_gain, control_config.deceleration,
     control_config.position_tolerance, control_config.command_timeout_ms, control_config.feedback_timeout_ms);
@@ -415,6 +420,10 @@ int main(int argc, char * argv[])
   ioctl(ai_cmd_sock, FIONBIO, &val);
   ioctl(feedback_sock, FIONBIO, &val);
 
+  // crane からの位置制御設定パケット。crane は broadcast で送るので INADDR_ANY に bind する。
+  const int config_sock = orion::openConfigSocket(config_port);
+  if (config_sock < 0) return 1;
+
   boost::asio::io_service io;
   boost::asio::serial_port serial(io, serial_port_path);
   serial.set_option(boost::asio::serial_port_base::baud_rate(uart_baudrate));
@@ -439,6 +448,7 @@ int main(int argc, char * argv[])
 
   uint64_t rx_discard_count = 0;
   uint64_t feedback_discard_count = 0;
+  orion::ConfigReceiver config_receiver;
   orion::PositionControllerReason pre_reason = orion::PositionControllerReason::FeedbackStale;
   bool pre_ff_rejected = false;
   // 「最後に表示したときの crane 由来 check_counter」。pre_check_cnt とは別に持つ。
@@ -448,6 +458,12 @@ int main(int argc, char * argv[])
 
   while (1) {
     const long long now_ms = get_current_time_ms();
+
+    // --- crane からの位置制御設定 (20 バイト) ---
+    // 受信・検証・適用・ログは cm4_sim と共有する (config_packet.h)。
+    // 途絶しても最後の値を保持する。ゲインは安全信号ではないので、
+    // 設定が届かないことを理由に既定値へ戻すとかえって挙動が飛ぶ。
+    orion::drainConfigSocket(config_sock, &machine_id, 1, &control_config, &config_receiver);
 
     // --- crane からの 715 バイト ---
     // 715 バイト以外は捨てる。旧実装は recv の戻り値を見ておらず、短いパケットや
@@ -623,6 +639,7 @@ int main(int argc, char * argv[])
     usleep(1000);
   }
 
+  close(config_sock);
   close(local_cam_sock);
   close(ai_cmd_sock);
   close(feedback_sock);

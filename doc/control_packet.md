@@ -176,6 +176,51 @@ CM4 では**上流（位置制御器）の解釈が先に勝ちます**。`linea
 位置制御器が `r = 0` を出すので、そのバイトを下流へ素通ししても結果は変わりません。
 これは事故ではなく決定であり、`position_controller` の単体テストで固定しています。
 
+## 位置制御設定パケット（UDP 12350）
+
+位置制御ゲインの正本は CM4 の `position_controller` ですが、現地で詰めるには
+crane 側から変えられる必要があります。715 バイトの指令パケットとは**別ポートの
+20 バイトのデータグラム**で運びます。相乗りさせないのは、64 バイトのレイアウトが
+crane / G474 / framework / CM4 の 4 者一致を不変条件にしており、しかも crane が
+使用スロットの byte 28..31 / 38..63 をゼロ初期化していないためです。別ポートなら
+G474 と framework は一切変わりません。
+
+正本は `cm4/bridge/config_packet.h` です。crane は指令と同じく **broadcast** で送ります。
+
+| byte | 内容 |
+|---|---|
+| 0..3 | magic `'O' 'C' '4' 'C'` |
+| 4 | version（現在 `1`） |
+| 5 | robot_id（`0xFF` = 全機宛） |
+| 6..7 | 予約（0） |
+| 8..11 | `position_gain` float32 little endian |
+| 12..15 | `deceleration` float32 little endian |
+| 16..19 | `position_tolerance` float32 little endian |
+
+2 バイト固定小数ではなく素の float32 です。毎周期 11 台ぶんを運ぶわけではないので
+圧縮する理由が無く、量子化を挟むと crane の表示値と CM4 の実効値が食い違います。
+
+受信側は次の範囲を検査し、外れていれば**クランプせずデータグラムごと捨てて**
+拒否理由をログに出します。黙ってクランプすると crane 側の表示と実機の実効値が
+食い違ったまま気付けません。
+
+| フィールド | 範囲 |
+|---|---|
+| `position_gain` | `0 <= v <= 20` |
+| `deceleration` | `0 <= v <= 20` [m/s²] |
+| `position_tolerance` | `0 <= v <= 1.0` [m] |
+
+- 受信ポートは実機 `ai_cmd_v2.out` もシミュレータ `cm4_sim.out` も `--config-port`（既定 12350）。
+  受信・検証・適用・ログは同じ `config_packet.h` を通るので、sim で確かめた値は実機でも同じ扱いになります。
+- 設定が途絶しても最後の値を保持します。ゲインは安全信号ではないので、
+  届かないことを理由に既定値へ戻すとかえって挙動が飛びます。
+- crane は同じ値を定期送信して構いません。値が変わったときだけログに出ます。
+- **変更できるのはこの 3 つだけです。** `command_timeout_ms` / `feedback_timeout_ms` は
+  安全停止の閾値、`vision_age_limit_ms` は G474 の定数と一致させるための値なので、
+  遠隔から動かせるようにしていません（`cm4/control/position_controller.h`）。
+- `cm4_sim` は 11 台を 1 プロセスで代行するので、設定はプロセス全体へ適用されます。
+  台ごとに別ゲインを試すときは `--robot-ids` と `--config-port` を分けて起動します。
+
 ## cm4/bridge/forward_ai_cmd_v2.cpp
 
 `cm4/bridge/forward_ai_cmd_v2.cpp` は AI 側 UDP とローカルカメラ UDP を受け、STM32 へ UART 送信します。
@@ -192,6 +237,10 @@ CM4 では**上流（位置制御器）の解釈が先に勝ちます**。`linea
 - ローカルカメラパケット
   - UDP port: `8890`（`--local-cam-port` で変更可）
   - `CAM_BUF_SIZE` は `7` バイトです。
+- 位置制御設定パケット
+  - UDP port: `12350`（`--config-port` で変更可）
+  - 20 バイト固定。crane がゲインを稼働中に変更するために送ります。
+    詳細は上の[位置制御設定パケット](#位置制御設定パケットudp-12350)を参照。
 - G474 feedback（位置制御ループを閉じるため）
   - UDP port: `127.0.0.1:(50000 + 100 + ロボット ID)`（`--feedback-port` で変更可）
   - `robot_feedback.out` が UART から読んだ 128 バイトを loopback unicast で渡します。
@@ -274,7 +323,8 @@ crane 断の安全停止は CM4 側で明示的に行います（下記）。
 
 mode 4 を受けると `cm4/control/position_controller.cpp` を通します。制御則は crane の
 `sim_position_controller.cpp` の `calculateSimGlobalVelocity()` と同一で、既定ゲインは
-`position_gain = 2.0` / `deceleration = 3.0`（`--kp` / `--decel` で変更可）です。
+`position_gain = 2.0` / `deceleration = 3.0`（`--kp` / `--decel` は起動時の初期値。
+稼働中は crane からの設定パケットで上書きされます）です。
 
 ロボットの現在位置は **G474 feedback の byte 44..51（`vision_based_position_x/y`）** を
 使います。crane のパケットに入っている `vision_global_pos` では閉じません。
