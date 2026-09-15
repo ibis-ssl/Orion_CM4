@@ -38,7 +38,7 @@ from packet_codec import (  # noqa: E402
     MODE_POSITION_TARGET, PACKET_SIZE, SLOT_SIZE, SLOTS, STOP_EMERGENCY_BIT,
     TARGET_GLOBAL_POS_X_HIGH, TARGET_GLOBAL_POS_Y_HIGH, TARGET_GLOBAL_THETA_HIGH,
     TERMINAL_VELOCITY_HIGH, VISION_GLOBAL_THETA_HIGH, VISION_GLOBAL_X_HIGH, VISION_GLOBAL_Y_HIGH,
-    build_packet, decode_two_byte, encode_two_byte)
+    build_config_packet, build_packet, decode_two_byte, encode_two_byte)
 
 # 既定 (12345 / 12346 / 50100) から離す
 # ポートはテストごとにずらし、さらにプロセスごとにもずらす。
@@ -118,10 +118,11 @@ class Cm4Sim:
     """cm4_sim.out を起動し、crane 側と simulator-cli 側の両方を演じるヘルパ。"""
 
     def __init__(self, robot_ids="0", extra_args=(), out_port=None, in_port=None,
-                 feedback_base=None, relay=False, relay_port_base=None):
+                 feedback_base=None, relay=False, relay_port_base=None, config_port=None):
         slot = next(_port_slot) % 16
         in_port = PORT_BASE + slot * 4 if in_port is None else in_port
         out_port = PORT_BASE + slot * 4 + 1 if out_port is None else out_port
+        config_port = PORT_BASE + slot * 4 + 2 if config_port is None else config_port
         feedback_base = FEEDBACK_BASE + slot * 16 if feedback_base is None else feedback_base
         # 再配信先は入力ポートと独立 (crane の crane_robot_receiver は 50100+id 固定)。
         # テストでは既定の 50100 を塞がないよう、入力と同じ値を明示指定する。
@@ -129,6 +130,7 @@ class Cm4Sim:
         self.feedback_relay_port_base = relay_port_base
         _live_sims.append(self)
         self.in_port = in_port
+        self.config_port = config_port
         self.feedback_base = feedback_base
         # simulator-cli 役: cm4_sim の出力を受ける
         self.out_rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -145,6 +147,7 @@ class Cm4Sim:
                 "--in-port", str(in_port),
                 "--out-addr", "127.0.0.1", "--out-port", str(out_port),
                 "--feedback-port-base", str(feedback_base),
+                "--config-port", str(config_port),
                 "--feedback-relay-port-base", str(relay_port_base),
                 *(() if relay else ("--no-feedback-relay",)),  # 既定ではテストで multicast を出さない
                 *extra_args]
@@ -177,6 +180,9 @@ class Cm4Sim:
 
     def send_command(self, packet):
         self.tx.sendto(packet, ("127.0.0.1", self.in_port))
+
+    def send_config(self, kp, decel, tolerance, robot_id=0xFF):
+        self.tx.sendto(build_config_packet(kp, decel, tolerance, robot_id), ("127.0.0.1", self.config_port))
 
     def send_feedback(self, robot_id, counter, x, y):
         self.tx.sendto(build_feedback(robot_id, counter, x, y),
@@ -330,6 +336,60 @@ class Cm4SimSmokeTest(unittest.TestCase):
             self.assertAlmostEqual(decode_two_byte(cmd, VISION_GLOBAL_Y_HIGH, 32.767), fb_y, delta=2e-3)
         finally:
             sim.close()
+
+    def _steady_state_speed(self, sim, target_x=0.1, first_counter=1):
+        """目標まで target_x の定常状態で出力される速度指令 r を返す。
+
+        e = 0.1 のとき制動エンベロープは sqrt(2*decel*e) = 0.77 m/s なので、
+        kp を 2 -> 4 に変えても (0.2 -> 0.4) クランプに当たらない。
+        ゲインの変化がそのまま r に出る領域を選んである。
+        """
+        for i in range(first_counter, first_counter + 12):
+            sim.send_command(build_packet(0, build_command(i, target=(target_x, 0.0))))
+            sim.send_feedback(0, i, 0.0, 0.0)
+            time.sleep(0.01)
+        sim.drain_output()
+        sim.send_command(build_packet(0, build_command(first_counter + 20, target=(target_x, 0.0))))
+        sim.send_feedback(0, first_counter + 20, 0.0, 0.0)
+        time.sleep(0.05)
+        out = sim.recv_latest_output()
+        self.assertIsNotNone(out, "715 バイトの出力が来ない")
+        _, cmd = slot_of(out, 0)
+        self.assertEqual(cmd[CONTROL_MODE], MODE_POLAR_VELOCITY)
+        return decode_two_byte(cmd, CONTROL_MODE_ARGS, 32.767)
+
+    def test_config_packet_updates_gain_while_running(self):
+        """crane からの設定パケットで位置制御ゲインが稼働中に変わること。
+
+        再起動を挟まずに変わることがこの機能の要件なので、同じプロセスで
+        変更前後の速度指令を比べる。
+        """
+        sim = Cm4Sim(robot_ids="0")
+        try:
+            self.assertAlmostEqual(self._steady_state_speed(sim), 0.2, delta=5e-3,
+                                   msg="既定ゲイン kp=2.0 での速度指令")
+            sim.send_config(kp=4.0, decel=3.0, tolerance=0.01)
+            time.sleep(0.05)
+            self.assertAlmostEqual(self._steady_state_speed(sim, first_counter=40), 0.4, delta=5e-3,
+                                   msg="kp=4.0 を適用したあとの速度指令")
+        finally:
+            sim.close()
+
+    def test_out_of_range_config_is_rejected(self):
+        """範囲外のゲインはクランプせずデータグラムごと捨てること。
+
+        黙ってクランプすると crane 側の表示と実機の実効値が食い違ったまま
+        気付けない。捨てたうえで拒否ログを出す方を選んでいる。
+        """
+        sim = Cm4Sim(robot_ids="0")
+        try:
+            sim.send_config(kp=1000.0, decel=3.0, tolerance=0.01)
+            time.sleep(0.05)
+            self.assertAlmostEqual(self._steady_state_speed(sim), 0.2, delta=5e-3,
+                                   msg="範囲外の設定は無視され既定ゲインのままであること")
+        finally:
+            sim.close()
+            self.assertIn("OutOfRange", sim.output)
 
     def test_crane_silence_stops_the_robot(self):
         """crane 無通信で速度指令がゼロになり STOP_EMERGENCY が立つこと（検収条件 4）。"""

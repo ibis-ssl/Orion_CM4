@@ -71,7 +71,7 @@ build_binaries() {
     pids+=($!)
 
     # パケットレイアウトのドリフト検査
-    g++ "${CXXFLAGS[@]}" "${BRIDGE_DIR}/robot_packet_layout_test.cpp" -o "${BIN_DIR}/robot_packet_layout_test.out" &
+    g++ "${CXXFLAGS[@]}" -I"${CONTROL_DIR}" "${BRIDGE_DIR}/robot_packet_layout_test.cpp" -o "${BIN_DIR}/robot_packet_layout_test.out" &
     pids+=($!)
 
     # 位置制御ライブラリの単体テスト。
