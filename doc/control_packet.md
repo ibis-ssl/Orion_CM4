@@ -581,9 +581,23 @@ checksum が合った FWUP フレームのコマンド 3 を受けると直ち�
   待ち時間切れで再開したとき、指令を受けて AI 接続済みになるので、次の周期で復帰する (最大 2 周期)。
 - 従来 mode 3 は feedback に依存しなかったが、この緩和のあいだは feedback 無音で送信が止まる。
   feedback が無いロボットは crane から使えない (unavailable 扱い) ので、実害はないと判断した。
-- **根本原因は G474 側**: `HAL_UART_Transmit_DMA(&huart2, …)` (`ai_comm.c`) が戻り値も
-  `huart2.gState` も見ておらず、一度 READY に戻らなくなると `HAL_BUSY` で黙って捨て続ける構造という仮説がある
-  (未検証)。G474 側で直るなら、この緩和は不要になる。
+- **根本原因は G474 側の割り込み競合** (2026-09-19 特定。G474 側で直れば、この緩和は不要になる):
+  1. `stm32g4xx_it.c:364-365` の `USART2_IRQHandler` 末尾が、**非アトミックな** `SET_BIT(huart2.Instance->CR1, …)`
+     (read-modify-write) で RXNEIE を立て直している。
+  2. USART2 は割り込み優先度 **1**、USART2 TX の DMA (`hdma_usart2_tx` = `DMA1_Channel8`) は優先度 **0**。
+     つまり **TX DMA 完了割り込みだけが USART2_IRQHandler を横取りできる**。
+  3. 横取りされた先の `UART_DMATransmitCplt` は `ATOMIC_SET_BIT(CR1, USART_CR1_TCIE)` で TC 割り込みを有効化する。
+     戻ってきた `USART2_IRQHandler` が古い CR1 を書き戻すと、**この TCIE が消える**。
+  4. TC 割り込みが来ないので `UART_EndTransmit_IT` が呼ばれず、`huart2.gState` が `BUSY_TX` のまま固定される。
+  5. 以後 `HAL_UART_Transmit_DMA` は常に `HAL_BUSY` を返すが、`ai_comm.c:134` は戻り値を見ないので
+     **フィードバックだけが永久に止まり、受信は生き続ける**。実際の症状と一致する。
+  - 実機検証 (6 番、速度 0・vision 無効で動作なし): 指令レートを上げて G474 の USART2 RX 割り込みを増やすと、
+    無音の発生率が跳ね上がった。**62.5 Hz で 90 秒: 0 回 / 500 Hz で 90 秒: 6 回**(約 10 秒おき、実効送信時間 30 秒)。
+    CM4 が何も送らない間は無音が起きない (7 番で 12 分、6 番で 2 分) こととも整合する。
+  - **修正案** (G474 側): `stm32g4xx_it.c:364-365`(と `main.c:467-468`)の `SET_BIT` を **`ATOMIC_SET_BIT` に変える**。
+    あるいは `DMA1_Channel8_IRQn` の優先度を USART2 (1) より下げて横取り自体を防ぐ。
+    加えて `ai_comm.c` で `HAL_UART_Transmit_DMA` の戻り値を見て、`HAL_BUSY` が続いたら
+    `HAL_UART_AbortTransmit()` で復旧する防御を入れると、別経路で固まっても自己回復できる。
 
 ### ローカルカメラ情報の挿入
 
