@@ -480,6 +480,106 @@ class ForwardAiCmdV2Test(unittest.TestCase):
         self.assertEqual(len(frames), before, "不正長のデータグラムで送信してはならない")
         self.assert_passthrough(frames[-1], command)
 
+    def _run_feedback_silence_scenario(self, bridge, mode, silent_seconds, resume_feedback=True):
+        """feedback と指令を流し、feedback だけ止めて、送信されたフレーム数の推移を返す。
+
+        戻り値: (無音前の総数, 無音の前半を過ぎた時点の総数, 無音の終わりの総数, feedback 再開後の総数)
+        """
+        counter = 0
+
+        def tick(with_feedback):
+            nonlocal counter
+            counter = counter + 1 if counter < 200 else 0
+            bridge.send_command(build_command(counter, mode))
+            if with_feedback:
+                bridge.send_feedback(0.0, 0.0)
+            time.sleep(0.02)
+
+        end = time.time() + 0.4
+        while time.time() < end:
+            tick(True)
+        time.sleep(0.05)
+        before = len(bridge.frames())
+
+        silent_start = time.time()
+        mid = None
+        while time.time() - silent_start < silent_seconds:
+            tick(False)
+            if mid is None and time.time() - silent_start > silent_seconds / 2:
+                mid = len(bridge.frames())
+        time.sleep(0.05)
+        after_silence = len(bridge.frames())
+
+        if resume_feedback:
+            end = time.time() + 0.3
+            while time.time() < end:
+                tick(True)
+            time.sleep(0.05)
+        return before, mid, after_silence, len(bridge.frames())
+
+    def test_suspends_uart_tx_while_g474_feedback_is_silent(self):
+        """G474 の TX だけが死ぬ不具合への緩和。feedback が無音のあいだ UART へ送らず、再開したら即送る。
+
+        G474 は CM4 通信が途絶えたまま 6.5 秒続くと自己リセットする。crane が指令を送り続けると
+        CM4 も送り続けてしまい、その自己リセットが起きない。
+        """
+        bridge = self.start(12480, extra_args=["--g474-silence-ms", "300", "--g474-recovery-ms", "5000"])
+        before, mid, after_silence, after_resume = self._run_feedback_silence_scenario(
+            bridge, POLAR_VELOCITY_TARGET_MODE, silent_seconds=1.2)
+        self.assertGreater(before, 5, "feedback が有るあいだは送っているはず")
+        # 無音 300ms を過ぎれば止まる。無音の中盤 (0.6s) 以降は 1 本も増えない。
+        self.assertEqual(mid, after_silence, "feedback 無音中に UART 送信が続いている")
+        self.assertGreater(after_resume, after_silence, "feedback が戻ったのに送信が再開しない")
+        self.assertIn("UART 送信を停止", bridge._read_log())
+        self.assertIn("UART 送信を再開", bridge._read_log())
+
+    def test_suspends_uart_tx_in_position_control_path_too(self):
+        """mode 4 (位置制御パス、CM4 が check_counter を採番して 100Hz で送る) でも同じ。"""
+        bridge = self.start(12490, extra_args=["--g474-silence-ms", "300", "--g474-recovery-ms", "5000"])
+        before, mid, after_silence, after_resume = self._run_feedback_silence_scenario(
+            bridge, POSITION_TARGET_WITH_TERMINAL_VELOCITY_MODE, silent_seconds=1.2)
+        self.assertGreater(before, 5)
+        self.assertEqual(mid, after_silence, "mode 4 でも feedback 無音中は UART へ送らない")
+        self.assertGreater(after_resume, after_silence)
+
+    def test_g474_silence_recovery_can_be_disabled(self):
+        bridge = self.start(12500, extra_args=["--g474-silence-ms", "0"])
+        before, mid, after_silence, _ = self._run_feedback_silence_scenario(
+            bridge, POLAR_VELOCITY_TARGET_MODE, silent_seconds=1.0, resume_feedback=False)
+        self.assertGreater(after_silence, mid, "--g474-silence-ms 0 では feedback 無音でも送り続ける (従来動作)")
+        self.assertNotIn("UART 送信を停止", bridge._read_log())
+
+    def test_g474_recovery_resumes_after_timeout_and_repeats(self):
+        """G474 が復帰しない場合も、待ち時間切れで一度送信を再開して様子を見る。"""
+        bridge = self.start(12510, extra_args=["--g474-silence-ms", "200", "--g474-recovery-ms", "500"])
+        _, _, _, _ = self._run_feedback_silence_scenario(
+            bridge, POLAR_VELOCITY_TARGET_MODE, silent_seconds=1.6, resume_feedback=False)
+        log = bridge._read_log()
+        self.assertIn("時間切れ", log, "待ち時間 500ms を過ぎたら再開するはず")
+        self.assertGreaterEqual(log.count("UART 送信を停止"), 2, "無音が続くなら停止を繰り返す")
+
+    def test_startup_without_feedback_suspends_after_silence_window(self):
+        """feedback が一度も来ないまま起動した場合も、無音の起点は起動時刻。"""
+        bridge = self.start(12520, extra_args=["--g474-silence-ms", "300", "--g474-recovery-ms", "5000"])
+        counter = 0
+        deadline = time.time() + 1.0
+        while time.time() < deadline:
+            counter = counter + 1 if counter < 200 else 0
+            bridge.send_command(build_command(counter, POLAR_VELOCITY_TARGET_MODE))
+            time.sleep(0.02)
+        self.assertIn("UART 送信を停止", bridge._read_log())
+
+    def test_rejects_invalid_g474_recovery_options(self):
+        master, slave = pty.openpty()
+        try:
+            proc = subprocess.run([BIN, "--debug", "--serial-port", os.ttyname(slave), "--robot-id", "0",
+                                   "--g474-recovery-ms", "0"], capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("--g474-recovery-ms", proc.stdout + proc.stderr)
+        finally:
+            os.close(master)
+            os.close(slave)
+
     def test_exits_when_robot_id_is_out_of_range(self):
         """ID が決まらないまま 0 号機として動き出さないこと。"""
         master, slave = pty.openpty()

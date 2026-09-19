@@ -70,6 +70,18 @@ constexpr long long LOCAL_CAMERA_TIMEOUT_MS = 100;
 // 500 Hz は --tx-rate-hz 500 で opt-in する。詳細は doc/overview.md。
 constexpr int DEFAULT_TX_RATE_HZ = 100;
 
+// G474 の「送信 (フィードバック) だけが止まる」不具合への緩和。
+//
+// G474 は、CM4 からの通信が 500ms (MAIN_LOOP_CYCLE * CM4_CMD_TIMEOUT) 途絶えたまま、さらに
+// 6 秒続くと、一度でも AI 接続済みなら NVIC_SystemReset() で自己リセットする
+// (G474_Orion_main ai_comm.c commStateCheck)。crane が指令を送り続けている限り CM4 が
+// UART へ送り続けるので、TX だけが死んだ G474 はこのリセットが起きず、その試合中ずっと復帰しない。
+// そこで feedback が無音のあいだは CM4 が UART 送信を止め、G474 の自己リセットに復帰を委ねる。
+// 500ms + 6s + 起動 1.7s ≒ 8.2s なので、待ち時間の既定は余裕を見て 10 秒。
+// 0 を渡すと無効。詳細は doc/control_packet.md。
+constexpr int DEFAULT_G474_SILENCE_MS = 2000;
+constexpr int DEFAULT_G474_RECOVERY_MS = 10000;
+
 typedef struct
 {
   int16_t pos_xy[2], radius;
@@ -286,9 +298,11 @@ void printUsage()
     "  --passthrough               mode 4 でも位置制御せず素通しする (A/B 比較用)\n"
     "  --kp / --decel / --tolerance                位置制御のゲイン・許容誤差\n"
     "  --command-timeout-ms / --feedback-timeout-ms  安全停止までの無通信時間\n"
+    "  --g474-silence-ms <ms>      G474 の feedback がこの時間無音なら UART 送信を止める (既定 %d、0 で無効)\n"
+    "  --g474-recovery-ms <ms>     送信停止の最大時間。G474 が再び話し出したら即再開 (既定 %d)\n"
     "  --debug                     UART へ送らず 72 バイトを 16 進表示する\n"
     "  -h, --help                  この表示\n",
-    DEFAULT_SERIAL_PORT, orion::kDefaultConfigPort, DEFAULT_TX_RATE_HZ);
+    DEFAULT_SERIAL_PORT, orion::kDefaultConfigPort, DEFAULT_TX_RATE_HZ, DEFAULT_G474_SILENCE_MS, DEFAULT_G474_RECOVERY_MS);
 }
 
 int main(int argc, char * argv[])
@@ -347,6 +361,12 @@ int main(int argc, char * argv[])
   // --kp / --decel / --tolerance は起動時の初期値。crane が設定パケットを送ってくると
   // 稼働中に上書きされる (config_packet.h)。タイムアウト 2 つは遠隔から変えられない。
   int config_port = getIntOption(argc, argv, "--config-port", orion::kDefaultConfigPort);
+  const long long g474_silence_ms = getIntOption(argc, argv, "--g474-silence-ms", DEFAULT_G474_SILENCE_MS);
+  const long long g474_recovery_ms = getIntOption(argc, argv, "--g474-recovery-ms", DEFAULT_G474_RECOVERY_MS);
+  if (g474_silence_ms < 0 || g474_recovery_ms < 1) {
+    fprintf(stderr, "--g474-silence-ms は 0 以上 (0 で無効)、--g474-recovery-ms は 1 以上にしてください。\n");
+    return 1;
+  }
 
   // 全オプションの問い合わせが終わったここで検証する。
   if (!validateOptions(argc, argv)) return 1;
@@ -358,6 +378,7 @@ int main(int argc, char * argv[])
   printf("passthrough %d / tx rate %d Hz (%lld ms)\n", passthrough_forced, tx_rate_hz, tx_period_ms);
   printf("control kp %.2f decel %.2f tol %.3f cmd-timeout %u ms fb-timeout %u ms\n", control_config.position_gain, control_config.deceleration,
     control_config.position_tolerance, control_config.command_timeout_ms, control_config.feedback_timeout_ms);
+  printf("G474 無音からの復帰: silence %lld ms (0=無効) / recovery %lld ms\n", g474_silence_ms, g474_recovery_ms);
 
   int local_cam_sock, ai_cmd_sock, feedback_sock;
   struct sockaddr_in local_cam_addr;
@@ -446,6 +467,11 @@ int main(int argc, char * argv[])
   long long feedback_time_ms = 0;
   float feedback_pos[2] = {0.f, 0.f};
 
+  // G474 無音からの復帰。recovery_start_ms != 0 の間は UART へ送らない。
+  // silence_ref_ms は「無音の起点」で、feedback を受けるたび、また待ち時間切れで再開するたびに進める。
+  long long silence_ref_ms = get_current_time_ms();
+  long long recovery_start_ms = 0;
+
   uint64_t rx_discard_count = 0;
   uint64_t feedback_discard_count = 0;
   orion::ConfigReceiver config_receiver;
@@ -503,6 +529,28 @@ int main(int argc, char * argv[])
       }
       has_feedback = true;
       feedback_time_ms = now_ms;
+    }
+
+    // --- G474 無音からの復帰 ---
+    if (has_feedback && feedback_time_ms > silence_ref_ms) silence_ref_ms = feedback_time_ms;
+    bool suppress_tx = false;
+    if (g474_silence_ms > 0) {
+      if (recovery_start_ms == 0 && now_ms - silence_ref_ms > g474_silence_ms) {
+        recovery_start_ms = now_ms;
+        printf("G474 feedback 無音 %lld ms: UART 送信を停止して G474 の自己リセットを待つ\n", now_ms - silence_ref_ms);
+      }
+      if (recovery_start_ms != 0) {
+        if (has_feedback && feedback_time_ms > recovery_start_ms) {
+          printf("G474 feedback 復帰 (%lld ms 後): UART 送信を再開\n", now_ms - recovery_start_ms);
+          recovery_start_ms = 0;
+        } else if (now_ms - recovery_start_ms >= g474_recovery_ms) {
+          printf("G474 の復帰待ちが %lld ms で時間切れ: UART 送信を再開 (再び無音なら繰り返す)\n", g474_recovery_ms);
+          recovery_start_ms = 0;
+          silence_ref_ms = now_ms;
+        } else {
+          suppress_tx = true;
+        }
+      }
     }
 
     // --- ローカルカメラ ---
@@ -598,6 +646,8 @@ int main(int argc, char * argv[])
     } else if (pre_check_cnt != latest_cmd[CHECK_COUNTER]) {
       do_send = true;
     }
+
+    if (suppress_tx) do_send = false;  // G474 無音からの復帰中は送らない (自己リセット待ち)
 
     if (debug_mode_enabled) {
       if (do_send) {
