@@ -111,6 +111,10 @@ run_tests() {
   log "cm4_sim の結合スモークテストを実行します"
   (cd "${BRIDGE_DIR}" && python3 -m unittest test_cm4_sim)
 
+  # lancher.py が ai_cmd_v2.out に渡す追加オプション (runtime/ai_cmd_v2_options.json) の読み込み。
+  log "lancher の追加オプション読み込みの単体テストを実行します"
+  (cd "${CM4_DIR}" && python3 -m unittest test_ai_cmd_options)
+
   # ai_cmd_v2.out を --debug + pty で動かし、G474 へ送るはずの 72 バイトを検査する。
   # 実機 UART も STM32 も要らない。
   log "ai_cmd_v2 の結合スモークテストを実行します"

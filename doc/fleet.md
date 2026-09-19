@@ -127,6 +127,27 @@ uv run cm4-fleet push-config --all --target file --file .\local-note.txt --remot
 
 `--target env` は `/home/ibis/.orion_deploy/env` に配置され、`cm4/control_server.service` の `EnvironmentFile` から読み込まれます。反映には `sudo systemctl daemon-reload && sudo systemctl restart control_server.service` が必要です(次回 `cm4-fleet deploy` を実行した際にも `cm4/update.sh` が同じ再起動を行うため自動的に反映されます)。
 
+### ai_cmd_v2.out の調整オプション (機体ごと)
+
+`cm4/lancher.py` は `ai_cmd_v2.out` を固定引数で起動します。安全停止のタイムアウトなどを再ビルドなしで変えたいときは、
+機体の `~/Orion_CM4/cm4/runtime/ai_cmd_v2_options.json` を置きます(`runtime/*.json` は git 管理外なので deploy で消えません)。
+
+```json
+{"command_timeout_ms": 300, "feedback_timeout_ms": 200}
+```
+
+使えるキーは `command_timeout_ms` / `feedback_timeout_ms` / `tx_rate_hz` / `g474_silence_ms` / `g474_recovery_ms`(値はすべて整数。意味は
+`doc/control_packet.md` の各 `--...` オプションと同じ)。**未知のキー・整数でない値・壊れた JSON があるときは設定全体を無視して既定値で起動**し、
+理由を lancher のログ(`journalctl -u control_server`)に出します(一部だけ採用すると意図しない組み合わせになりうるため)。
+
+```powershell
+uv run cm4-fleet push-config --machines 7 --target file --file .\ai_cmd_v2_options.json --remote-path "Orion_CM4/cm4/runtime/ai_cmd_v2_options.json"
+```
+
+読み込みは `/start` のたびに行われるので、ファイルを置いたあと `/stop` → `/start` で反映されます(サービス再起動は不要)。
+ただしこの読み込みを行う lancher.py に更新されるのは `cm4-fleet deploy` の後です(deploy は制御サービスを再起動します)。
+ファイルを消せば既定値に戻ります。
+
 `--target file` / `--remote-path` で git 管理下のパス(`Orion_CM4/` 配下でリポジトリに追跡されているファイル)を指定しないでください。次回 `cm4-fleet deploy` の展開で上書きされ、変更が消えます。機体固有の恒久的な設定は `.orion_deploy/` 配下など git 管理外の場所に配置してください。
 
 ## ステータス確認

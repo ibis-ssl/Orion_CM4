@@ -9,6 +9,8 @@ import fcntl
 import struct
 import os
 
+from ai_cmd_options import load_ai_cmd_options
+
 app = FastAPI()
 
 def get_ip_address(ifname='wlan0'):
@@ -31,7 +33,9 @@ def start_control():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     bin_dir = os.path.join(base_dir, "bin")
     executable_path = os.path.join(bin_dir, "ai_cmd_v2.out")
-    subprocess.Popen([executable_path,"-s","1000000"])
+    # 安全停止のタイムアウト等は runtime/ai_cmd_v2_options.json で機体ごとに上書きできる (無ければ既定値)。
+    extra_args = load_ai_cmd_options(os.path.join(base_dir, "runtime"))
+    subprocess.Popen([executable_path,"-s","1000000"] + extra_args)
     
     ip = get_ip_address()
     ip_last = ip.split(".")[-1]
