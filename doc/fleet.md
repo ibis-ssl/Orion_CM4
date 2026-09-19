@@ -136,7 +136,7 @@ uv run cm4-fleet push-config --all --target file --file .\local-note.txt --remot
 {"command_timeout_ms": 300, "feedback_timeout_ms": 200}
 ```
 
-使えるキーは `command_timeout_ms` / `feedback_timeout_ms` / `tx_rate_hz` / `g474_silence_ms` / `g474_recovery_ms`(値はすべて整数。意味は
+使えるキーは `command_timeout_ms` / `feedback_timeout_ms` / `tx_rate_hz` / `g474_silence_ms` / `g474_recovery_ms` / `g474_reset_cmd`(0 か 1)(値はすべて整数。意味は
 `doc/control_packet.md` の各 `--...` オプションと同じ)。**未知のキー・整数でない値・壊れた JSON があるときは設定全体を無視して既定値で起動**し、
 理由を lancher のログ(`journalctl -u control_server`)に出します(一部だけ採用すると意図しない組み合わせになりうるため)。
 

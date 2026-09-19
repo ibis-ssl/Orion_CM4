@@ -8,11 +8,13 @@ import os
 # (typo や、安全に関わる未想定の引数を黙って通さないため)。
 # 値はすべて整数 (ms または Hz)。下限は ai_cmd_v2.out 側の検査と揃えている。
 ALLOWED_OPTIONS = {
-    "command_timeout_ms": ("--command-timeout-ms", 1),
-    "feedback_timeout_ms": ("--feedback-timeout-ms", 1),
-    "tx_rate_hz": ("--tx-rate-hz", 1),
-    "g474_silence_ms": ("--g474-silence-ms", 0),
-    "g474_recovery_ms": ("--g474-recovery-ms", 1),
+    "command_timeout_ms": ("--command-timeout-ms", 1, None),
+    "feedback_timeout_ms": ("--feedback-timeout-ms", 1, None),
+    "tx_rate_hz": ("--tx-rate-hz", 1, None),
+    "g474_silence_ms": ("--g474-silence-ms", 0, None),
+    "g474_recovery_ms": ("--g474-recovery-ms", 1, None),
+    # 無音検知時に G474 へ FWUP リセット指令 (コマンド 3) を送る。0/1 のみ (ai_cmd_v2.out も同じ範囲で検査する)。
+    "g474_reset_cmd": ("--g474-reset-cmd", 0, 1),
 }
 
 CONFIG_FILE_NAME = "ai_cmd_v2_options.json"
@@ -44,10 +46,11 @@ def load_ai_cmd_options(runtime_dir, log=print):
         if key not in ALLOWED_OPTIONS:
             log(f"{path} に未知のキー {key!r} があるため設定全体を無視します (使えるキー: {sorted(ALLOWED_OPTIONS)})")
             return []
-        option, minimum = ALLOWED_OPTIONS[key]
+        option, minimum, maximum = ALLOWED_OPTIONS[key]
         # bool は int のサブクラスなので明示的に除く (true を 1 ms と読まない)。
-        if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
-            log(f"{path} の {key}={value!r} は {minimum} 以上の整数ではないため設定全体を無視します")
+        if isinstance(value, bool) or not isinstance(value, int) or value < minimum or (maximum is not None and value > maximum):
+            bounds = f"{minimum} 以上" if maximum is None else f"{minimum} 以上 {maximum} 以下"
+            log(f"{path} の {key}={value!r} は {bounds}の整数ではないため設定全体を無視します")
             return []
         args += [option, str(value)]
     if args:

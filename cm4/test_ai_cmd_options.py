@@ -30,9 +30,16 @@ class LoadAiCmdOptionsTest(unittest.TestCase):
         self.assertEqual(self._load(), ["--command-timeout-ms", "300", "--g474-silence-ms", "0"])
 
     def test_every_allowed_key_maps_to_a_real_option(self):
-        for key, (option, minimum) in ai_cmd_options.ALLOWED_OPTIONS.items():
+        for key, (option, minimum, _maximum) in ai_cmd_options.ALLOWED_OPTIONS.items():
             self._write(json.dumps({key: minimum}))
             self.assertEqual(self._load(), [option, str(minimum)], key)
+
+    def test_reset_cmd_only_accepts_zero_or_one(self):
+        self._write(json.dumps({"g474_reset_cmd": 1}))
+        self.assertEqual(self._load(), ["--g474-reset-cmd", "1"])
+        for bad in (2, -1, True):
+            self._write(json.dumps({"g474_reset_cmd": bad}))
+            self.assertEqual(self._load(), [], repr(bad))
 
     def test_unknown_key_discards_whole_config(self):
         self._write(json.dumps({"command_timeout_ms": 300, "comand_timeout_ms": 1}))

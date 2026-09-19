@@ -82,6 +82,16 @@ constexpr int DEFAULT_TX_RATE_HZ = 100;
 constexpr int DEFAULT_G474_SILENCE_MS = 2000;
 constexpr int DEFAULT_G474_RECOVERY_MS = 10000;
 
+// --g474-reset-cmd 1: 無音を検知した時点で、G474 へ「FWUP コマンド 3 = 即 NVIC_SystemReset」の
+// 72 バイトを 1 回だけ送る (G474_Orion_main main.c: checksum が合った [0xFE,'FWUP',3,…] を受けると
+// 直ちに自己リセットする)。6 秒の自己リセット待ちが省け、復帰が約 10 秒から約 2 秒になる見込み。
+// TX が死んでも G474 の受信は生きている (7 番のデバッグ画面で確認) ので、この指令は届く。
+// 送信停止はこれまでどおり併用するので、指令が届かなくても従来の自己リセットで復帰する (追加であって置換ではない)。
+// FWUP を知らない旧ファームは、この 72 バイトを「vision 無効・速度 0」の通常指令として読み、出力は停止側に倒れる。
+// 既定は無効 (0)。コマンド 4/5 (ブートローダー要求) は絶対に作らない。
+constexpr int DEFAULT_G474_RESET_CMD = 0;
+constexpr uint8_t G474_FWUP_RESET_COMMAND = 3;
+
 typedef struct
 {
   int16_t pos_xy[2], radius;
@@ -214,6 +224,20 @@ void pritBinData(char buf[])
   printf("\n");
 }
 
+// G474 へ「即リセット」を命じる FWUP コマンド 3 のフレーム (72 バイト)。
+// checksum は G474 の calcCheckSum と同じ (最終 byte 以外の総和 & 0xFF)。
+// コマンド 3 以外は作らない (4/5 は G474 をブートローダーへ入れる書き換え動作)。
+void buildG474ResetFrame(char buf[])
+{
+  memset(buf, 0, UART_PACKET_SIZE);
+  buf[0] = 254;
+  memcpy(&buf[1], "FWUP", 4);
+  buf[5] = (char)G474_FWUP_RESET_COMMAND;
+  uint32_t sum = 0;
+  for (int i = 0; i < UART_PACKET_SIZE - 1; i++) sum += (uint8_t)buf[i];
+  buf[UART_PACKET_SIZE - 1] = (char)(sum & 0xFF);
+}
+
 void printParcedData(char buf[])
 {
   RobotCommandSerializedV2 cmd_buf;
@@ -300,9 +324,11 @@ void printUsage()
     "  --command-timeout-ms / --feedback-timeout-ms  安全停止までの無通信時間\n"
     "  --g474-silence-ms <ms>      G474 の feedback がこの時間無音なら UART 送信を止める (既定 %d、0 で無効)\n"
     "  --g474-recovery-ms <ms>     送信停止の最大時間。G474 が再び話し出したら即再開 (既定 %d)\n"
+    "  --g474-reset-cmd <0|1>      無音検知時に G474 へ FWUP リセット指令 (コマンド 3) を 1 回送る (既定 %d)\n"
     "  --debug                     UART へ送らず 72 バイトを 16 進表示する\n"
     "  -h, --help                  この表示\n",
-    DEFAULT_SERIAL_PORT, orion::kDefaultConfigPort, DEFAULT_TX_RATE_HZ, DEFAULT_G474_SILENCE_MS, DEFAULT_G474_RECOVERY_MS);
+    DEFAULT_SERIAL_PORT, orion::kDefaultConfigPort, DEFAULT_TX_RATE_HZ, DEFAULT_G474_SILENCE_MS, DEFAULT_G474_RECOVERY_MS,
+    DEFAULT_G474_RESET_CMD);
 }
 
 int main(int argc, char * argv[])
@@ -367,6 +393,11 @@ int main(int argc, char * argv[])
     fprintf(stderr, "--g474-silence-ms は 0 以上 (0 で無効)、--g474-recovery-ms は 1 以上にしてください。\n");
     return 1;
   }
+  const int g474_reset_cmd = getIntOption(argc, argv, "--g474-reset-cmd", DEFAULT_G474_RESET_CMD);
+  if (g474_reset_cmd != 0 && g474_reset_cmd != 1) {
+    fprintf(stderr, "--g474-reset-cmd は 0 か 1 にしてください (指定値 %d)。\n", g474_reset_cmd);
+    return 1;
+  }
 
   // 全オプションの問い合わせが終わったここで検証する。
   if (!validateOptions(argc, argv)) return 1;
@@ -378,7 +409,7 @@ int main(int argc, char * argv[])
   printf("passthrough %d / tx rate %d Hz (%lld ms)\n", passthrough_forced, tx_rate_hz, tx_period_ms);
   printf("control kp %.2f decel %.2f tol %.3f cmd-timeout %u ms fb-timeout %u ms\n", control_config.position_gain, control_config.deceleration,
     control_config.position_tolerance, control_config.command_timeout_ms, control_config.feedback_timeout_ms);
-  printf("G474 無音からの復帰: silence %lld ms (0=無効) / recovery %lld ms\n", g474_silence_ms, g474_recovery_ms);
+  printf("G474 無音からの復帰: silence %lld ms (0=無効) / recovery %lld ms / FWUP リセット指令 %d\n", g474_silence_ms, g474_recovery_ms, g474_reset_cmd);
 
   int local_cam_sock, ai_cmd_sock, feedback_sock;
   struct sockaddr_in local_cam_addr;
@@ -538,6 +569,17 @@ int main(int argc, char * argv[])
       if (recovery_start_ms == 0 && now_ms - silence_ref_ms > g474_silence_ms) {
         recovery_start_ms = now_ms;
         printf("G474 feedback 無音 %lld ms: UART 送信を停止して G474 の自己リセットを待つ\n", now_ms - silence_ref_ms);
+        if (g474_reset_cmd) {
+          // 受信が生きていれば約 2 秒で復帰する。届かなくても、上の送信停止で従来の自己リセットが働く。
+          char reset_frame[UART_PACKET_SIZE];
+          buildG474ResetFrame(reset_frame);
+          if (debug_mode_enabled) {
+            pritBinData(reset_frame);
+          } else {
+            serial.write_some(boost::asio::buffer(reset_frame, sizeof(reset_frame)));
+          }
+          printf("G474 へ FWUP リセット指令 (コマンド %u) を送信\n", (unsigned)G474_FWUP_RESET_COMMAND);
+        }
       }
       if (recovery_start_ms != 0) {
         if (has_feedback && feedback_time_ms > recovery_start_ms) {

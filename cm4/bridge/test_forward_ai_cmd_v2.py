@@ -558,6 +558,61 @@ class ForwardAiCmdV2Test(unittest.TestCase):
         self.assertIn("時間切れ", log, "待ち時間 500ms を過ぎたら再開するはず")
         self.assertGreaterEqual(log.count("UART 送信を停止"), 2, "無音が続くなら停止を繰り返す")
 
+    FWUP_RESET_PREFIX = [0xFE, 0x46, 0x57, 0x55, 0x50, 0x03]   # 0xFE 'FWUP' コマンド 3
+
+    def _fwup_frames(self, bridge):
+        return [f for f in bridge.frames() if f[:len(self.FWUP_RESET_PREFIX)] == self.FWUP_RESET_PREFIX]
+
+    def test_reset_cmd_sends_one_fwup_frame_when_silence_is_detected(self):
+        """--g474-reset-cmd 1: 無音検知の時点で G474 へ FWUP コマンド 3 (即リセット) を 1 回だけ送る。"""
+        bridge = self.start(12530, extra_args=["--g474-silence-ms", "300", "--g474-recovery-ms", "5000",
+                                               "--g474-reset-cmd", "1"])
+        before, mid, after_silence, _ = self._run_feedback_silence_scenario(
+            bridge, POLAR_VELOCITY_TARGET_MODE, silent_seconds=1.2)
+        fwup = self._fwup_frames(bridge)
+        self.assertEqual(len(fwup), 1, "1 回の無音につき FWUP フレームは 1 つだけ")
+        frame = fwup[0]
+        self.assertEqual(len(frame), UART_PACKET_SIZE)
+        self.assertEqual(frame[6:UART_PACKET_SIZE - 1], [0] * (UART_PACKET_SIZE - 7), "コマンド以降はゼロ")
+        self.assertEqual(frame[UART_PACKET_SIZE - 1], checksum(frame), "G474 の calcCheckSum と一致すること")
+        self.assertIn("FWUP リセット指令 (コマンド 3) を送信", bridge._read_log())
+        # 送信停止は併用する: リセット指令の 1 フレームが増えるだけで、あとは無音のあいだ増えない。
+        self.assertEqual(mid, after_silence, "リセット指令のあとも通常フレームは止めたまま (従来の自己リセットが保険)")
+
+    def test_reset_cmd_is_disabled_by_default(self):
+        bridge = self.start(12531, extra_args=["--g474-silence-ms", "300", "--g474-recovery-ms", "5000"])
+        self._run_feedback_silence_scenario(bridge, POLAR_VELOCITY_TARGET_MODE, silent_seconds=1.2)
+        self.assertEqual(self._fwup_frames(bridge), [], "既定では FWUP フレームを送らない")
+        self.assertNotIn("FWUP リセット指令 (コマンド 3) を送信", bridge._read_log())
+
+    def test_reset_cmd_works_in_position_control_path_too(self):
+        bridge = self.start(12532, extra_args=["--g474-silence-ms", "300", "--g474-recovery-ms", "5000",
+                                               "--g474-reset-cmd", "1"])
+        self._run_feedback_silence_scenario(
+            bridge, POSITION_TARGET_WITH_TERMINAL_VELOCITY_MODE, silent_seconds=1.2)
+        self.assertEqual(len(self._fwup_frames(bridge)), 1)
+
+    def test_reset_cmd_is_sent_once_per_silence_episode(self):
+        """待ち時間切れで再開して再び無音になったら、その回にも 1 回だけ送る (リセットの連打はしない)。"""
+        bridge = self.start(12533, extra_args=["--g474-silence-ms", "200", "--g474-recovery-ms", "500",
+                                               "--g474-reset-cmd", "1"])
+        self._run_feedback_silence_scenario(
+            bridge, POLAR_VELOCITY_TARGET_MODE, silent_seconds=1.6, resume_feedback=False)
+        episodes = bridge._read_log().count("UART 送信を停止")
+        self.assertGreaterEqual(episodes, 2)
+        self.assertEqual(len(self._fwup_frames(bridge)), episodes)
+
+    def test_rejects_invalid_g474_reset_cmd_option(self):
+        master, slave = pty.openpty()
+        try:
+            proc = subprocess.run([BIN, "--debug", "--serial-port", os.ttyname(slave), "--robot-id", "0",
+                                   "--g474-reset-cmd", "2"], capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("--g474-reset-cmd", proc.stdout + proc.stderr)
+        finally:
+            os.close(master)
+            os.close(slave)
+
     def test_startup_without_feedback_suspends_after_silence_window(self):
         """feedback が一度も来ないまま起動した場合も、無音の起点は起動時刻。"""
         bridge = self.start(12520, extra_args=["--g474-silence-ms", "300", "--g474-recovery-ms", "5000"])
