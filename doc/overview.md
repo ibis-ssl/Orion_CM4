@@ -1,5 +1,23 @@
 # overview
 
+## CM4_108内部mode 3連続送信の稼働（2026-09-20）
+
+- `feature/cm4_debug_tools` の診断ツールと `cm4/run_mode3_debug.sh` を108へ配置。
+  `control_server.service`を停止し、一時unit `orion-mode3-debug.service` で稼働する。
+  localhost:12445へ50 Hzのmode 3停止指令を生成し、既存mainのブリッジが
+  `/dev/serial0`・1 MbpsでSTM32へ送る。通常のcrane入力12345は使わない。
+- 速度・キック・ドリブルはゼロ、STOP_EMERGENCY付き。カメラ・feedback転送は起動しない。
+  通常運用の負荷条件とは異なる。1時間ごとに送信器を更新してCSVを保存するため、
+  その境界には短い送信中断がある。CSVは `cm4/runtime/mode3-debug/run-*/capture/`。
+  SIGTERMでも保存し、ブリッジ異常時には送信器も終了させる。
+- `sudo systemctl stop orion-mode3-debug.service`で診断停止。
+  続いて `sudo systemctl start control_server.service` で通常APIを復帰できる。
+  通常アプリの起動は別途Runまたは/startが必要。一時unitは再起動後に自動起動しない。
+- 108上で停止・CSV保存・再起動を確認。694入力の間隔は18.704〜21.305 ms、
+  p99=20.050 ms。これは送信器のUDP入力時刻でありUART線上時刻ではない。
+  実機時計は2026-08-29を表示していた。周期計測はmonotonic clockを使用している。
+  本文書はPC側のみに保存し、実機には転送しない。
+
 ## CM4_108のmain反映（2026-09-20）
 
 - main `d7a2e07c47cf09c6d359e391f1cf2828f4fe7f5a` の `cm4/` を108へ反映。

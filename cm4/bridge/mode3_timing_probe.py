@@ -6,6 +6,7 @@ import csv
 import os
 from pathlib import Path
 import select
+import signal
 import socket
 import struct
 import subprocess
@@ -44,6 +45,10 @@ def intervals(label, stamps):
 
 
 def main():
+    def stop_signal(_signum, _frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, stop_signal)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--robot-id', type=int, default=8)
     parser.add_argument('--rate-hz', type=float, default=50)
@@ -141,6 +146,8 @@ def main():
         if proc is not None and proc.poll() is not None:
             errors.append('測定中にブリッジが終了')
         print(f'skipped_deadlines={skipped}; target=127.0.0.1:{args.port}')
+    except KeyboardInterrupt:
+        print('停止要求を受信: 測定CSVを保存します')
     finally:
         stop.set()
         if worker:
