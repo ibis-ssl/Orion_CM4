@@ -76,13 +76,15 @@ def build_packet(robot_id, command):
 
 
 # --- 位置制御の設定パケット (config_packet.h) ---
-# crane が位置制御ゲインを稼働中に変更するための 20 バイト。指令パケットとは
+# crane が位置制御ゲイン (PID) を稼働中に変更するための 28 バイト。指令パケットとは
 # 別ポートで、2 バイト固定小数ではなく素の float32 little endian を使う。
-CONFIG_PACKET_SIZE = 20
-CONFIG_PACKET_VERSION = 1
+# 旧フォーマット (20 バイト・version 1) は受理されない。crane と CM4 のどちらかが
+# 古ければ設定パケットは全数拒否され、CM4 のログに拒否理由が出続ける。
+CONFIG_PACKET_SIZE = 28
+CONFIG_PACKET_VERSION = 2
 CONFIG_BROADCAST_ID = 0xFF
-CONFIG_PACKET_FORMAT = "<4sBBHfff"
+CONFIG_PACKET_FORMAT = "<4sBBHfffff"
 
 
-def build_config_packet(kp, decel, tolerance, robot_id=CONFIG_BROADCAST_ID):
-    return struct.pack(CONFIG_PACKET_FORMAT, b"OC4C", CONFIG_PACKET_VERSION, robot_id, 0, kp, decel, tolerance)
+def build_config_packet(kp, decel, tolerance, robot_id=CONFIG_BROADCAST_ID, ki=0.0, kd=0.0):
+    return struct.pack(CONFIG_PACKET_FORMAT, b"OC4C", CONFIG_PACKET_VERSION, robot_id, 0, kp, decel, tolerance, ki, kd)

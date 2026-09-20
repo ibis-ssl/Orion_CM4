@@ -377,6 +377,11 @@ struct RobotState
   bool has_feedback = false;
   uint64_t feedback_time_ms = 0;
 
+  // 位置制御の積分・微分の状態。ロボットごとに 1 つ持つ。
+  // 共有制御器の翻訳単位に static で置いてはならない (最大 11 台を 1 プロセスで
+  // 回すので、置いた瞬間に全機の積分が 1 つの器に混ざる)。
+  orion::PositionControllerState control_state;
+
   // 最後に表示した停止理由。共有制御器が reason を返すのは、実機と sim の
   // どちらでも「なぜ止まっているか」を言えるようにするため。実機側
   // (forward_ai_cmd_v2.cpp) と同じく、変わった周期にだけ 1 行出す。
@@ -663,6 +668,7 @@ int main(int argc, char * argv[])
         // 担当外・未受信は robot_id を範囲外にしてコマンドをゼロ埋め。
         // simulator-cli は robot_id >= 11 と「64 バイト全ゼロ」の二重で弾く。
         out_slot[0] = kEmptySlotRobotId;
+        orion::resetPositionControllerState(&st.control_state);
         continue;
       }
 
@@ -680,6 +686,9 @@ int main(int argc, char * argv[])
         const bool stale = orion::isCommandStale(st.has_command, st.command_time_ms, now_ms, opt.control);
         out_slot[0] = static_cast<uint8_t>(slot);
         buildPassthroughSlot(out_slot + 1, st, stale, opt.vision_echo_feedback);
+        // 素通し中は制御器が呼ばれないので、ここで状態を捨てる。残したまま mode 4 へ
+        // 戻ると、素通しだった間の古い積分と古い位置が 1 周期目に効いてしまう。
+        orion::resetPositionControllerState(&st.control_state);
         continue;
       }
 
@@ -693,7 +702,7 @@ int main(int argc, char * argv[])
       in.feedback_time_ms = st.feedback_time_ms;
       in.now_ms = now_ms;
 
-      const orion::PositionControllerOutput out = computePositionControl(in, opt.control);
+      const orion::PositionControllerOutput out = computePositionControl(in, opt.control, &st.control_state);
 
       // 共有制御器が reason を返すのは両バイナリがログに出すため。実機側と同じく
       // 「変わった周期だけ」出す (毎周期出すと 1 kHz でログが埋まる)。

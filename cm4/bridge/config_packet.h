@@ -1,23 +1,9 @@
 // このファイルは crane から位置制御の調整値を稼働中に変更するための
-// 設定パケット (UDP 20 バイト) の形式・検証・適用を定義する責務を持つ。
+// 設定パケット (UDP 28 バイト) の形式・検証・適用を定義する責務を持つ。
 //
-// 【715 バイトの指令パケットに相乗りさせない理由】
-// 64 バイトのコマンドレイアウトは crane / G474 / framework / CM4 の 4 者一致が
-// 不変条件で、robot_packet_layout_test.cpp が全オフセットを static_assert で
-// 固定している。しかも crane は使用スロットの byte 28..31 / 38..63 をゼロ初期化
-// しておらず「予約領域＝0」が成り立たない。別ポートの小さなデータグラムにすれば
-// G474 と framework の変更が一切要らず、レイアウト検査の前提も動かない。
-//
-// 【変更できるのが 3 つだけである理由】
-// ここに載るのは追従性能の調整ノブだけである。command_timeout_ms /
-// feedback_timeout_ms は安全停止の閾値、vision_age_limit_ms は G474 の定数と
-// 一致させるための値 (position_controller.h の該当コメント) で、いずれも
-// 現地から遠隔で動かせるようにしてはならない。
-//
-// 【実機と sim が同じ経路を通ること】
-// 受信・検証・適用・ログを drainConfigSocket() に閉じ込め、実機の
-// forward_ai_cmd_v2.cpp とシミュレータの cm4_sim.cpp の両方がそれを呼ぶ。
-// 片方だけ検証が緩むと、sim で確かめたゲインが実機では黙って拒否される。
+// 追従性能の調整パラメータ (kp, ki, kd, deceleration, position_tolerance) のみを載せ、
+// 安全停止のタイムアウト等の閾値は含めない。実機 (forward_ai_cmd_v2.cpp) と
+// シミュレータ (cm4_sim.cpp) の双方が本ヘッダを介してパケットを受信する。
 
 #ifndef ORION_CM4__BRIDGE__CONFIG_PACKET_H_
 #define ORION_CM4__BRIDGE__CONFIG_PACKET_H_
@@ -38,22 +24,19 @@
 namespace orion
 {
 
-// 20 バイト固定。crane 側の送信実装と揃えること (doc/control_packet.md)。
+// 28 バイト固定。crane 側の送信実装と揃えること (doc/control_packet.md)。
 //
 //   0..3   magic 'O','C','4','C'
-//   4      version (= 1)
+//   4      version (= 2)
 //   5      robot_id (0xFF = 全機宛)
 //   6..7   予約 (0)
 //   8..11  position_gain       float32 little endian
 //   12..15 deceleration        float32 little endian
 //   16..19 position_tolerance  float32 little endian
-//
-// 指令パケットのような 2 バイト固定小数ではなく素の float32 にしてある。
-// 毎周期 11 台ぶんを運ぶわけではないので圧縮する理由が無く、量子化を挟むと
-// crane の表示値と CM4 の実効値が微妙に食い違う。エンディアンは CM4 も開発 PC も
-// little endian なので変換しない (AGENTS.md: 可搬性は考慮しない)。
-constexpr size_t kConfigPacketSize = 20;
-constexpr uint8_t kConfigPacketVersion = 1;
+//   20..23 integral_gain       float32 little endian
+//   24..27 derivative_gain     float32 little endian
+constexpr size_t kConfigPacketSize = 28;
+constexpr uint8_t kConfigPacketVersion = 2;
 constexpr uint8_t kConfigPacketBroadcastId = 0xFF;
 constexpr int kDefaultConfigPort = 12350;
 
@@ -63,6 +46,11 @@ constexpr int kDefaultConfigPort = 12350;
 constexpr float kConfigPositionGainMax = 20.0f;
 constexpr float kConfigDecelerationMax = 20.0f;      // [m/s^2]
 constexpr float kConfigPositionToleranceMax = 1.0f;  // [m]
+// 積分ゲイン [1/s^2]。P ゲインと同じ桁まで許す。
+constexpr float kConfigIntegralGainMax = 20.0f;
+// 微分ゲイン [無次元]。実測速度にそのまま掛かるので 1.0 を超えると
+// 「自分の速度以上に打ち消す」ことになり発振側へ倒れる。余裕を見て 5.0 まで。
+constexpr float kConfigDerivativeGainMax = 5.0f;
 
 enum class ConfigPacketStatus {
   Applied,
@@ -106,7 +94,7 @@ inline bool configIsForMe(uint8_t dst_id, const int * robot_ids, size_t robot_co
   return false;
 }
 
-// 成功したときだけ config の 3 フィールドを書き換える。失敗時は config を触らない。
+// 成功したときだけ config の調整値を書き換える。失敗時は config を触らない。
 inline ConfigPacketStatus decodeConfigPacket(
   const uint8_t * buf, size_t len, const int * robot_ids, size_t robot_count, PositionControllerConfig * config)
 {
@@ -118,14 +106,19 @@ inline ConfigPacketStatus decodeConfigPacket(
   const float position_gain = readFloatLe(&buf[8]);
   const float deceleration = readFloatLe(&buf[12]);
   const float position_tolerance = readFloatLe(&buf[16]);
+  const float integral_gain = readFloatLe(&buf[20]);
+  const float derivative_gain = readFloatLe(&buf[24]);
   if (!configValueInRange(position_gain, kConfigPositionGainMax) || !configValueInRange(deceleration, kConfigDecelerationMax) ||
-    !configValueInRange(position_tolerance, kConfigPositionToleranceMax)) {
+    !configValueInRange(position_tolerance, kConfigPositionToleranceMax) || !configValueInRange(integral_gain, kConfigIntegralGainMax) ||
+    !configValueInRange(derivative_gain, kConfigDerivativeGainMax)) {
     return ConfigPacketStatus::OutOfRange;
   }
 
   config->position_gain = position_gain;
   config->deceleration = deceleration;
   config->position_tolerance = position_tolerance;
+  config->integral_gain = integral_gain;
+  config->derivative_gain = derivative_gain;
   return ConfigPacketStatus::Applied;
 }
 
@@ -134,7 +127,8 @@ inline ConfigPacketStatus decodeConfigPacket(
 // 落ちたのかが分からなくなる。
 inline bool sameConfigTunables(const PositionControllerConfig & a, const PositionControllerConfig & b)
 {
-  return a.position_gain == b.position_gain && a.deceleration == b.deceleration && a.position_tolerance == b.position_tolerance;
+  return a.position_gain == b.position_gain && a.integral_gain == b.integral_gain && a.derivative_gain == b.derivative_gain &&
+    a.deceleration == b.deceleration && a.position_tolerance == b.position_tolerance;
 }
 
 struct ConfigReceiver
@@ -201,9 +195,12 @@ inline void drainConfigSocket(int sock, const int * robot_ids, size_t robot_coun
     state->applied_count++;
     if (!sameConfigTunables(candidate, *config)) {
       printf(
-        "位置制御の設定を更新: kp %.3f -> %.3f / decel %.3f -> %.3f / tol %.4f -> %.4f\n", static_cast<double>(config->position_gain),
-        static_cast<double>(candidate.position_gain), static_cast<double>(config->deceleration), static_cast<double>(candidate.deceleration),
-        static_cast<double>(config->position_tolerance), static_cast<double>(candidate.position_tolerance));
+        "位置制御の設定を更新: kp %.3f -> %.3f / ki %.3f -> %.3f / kd %.3f -> %.3f / decel %.3f -> %.3f / tol %.4f -> %.4f\n",
+        static_cast<double>(config->position_gain), static_cast<double>(candidate.position_gain), static_cast<double>(config->integral_gain),
+        static_cast<double>(candidate.integral_gain), static_cast<double>(config->derivative_gain),
+        static_cast<double>(candidate.derivative_gain), static_cast<double>(config->deceleration),
+        static_cast<double>(candidate.deceleration), static_cast<double>(config->position_tolerance),
+        static_cast<double>(candidate.position_tolerance));
     }
     *config = candidate;
     // 次に拒否が起きたら 1 行出す。

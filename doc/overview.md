@@ -300,14 +300,30 @@ CM4 の位置制御は `cm4_sim.out` が担当し、**実機と同一のソー�
 ### 位置制御ゲインは crane から実行中に変えられる
 
 ゲインの正本は CM4 の `position_controller` だが、現地で詰めるために crane が
-**UDP 12350 へ 20 バイトの設定パケットを broadcast** して稼働中に上書きできる。
+**UDP 12350 へ 28 バイトの設定パケットを broadcast** して稼働中に上書きできる。
 再起動は要らない。`ai_cmd_v2.out` と `cm4_sim.out` は同じ `config_packet.h` を
 通るので、sim で確かめた値は実機でも同じ扱いになる。
 
-変えられるのは `position_gain` / `deceleration` / `position_tolerance` の 3 つだけで、
-安全停止のタイムアウトと `vision_age_limit_ms` は遠隔から動かせない。範囲外の値は
+変えられるのは `position_gain`(kp) / `integral_gain`(ki) / `derivative_gain`(kd) /
+`deceleration` / `position_tolerance` の 5 つだけで、安全停止のタイムアウト・
+`vision_age_limit_ms`・`integral_velocity_limit` は遠隔から動かせない。範囲外の値は
 クランプせずデータグラムごと捨てる。形式と範囲は
 [制御パケット](control_packet.md#位置制御設定パケットudp-12350)を参照。
+
+**後方互換は無い。** 旧フォーマット（20 バイト・version 1）は `WrongSize` で拒否する。
+crane と CM4 は同時に配ること。片方だけ古い機体は停止せず既定ゲイン（kp = 2.0）のまま
+走り続け、現地では「なんとなく追従が悪い」としか見えない（CM4 のログには拒否理由が出る）。
+
+## 位置制御の PID 化
+
+`position_controller` の制御則を P から **PID** に拡張した。
+
+- **既定値は `ki = kd = 0`**: 従来の P 制御へ縮退する。
+- **設定パケット (UDP 12350) の v2 拡張**: 28 バイトに拡張され、稼働中に `kp`, `ki`, `kd`, `deceleration`, `position_tolerance` を変更可能。旧 v1 (20 バイト) は拒否される。
+- **状態の所有**: 積分・微分の状態 (`PositionControllerState`) は呼び出し側がロボットごとに所有する（`cm4_sim` で全機の積分が混ざるのを防止）。
+- **feedback 更新時のみ計算**: 微積分は零次ホールドの feedback 更新時のみ行い、微分先行形（`-kd * 実測速度`）で目標キックを防止する。
+- **アンチワインドアップ**: 速度上限（制動エンベロープ含む）に飽和している間は積分を停止し、I 項の速度上限 (`integral_velocity_limit = 0.5`) でクランプする。
+- **状態のリセット**: 安全停止時や非制御時（素通しモード等）は状態をリセットする（`AtTarget` 到達時は定常偏差解消のため積分を保持）。
 
 ### `check_counter` の採番者が CM4 に移った
 
