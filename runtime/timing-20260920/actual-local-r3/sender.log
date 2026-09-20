@@ -1,0 +1,2 @@
+skipped_deadlines=0; target=127.0.0.1:12345
+UDP send: samples=667 interval_ms min=13.887 p50=14.999 p95=15.016 p99=15.034 max=16.114

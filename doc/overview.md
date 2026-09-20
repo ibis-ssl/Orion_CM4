@@ -1,5 +1,85 @@
 # overview
 
+## PC→CM4→G474 実機タイミング調査結果（2026-09-20）
+
+詳細は [timing_investigation_20260920.md](timing_investigation_20260920.md)。PC有線キャプチャ、CM4 kernel/recv/write、COM56、STM32記録SRAMを同時評価した。
+mode3の集中はCM4 kernel到着時点で既に存在し、broadcastで再現、108 unicastとlocalhostでは本試験で解消。
+最終代表値のSTM32受信間隔p50/p99/maxはbroadcast=1.157/97.263/198.403 ms、unicast=15.225/16.377/17.150 ms。
+CM4 kernel→読出しp99約1.1 ms、読出し→write p99 0.014～0.040 ms、STM32受信→採用p99約2 msで、約100 msの原因はブリッジ内ではない。
+mode4のSTOP試験では入力集中があってもUART約100 Hzを維持した。走行時制御まで保証する結果ではない。
+COMデバッグログに文字欠落があったため最終評価には計測終了後のST-Link HOTPLUG SRAM読出しも併用。制御UARTエラーは最終全条件0。
+試験送信停止、control_server.service active、通常アプリ再開、HTTP running=trueを確認済み。
+CM4本番バイナリは未変更、G474は診断追加build1789867492をSlot Aに配置。変更前Flashバックアップと全ログはPCのruntime/timing-20260920に保存した。
+
+## PC→CM4→G474 同時計測の当初計画（2026-09-20、実施結果は上記）
+
+- 目的は約102.4 ms周期のバーストが最初に現れる処理境界を特定すること。journal表示時刻やPCのCOM受信時刻は物理到着時刻とは区別する。
+- PCの送信器候補は `Documents/GUI_Qt/Qt Communication Tester/Qt_Communication_Tester`。ソースは15 msタイマー、宛先192.168.20.255:12345固定、送信ごとにQUdpSocketを生成・bind・closeする。稼働exeとの一致は未確認。bind/sendの戻り値、GUIイベント配送の遅れも測る。既存挙動の測定前にソケット寿命やタイマーを修正しない。
+- G474 repoは `C:/Users/hiroyuki/STM32CubeIDE/workspace_1.17.0/G474_Orion_main`。通常USART2受信はIRQ→cm4_uart_rx_byte→HAL_UART_RxCpltCallbackで72 byte組立・チェックサム・cmd_v2_buf更新まで実行する。2 KBリングからmain loopで解析する経路はFW gateway用であり、通常指令とは区別する。
+- G474 USART2は1 Mbps、COM56/LPUART1は2 Mbps・8N1、TIM7制御は500 Hz。通常デバッグ表示は設定60 Hzの状態snapshot。Dtはcounter変化からの経過時間、Ltcyは指令値、AI_CMDのHz欄は未実装とのコメントがあり、いずれもフレームごとの実受信間隔として扱わない。UART RAWのbyte/rxirq/frame/valid/PE/FE/NE/OREを補助指標にする。
+- 同一run内でPCのdeadline/send前後/戻り値、CM4のkernel到着/recv直後/UART write前後・実書込byte数、G474のフレーム完了/checksum/制御採用時刻を採取する。mode3予約領域のTPRB＋32bit連番で対応付ける（既存probeの38..45 byte）。既存送信器の初回測定はcounter・payloadで暫定照合し、連番導入は別条件とする。
+- CM4は本体受信ソケットにrecvmsgとkernel timestampを追加する案を優先し、受信全件と最新値採用・間引きを分けて記録する。udp_rx_monitor.pyは単独受信専用で、通常ai_cmd_v2と同じポートへ並行bindしない。ソケットの競合やパケット分配を避ける。
+- G474に追加する場合はフレーム完了時の単調増加時刻・連番を固定長リングに保存し、main側からCOM56へ排出する。IRQ内printfは禁止。診断リングのoverflow、ログ欠落、時計wrap、計測有効/無効による負荷差を記録する。必要ならRX byte/IRQ時刻の短時間traceを追加し、IRQサービス時刻を線上到着時刻と断定しない。
+- 試験は各30秒×3回を基本に、(A)既存送信器・元の宛先、(B)宛先のみ108ユニキャスト、(C)計測用PC送信器・同一周期ユニキャスト、(D)CM4 localhost・同一周期、の順。power_save off、カメラ/feedback/ログ条件を揃える。通常負荷の有無や省電力on/offは別の一変数比較とし、mode4はmode3の境界特定後に評価する。
+- 周期分布p50/p95/p99/max、短間隔(<3ms)と長間隔(>30ms)の組合せ、連番欠落・重複・間引き、約102.4ms周期の持続を比較する。PCとCM4とSTM32の時計を直接減算しない。同一装置内遅延と連番対応した間隔を主指標にし、装置間絶対遅延には別途時計同期・誤差評価が必要。
+- 全試験は対象ID8のみ、STOP設定・速度/キック/ドリブルゼロ、送信器1個を前提とする。物理的な安全状態を確認する。監視開始→送信→送信停止→残ログ回収の順にし、試験終了後は診断プロセスを停止、元のサービス状態を復元してhost-launcherのstatus/start/stopを確認する。
+- ST-Linkは必要時だけ使用し、対象シリアル・搭載build・active slot・復元用イメージを確認してからアプリ領域を更新する。bootloader/metadataを無計画に上書きしない。計測中のhalt/resetは禁止。既存flash.ps1のConnectOnlyもresetするため非侵襲確認には使わない。
+- この計画と結果資料はPC側に保存する。CM4へドキュメントは配置しない。計画作成時点では送信試験・FW変更は未実施だった。実施後の結果・条件変更は上記の調査報告を参照。
+
+## CM4_108入出力遅延評価・制御API復帰（2026-09-20）
+
+- host-launcherからOfflineになった原因は内部診断で停止したcontrol_server.serviceが
+  inactiveのままだったこと。サービスを起動し、PCのhost.lib.cm4_control_clientで
+  Stopped→POST start(200)→Running→POST stop(200)→Stoppedを確認。終了時はAPI active、アプリ停止。
+- localhostから停止状態mode 3を50 Hz送信。通常カメラ・feedback転送は停止した条件。
+  疑似UART試験750件: UDP send直前→PTY readはp50=0.650、p95=1.159、p99=1.221、
+  max=2.021 ms。送信器・受信器のスケジューリングも含み、純粋なブリッジ時間ではない。
+- 実UART試験500件: strace -ttt -Tでrecvfrom(715 byte)終了→write(72 byte)開始を
+  診断連番で対応付け、p50=0.544、p99=0.625、max=0.661 ms。
+  write呼出し所要時間p50=0.059、p99=0.068、max=0.073 ms。
+  write開始間隔18.846〜21.110 ms、p99=20.939 ms。追いつきバーストは観測していない。
+  straceによる計測負荷を含み、recvfrom以前のソケット待ち時間とUART線上完了は含まない。
+  UART線上時間は72 byte・1 Mbps・8N1で0.720 msだが、本試験では実測していない。
+- 生データは108の `/tmp/orion-latency-pty-20260920/` と
+  `/tmp/orion-latency-uart-20260920/` に保存。後者はtrace.log/latency.csv/sender/を含む。
+  実機時計がずれているため暦時刻は参照しない。PTY評価は同一機monotonic時刻を使用。
+  WindowsからのWi-Fi入力や通常アプリ負荷における遅延の保証ではない。
+
+## UDP受信タイミングの単独監視（2026-09-20）
+
+`cm4/bridge/udp_rx_monitor.py`をCM4_108に配置済み。Windows側の既存送信器から
+108のUDP 12345へ送信し、CM4のSSH端末で次を実行する。
+
+```bash
+cd /home/ibis/Orion_CM4
+python3 cm4/bridge/udp_rx_monitor.py --port 12345 --robot-id 8
+# 60秒測定してCSV保存。保存先は未作成のファイルを指定。
+python3 cm4/bridge/udp_rx_monitor.py --port 12345 --robot-id 8 --duration 60 --csv /tmp/udp-rx-108.csv
+```
+
+- UARTは開かず、STM32へ転送しない。同じポートのai_cmd_v2は事前に停止する。
+  SO_REUSEPORTは使わず、競合時は終了。Ctrl+CまたはSIGTERMで最終集計とCSVを保存。
+- SO_TIMESTAMPNS_NEW + recvmsgでカーネル受信時刻、直後にアプリ時刻を取得。
+  kernel/appの間隔は有効な自機指令について送信元IP別に計算し、分布は合算する。
+  送信元portが毎回変わるWindows送信器を考慮し、既定は `--stream-key ip`。
+  同じIPの複数送信器を分離したい場合は `--stream-key peer` でIP/port別にする。
+  rx pkt/sは空スロット・不正パケットを含む全データグラム数。
+  batch_maxは一度の読み切りで受信した全件数。読み切りは100ms/4096件で打ち切る。
+- 通常は1秒集計。kernel gap>=30msまたはread delay>=5msの詳細は1秒に3件まで。
+  `--gap-ms` / `--delay-ms`で変更可能。duplicate_counterは同一送信元でのcounter重複で、
+  欠落数ではない。SO_RXQ_OVFLはソケットドロップのみで、無線損失は含まない。
+- kernel時刻とread delayにはrealtime、app間隔にはmonotonicを使用する。
+  realtime-monotonicの差が1ms超変化したサンプルと直前比較を除外する。
+  時計変更時に既にキューへ溜まっていたパケットの区間も分析対象から除外すること。
+  ソフトウェアタイムスタンプなので、無線の物理到着時刻ではない。
+- CSVは終了時に保存し、既定10万件を超えると古い記録から破棄。
+  `--max-records`で調整でき、csv_evictedに破棄数を表示する。
+  分布も各表示区間の最新max-records件に制限し、cumulativeカウンタは全期間。
+- 単独CLIの読み出し遅延はai_cmd_v2の読み出し遅延そのものではない。
+  カーネル到着が正常なら、次にブリッジ内部の受信計測へ進む。
+- 108で実ソケットの受信・timestamp・CSV・ポート競合・異常分類テストを通過。
+  文書はPC側にのみ保存する。
+
 ## CM4_108内部mode 3連続送信の稼働（2026-09-20）
 
 - `feature/cm4_debug_tools` の診断ツールと `cm4/run_mode3_debug.sh` を108へ配置。

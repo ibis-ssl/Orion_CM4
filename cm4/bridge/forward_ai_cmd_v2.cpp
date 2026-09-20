@@ -26,6 +26,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -69,6 +70,82 @@ constexpr long long LOCAL_CAMERA_TIMEOUT_MS = 100;
 // とどまり、かつ crane 断から 10ms 以内に停止指令を G474 へ届けられる。
 // 500 Hz は --tx-rate-hz 500 で opt-in する。詳細は doc/overview.md。
 constexpr int DEFAULT_TX_RATE_HZ = 100;
+
+// This optional diagnostic trace is bounded so it cannot grow memory indefinitely.
+constexpr size_t TIMING_TRACE_MAX_RECORDS = 100000;
+
+#ifndef SO_RXQ_OVFL
+#define SO_RXQ_OVFL 40
+#endif
+
+struct TimingTraceRecord
+{
+  const char * event;
+  uint32_t sequence;
+  uint8_t counter;
+  bool has_sequence;
+  bool valid_self;
+  bool adopted;
+  int64_t realtime_ns;
+  int64_t kernel_ns;
+  int64_t monotonic_ns;
+  int64_t write_end_ns;
+  size_t written;
+  uint32_t socket_drop_total;
+};
+
+struct TimingTrace
+{
+  FILE * file = nullptr;
+  std::vector<TimingTraceRecord> records;
+  int64_t deadline_ns = 0;
+  uint64_t record_overflow = 0;
+  uint32_t socket_drop_total = 0;
+  bool enabled = false;
+};
+
+volatile sig_atomic_t g_stop_requested = 0;
+
+void requestStop(int) { g_stop_requested = 1; }
+
+int64_t clockNs(clockid_t id)
+{
+  timespec ts = {};
+  clock_gettime(id, &ts);
+  return (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+}
+
+void appendTimingRecord(TimingTrace * trace, const TimingTraceRecord & record)
+{
+  if (!trace->enabled) return;
+  if (trace->records.size() < TIMING_TRACE_MAX_RECORDS) {
+    trace->records.push_back(record);
+  } else {
+    trace->record_overflow++;
+  }
+}
+
+void finishTimingTrace(TimingTrace * trace)
+{
+  if (!trace->enabled) return;
+  fprintf(trace->file,
+    "event,sequence,counter,valid_self,adopted,realtime_ns,kernel_ns,monotonic_ns,write_end_ns,written,socket_drop_total,trace_record_overflow\n");
+  for (const TimingTraceRecord & r : trace->records) {
+    fprintf(trace->file, "%s,", r.event);
+    if (r.has_sequence) fprintf(trace->file, "%u", r.sequence);
+    fprintf(trace->file, ",%u,%d,%d,%lld,%lld,%lld,%lld,%zu,%u,%llu\n",
+      r.counter, r.valid_self, r.adopted, (long long)r.realtime_ns,
+      (long long)r.kernel_ns, (long long)r.monotonic_ns,
+      (long long)r.write_end_ns, r.written, r.socket_drop_total,
+      (unsigned long long)trace->record_overflow);
+  }
+  const bool failed = fflush(trace->file) != 0;
+  if (fclose(trace->file) != 0 || failed) perror("timing trace write");
+  trace->file = nullptr;
+  trace->enabled = false;
+  printf("timing trace: %zu records, %llu records omitted\n", trace->records.size(),
+    (unsigned long long)trace->record_overflow);
+}
 
 typedef struct
 {
@@ -283,6 +360,8 @@ void printUsage()
     "  --feedback-port <port>      G474 feedback の loopback 受信ポート (既定 50000+100+id)\n"
     "  --config-port <port>        crane からの位置制御設定パケット受信ポート (既定 %d)\n"
     "  --tx-rate-hz <hz>           位置制御パスの UART 送信レート (既定 %d)\n"
+    "  --timing-trace <path>       UDP/UART timing CSV (新規ファイルのみ)\n"
+    "  --timing-seconds <seconds>  timing trace 記録時間 (既定 30 秒)\n"
     "  --passthrough               mode 4 でも位置制御せず素通しする (A/B 比較用)\n"
     "  --kp / --decel / --tolerance                位置制御のゲイン・許容誤差\n"
     "  --command-timeout-ms / --feedback-timeout-ms  安全停止までの無通信時間\n"
@@ -315,8 +394,14 @@ int main(int argc, char * argv[])
   bool debug_mode_enabled = isDebugMode(argc, argv);
   bool passthrough_forced = hasFlag(argc, argv, "--passthrough");
   int tx_rate_hz = getIntOption(argc, argv, "--tx-rate-hz", DEFAULT_TX_RATE_HZ);
+  const char * timing_trace_path = getStringOption(argc, argv, "--timing-trace", nullptr);
+  int timing_seconds = getIntOption(argc, argv, "--timing-seconds", 30);
   if (tx_rate_hz <= 0) {
     fprintf(stderr, "--tx-rate-hz は 1 以上にしてください (指定値 %d)\n", tx_rate_hz);
+    return 1;
+  }
+  if (timing_trace_path && timing_seconds <= 0) {
+    fprintf(stderr, "--timing-seconds は 1 以上にしてください\n");
     return 1;
   }
   const long long tx_period_ms = (1000 + tx_rate_hz - 1) / tx_rate_hz;
@@ -359,6 +444,27 @@ int main(int argc, char * argv[])
   printf("control kp %.2f decel %.2f tol %.3f cmd-timeout %u ms fb-timeout %u ms\n", control_config.position_gain, control_config.deceleration,
     control_config.position_tolerance, control_config.command_timeout_ms, control_config.feedback_timeout_ms);
 
+  TimingTrace timing_trace;
+  if (timing_trace_path) {
+    const int trace_fd = open(timing_trace_path, O_WRONLY | O_CREAT | O_EXCL, 0644);
+    if (trace_fd < 0) {
+      perror("open(--timing-trace)");
+      return 1;
+    }
+    timing_trace.file = fdopen(trace_fd, "w");
+    if (!timing_trace.file) {
+      perror("fdopen(--timing-trace)");
+      close(trace_fd);
+      return 1;
+    }
+    timing_trace.records.reserve(TIMING_TRACE_MAX_RECORDS);
+    timing_trace.enabled = true;
+    signal(SIGINT, requestStop);
+    signal(SIGTERM, requestStop);
+    printf("timing trace %s / %d seconds / max %zu records\n", timing_trace_path,
+      timing_seconds, TIMING_TRACE_MAX_RECORDS);
+  }
+
   int local_cam_sock, ai_cmd_sock, feedback_sock;
   struct sockaddr_in local_cam_addr;
   struct sockaddr_in ai_cmd_addr;
@@ -399,6 +505,18 @@ int main(int argc, char * argv[])
   if (bind(ai_cmd_sock, (struct sockaddr *)&ai_cmd_addr, sizeof(ai_cmd_addr)) != 0) {
     perror("bind(ai_cmd_sock)");
     return 1;
+  }
+
+  if (timing_trace.enabled) {
+    int timestamp_enabled = 1;
+    if (setsockopt(ai_cmd_sock, SOL_SOCKET, SO_TIMESTAMPNS, &timestamp_enabled,
+          sizeof(timestamp_enabled)) != 0 ||
+      setsockopt(ai_cmd_sock, SOL_SOCKET, SO_RXQ_OVFL, &timestamp_enabled,
+          sizeof(timestamp_enabled)) != 0) {
+      perror("setsockopt(timing trace)");
+      finishTimingTrace(&timing_trace);
+      return 1;
+    }
   }
 
   // INADDR_ANY ではなく 127.0.0.1 に bind する。
@@ -456,7 +574,18 @@ int main(int argc, char * argv[])
   // 必ず最新値と一致してしまい、表示条件として使うと位置制御パスがほぼ無言になる。
   int last_logged_check_cnt = -1;
 
-  while (1) {
+  int64_t latest_rx_kernel_ns = 0;
+  uint32_t latest_rx_sequence = 0;
+  bool latest_rx_has_sequence = false;
+  if (timing_trace.enabled) {
+    timing_trace.deadline_ns = clockNs(CLOCK_MONOTONIC) +
+      (int64_t)timing_seconds * 1000000000LL;
+  }
+
+  while (!g_stop_requested) {
+    if (timing_trace.enabled && clockNs(CLOCK_MONOTONIC) >= timing_trace.deadline_ns) {
+      finishTimingTrace(&timing_trace);
+    }
     const long long now_ms = get_current_time_ms();
 
     // --- crane からの位置制御設定 (20 バイト) ---
@@ -468,13 +597,56 @@ int main(int argc, char * argv[])
     // --- crane からの 715 バイト ---
     // 715 バイト以外は捨てる。旧実装は recv の戻り値を見ておらず、短いパケットや
     // 受信失敗 (-1) でも前回バッファのまま回り続けていた。
+    size_t last_trace_adopt_index = SIZE_MAX;
     while (1) {
       // MSG_TRUNC を付けるとデータグラムの実長が返る。付けないと 716 バイトが
       // 715 バイトに切り詰められて「正常な全ゼロパケット」に化ける。
-      const int cmd_n = recv(ai_cmd_sock, ai_cmd_buf, sizeof(ai_cmd_buf), MSG_TRUNC);
+      iovec iov = {};
+      char control[CMSG_SPACE(sizeof(timespec)) + CMSG_SPACE(sizeof(uint32_t))] = {};
+      msghdr message = {};
+      int cmd_n;
+      if (timing_trace.enabled) {
+        iov.iov_base = ai_cmd_buf;
+        iov.iov_len = sizeof(ai_cmd_buf);
+        message.msg_iov = &iov;
+        message.msg_iovlen = 1;
+        message.msg_control = control;
+        message.msg_controllen = sizeof(control);
+        cmd_n = recvmsg(ai_cmd_sock, &message, MSG_TRUNC);
+      } else {
+        // Preserve the normal path exactly when tracing is not requested.
+        cmd_n = recv(ai_cmd_sock, ai_cmd_buf, sizeof(ai_cmd_buf), MSG_TRUNC);
+      }
+      // The first userspace timestamp is taken immediately after recvmsg returns.
+      const int64_t rx_monotonic_ns = timing_trace.enabled ? clockNs(CLOCK_MONOTONIC) : 0;
       if (cmd_n < 0) break;  // EAGAIN: 受信キューが空
+      const int64_t rx_realtime_ns = timing_trace.enabled ? clockNs(CLOCK_REALTIME) : 0;
+      int64_t rx_kernel_ns = 0;
+      if (timing_trace.enabled) {
+        for (cmsghdr * cmsg = CMSG_FIRSTHDR(&message); cmsg;
+             cmsg = CMSG_NXTHDR(&message, cmsg)) {
+          if (cmsg->cmsg_level != SOL_SOCKET) continue;
+          if (cmsg->cmsg_type == SO_TIMESTAMPNS &&
+            cmsg->cmsg_len >= CMSG_LEN(sizeof(timespec))) {
+            timespec stamp = {};
+            memcpy(&stamp, CMSG_DATA(cmsg), sizeof(stamp));
+            rx_kernel_ns = (int64_t)stamp.tv_sec * 1000000000LL + stamp.tv_nsec;
+          } else if (cmsg->cmsg_type == SO_RXQ_OVFL &&
+            cmsg->cmsg_len >= CMSG_LEN(sizeof(uint32_t))) {
+            memcpy(&timing_trace.socket_drop_total, CMSG_DATA(cmsg), sizeof(uint32_t));
+          }
+        }
+        if (message.msg_flags & MSG_CTRUNC) rx_kernel_ns = 0;
+      }
+      bool trace_valid_self = false;
+      bool trace_has_sequence = false;
+      uint32_t trace_sequence = 0;
+      uint8_t trace_counter = 0;
       if (cmd_n != AI_CMD_V2_PACKET_SIZE) {
         rx_discard_count++;
+        appendTimingRecord(&timing_trace, {"rx", 0, 0, false, false, false,
+          rx_realtime_ns, rx_kernel_ns, rx_monotonic_ns, 0, 0,
+          timing_trace.socket_drop_total});
         continue;
       }
       for (int i = 0; i < AI_CMD_V2_ROBOT_NUM; i++) {
@@ -485,12 +657,37 @@ int main(int argc, char * argv[])
         // (robot_command_ops.h)。全ゼロを採用してしまうと、位置制御では
         // target_global_pos が (-32.767, -32.767) として復号される。
         if (commandSlotIsEmpty((const uint8_t *)&ai_cmd_buf[offset + 1])) continue;
+        if (timing_trace.enabled) {
+          const uint8_t * command = (const uint8_t *)&ai_cmd_buf[offset + 1];
+          trace_valid_self = true;
+          trace_counter = command[CHECK_COUNTER];
+          trace_has_sequence = memcmp(command + 38, "TPRB", 4) == 0;
+          if (trace_has_sequence) memcpy(&trace_sequence, command + 42, sizeof(trace_sequence));
+        }
         // コマンドは 64 バイト。旧実装は sizeof(uart_tx_buf) = 72 バイト読んでおり、
         // i == 10 で ai_cmd_buf[651..722] の 8 バイト境界外読み出しになっていた。
         memcpy(latest_cmd, &ai_cmd_buf[offset + 1], AI_CMD_V2_SIZE);
         has_command = true;
         command_time_ms = now_ms;
+        if (timing_trace.enabled) {
+          latest_rx_kernel_ns = rx_kernel_ns;
+          latest_rx_sequence = trace_sequence;
+          latest_rx_has_sequence = trace_has_sequence;
+        }
       }
+      if (trace_valid_self) last_trace_adopt_index = SIZE_MAX;
+      const size_t trace_record_index = timing_trace.records.size();
+      appendTimingRecord(&timing_trace,
+        {"rx", trace_sequence, trace_counter, trace_has_sequence, trace_valid_self,
+          false, rx_realtime_ns, rx_kernel_ns, rx_monotonic_ns, 0, 0,
+          timing_trace.socket_drop_total});
+      if (trace_valid_self && timing_trace.records.size() > trace_record_index) {
+        last_trace_adopt_index = trace_record_index;
+      }
+    }
+    // Only the newest valid command surviving this drain is adopted by the control loop.
+    if (last_trace_adopt_index != SIZE_MAX) {
+      timing_trace.records[last_trace_adopt_index].adopted = true;
     }
 
     // --- G474 feedback (robot_feedback.out からの loopback unicast) ---
@@ -605,7 +802,15 @@ int main(int argc, char * argv[])
         last_tx_time_ms = now_ms;
       }
     } else if (do_send) {
-      serial.write_some(boost::asio::buffer(uart_tx_buf, sizeof(uart_tx_buf)));
+      const int64_t write_realtime_ns = timing_trace.enabled ? clockNs(CLOCK_REALTIME) : 0;
+      const int64_t write_begin_ns = timing_trace.enabled ? clockNs(CLOCK_MONOTONIC) : 0;
+      const size_t written = serial.write_some(boost::asio::buffer(uart_tx_buf, sizeof(uart_tx_buf)));
+      const int64_t write_end_ns = timing_trace.enabled ? clockNs(CLOCK_MONOTONIC) : 0;
+      appendTimingRecord(&timing_trace,
+        {"tx", latest_rx_sequence, (uint8_t)uart_tx_buf[CHECK_COUNTER],
+          latest_rx_has_sequence, true, true, write_realtime_ns,
+          latest_rx_kernel_ns, write_begin_ns, write_end_ns, written,
+          timing_trace.socket_drop_total});
       // printより先にserial送信
       last_tx_time_ms = now_ms;
 
@@ -638,6 +843,8 @@ int main(int argc, char * argv[])
     /* 1kHz */
     usleep(1000);
   }
+
+  finishTimingTrace(&timing_trace);
 
   close(config_sock);
   close(local_cam_sock);

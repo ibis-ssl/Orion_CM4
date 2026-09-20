@@ -1,0 +1,30 @@
+      -------------------------------------------------------------------
+                       STM32CubeProgrammer v2.22.0                  
+      -------------------------------------------------------------------
+
+ST-LINK SN  : 003300343033510735393935
+ST-LINK FW  : V3J17M11
+Board       : STLINK-V3MINIE
+Voltage     : 3.28V
+SWD freq    : 8000 KHz
+Connect mode: Hot Plug
+Reset mode  : Software reset
+Device ID   : 0x469
+Revision ID : Rev X
+Device name : STM32G47x/G48x/G414
+NVM size  : 512 KBytes
+Device type : MCU
+Device CPU  : Cortex-M4
+BL Version  : 0xD5
+Debug in Low Power mode enabled
+
+
+UPLOADING ...
+  File          : C:\Users\hiroyuki\Documents\Orion_CM4\runtime\timing-20260920\verified-mode4-broadcast\stm32_sram.bin
+  Size          : 36120 Bytes
+  Address:      : 0x2000174C
+Read progress:
+北北北北北北北北北北北北北北北北北北北北北北北北北 0%圹圹圹圹圹圹圹圹圹圹圹圹圹圹圹圹圹圹圹圹圹圹圹圹圹 100%
+
+Data read successfully
+Time elapsed during read operation is: 00:00:00.090

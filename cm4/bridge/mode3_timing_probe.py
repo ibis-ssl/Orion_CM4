@@ -13,8 +13,12 @@ import subprocess
 import threading
 import time
 
-from packet_codec import (CMD_SIZE, CHECK_COUNTER, FLAGS, CONTROL_MODE,
-                          MODE_POLAR_VELOCITY, STOP_EMERGENCY_BIT, build_packet)
+try:
+    from .packet_codec import (CMD_SIZE, CHECK_COUNTER, FLAGS, CONTROL_MODE,
+                               MODE_POLAR_VELOCITY, STOP_EMERGENCY_BIT, build_packet)
+except ImportError:  # CM4 上でファイルを直接実行する場合
+    from packet_codec import (CMD_SIZE, CHECK_COUNTER, FLAGS, CONTROL_MODE,
+                              MODE_POLAR_VELOCITY, STOP_EMERGENCY_BIT, build_packet)
 
 
 def command(sequence):
