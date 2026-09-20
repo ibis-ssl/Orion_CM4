@@ -180,7 +180,7 @@ CM4 では**上流（位置制御器）の解釈が先に勝ちます**。`linea
 
 位置制御ゲインの正本は CM4 の `position_controller` ですが、現地で詰めるには
 crane 側から変えられる必要があります。715 バイトの指令パケットとは**別ポートの
-20 バイトのデータグラム**で運びます。相乗りさせないのは、64 バイトのレイアウトが
+28 バイトのデータグラム**で運びます。相乗りさせないのは、64 バイトのレイアウトが
 crane / G474 / framework / CM4 の 4 者一致を不変条件にしており、しかも crane が
 使用スロットの byte 28..31 / 38..63 をゼロ初期化していないためです。別ポートなら
 G474 と framework は一切変わりません。
@@ -190,15 +190,33 @@ G474 と framework は一切変わりません。
 | byte | 内容 |
 |---|---|
 | 0..3 | magic `'O' 'C' '4' 'C'` |
-| 4 | version（現在 `1`） |
+| 4 | version（`2`） |
 | 5 | robot_id（`0xFF` = 全機宛） |
 | 6..7 | 予約（0） |
-| 8..11 | `position_gain` float32 little endian |
+| 8..11 | `position_gain`（kp） float32 little endian |
 | 12..15 | `deceleration` float32 little endian |
 | 16..19 | `position_tolerance` float32 little endian |
+| 20..23 | `integral_gain`（ki） float32 little endian |
+| 24..27 | `derivative_gain`（kd） float32 little endian |
 
 2 バイト固定小数ではなく素の float32 です。毎周期 11 台ぶんを運ぶわけではないので
 圧縮する理由が無く、量子化を挟むと crane の表示値と CM4 の実効値が食い違います。
+
+### 旧フォーマット（20 バイト・version 1）は受理しません
+
+**後方互換はありません。** サイズもバージョンも完全一致でしか受けないので、
+crane と CM4 のどちらかが古ければ設定パケットは `WrongSize` として全数拒否され、
+CM4 のログに拒否理由が出続けます。
+
+中途半端に受理すると「kp だけ効いて ki / kd が効いていない機体」が黙って混ざり、
+現地では「なんとなく追従が悪い」以外の症状が出ません。拒否して騒ぐほうが追えます。
+
+> [!IMPORTANT]
+> **crane と CM4 は同時に配ること。**
+> 片方だけ更新した機体は停止せず、**既定ゲイン（kp = 2.0）のまま走り続けます**。
+> `cm4_sim` を使う場合は Docker イメージ（`ghcr.io/ibis-ssl/orion-cm4-sim`）の
+> タグ固定も合わせて更新してください（crane 側 `docker/dev/docker-compose.yaml` と
+> `docker/scenario/docker-compose.yaml` の `CM4_SIM_TAG`）。
 
 受信側は次の範囲を検査し、外れていれば**クランプせずデータグラムごと捨てて**
 拒否理由をログに出します。黙ってクランプすると crane 側の表示と実機の実効値が
@@ -206,18 +224,26 @@ G474 と framework は一切変わりません。
 
 | フィールド | 範囲 |
 |---|---|
-| `position_gain` | `0 <= v <= 20` |
+| `position_gain`（kp） | `0 <= v <= 20` [1/s] |
+| `integral_gain`（ki） | `0 <= v <= 20` [1/s²] |
+| `derivative_gain`（kd） | `0 <= v <= 5` [無次元] |
 | `deceleration` | `0 <= v <= 20` [m/s²] |
 | `position_tolerance` | `0 <= v <= 1.0` [m] |
+
+検査は**データグラム単位**です。ki だけが範囲外でも kp を含めて 1 つも適用しません。
+一部だけ適用すると crane の表示と実機の実効値が食い違います。
 
 - 受信ポートは実機 `ai_cmd_v2.out` もシミュレータ `cm4_sim.out` も `--config-port`（既定 12350）。
   受信・検証・適用・ログは同じ `config_packet.h` を通るので、sim で確かめた値は実機でも同じ扱いになります。
 - 設定が途絶しても最後の値を保持します。ゲインは安全信号ではないので、
   届かないことを理由に既定値へ戻すとかえって挙動が飛びます。
 - crane は同じ値を定期送信して構いません。値が変わったときだけログに出ます。
-- **変更できるのはこの 3 つだけです。** `command_timeout_ms` / `feedback_timeout_ms` は
+- **変更できるのはこの 5 つだけです。** `command_timeout_ms` / `feedback_timeout_ms` は
   安全停止の閾値、`vision_age_limit_ms` は G474 の定数と一致させるための値なので、
   遠隔から動かせるようにしていません（`cm4/control/position_controller.h`）。
+  `integral_velocity_limit`（I 項が単独で出せる速度の上限）も同じ理由で載せていません。
+  あれは「効き」ではなくワインドアップの暴走幅の上限で、遠隔で緩められるようにすると
+  ki を上げすぎたときの逃げ場が無くなります。追従を強めたいときは ki を上げてください。
 - `cm4_sim` は 11 台を 1 プロセスで代行するので、設定はプロセス全体へ適用されます。
   台ごとに別ゲインを試すときは `--robot-ids` と `--config-port` を分けて起動します。
 

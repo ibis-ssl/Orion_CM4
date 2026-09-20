@@ -449,6 +449,8 @@ int main(int argc, char * argv[])
   uint64_t rx_discard_count = 0;
   uint64_t feedback_discard_count = 0;
   orion::ConfigReceiver config_receiver;
+  // 位置制御の積分・微分の状態。実機は 1 プロセス 1 台なのでここに 1 つ持つ。
+  orion::PositionControllerState control_state;
   orion::PositionControllerReason pre_reason = orion::PositionControllerReason::FeedbackStale;
   bool pre_ff_rejected = false;
   // 「最後に表示したときの crane 由来 check_counter」。pre_check_cnt とは別に持つ。
@@ -542,7 +544,7 @@ int main(int argc, char * argv[])
       in.feedback_time_ms = (uint64_t)feedback_time_ms;
       in.now_ms = (uint64_t)now_ms;
 
-      control_out = computePositionControl(in, control_config);
+      control_out = computePositionControl(in, control_config, &control_state);
 
       // check_counter は CM4 が採番する。G474 の checkConnect2AI() は
       // 「変化していること」だけを見るので、毎送信で変えなければならない。
@@ -562,6 +564,10 @@ int main(int argc, char * argv[])
       // G474 は vision 融合に使うので、CM4 が feedback 位置を書き戻すと自己帰還になる。
       // （cm4_sim は simulator-cli の 0.5m 照合ゲートを通すため書き換えるが、
       //   実機ではその照合が無いので書き換えない。doc/overview.md に記載）
+    } else {
+      // 素通し (mode 3) や passthrough 強制の間は制御器が呼ばれない。状態を残すと、
+      // mode 4 へ戻った 1 周期目に素通しだった間の古い積分と古い位置が効く。
+      orion::resetPositionControllerState(&control_state);
     }
 
     const bool has_recent_camera = last_cam_time > 0 && (now_ms - last_cam_time) <= LOCAL_CAMERA_TIMEOUT_MS;

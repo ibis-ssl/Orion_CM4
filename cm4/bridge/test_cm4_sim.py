@@ -181,8 +181,9 @@ class Cm4Sim:
     def send_command(self, packet):
         self.tx.sendto(packet, ("127.0.0.1", self.in_port))
 
-    def send_config(self, kp, decel, tolerance, robot_id=0xFF):
-        self.tx.sendto(build_config_packet(kp, decel, tolerance, robot_id), ("127.0.0.1", self.config_port))
+    def send_config(self, kp, decel, tolerance, robot_id=0xFF, ki=0.0, kd=0.0):
+        self.tx.sendto(build_config_packet(kp, decel, tolerance, robot_id, ki, kd), ("127.0.0.1", self.config_port))
+
 
     def send_feedback(self, robot_id, counter, x, y):
         self.tx.sendto(build_feedback(robot_id, counter, x, y),
@@ -380,6 +381,35 @@ class Cm4SimSmokeTest(unittest.TestCase):
                                    msg="担当外 ID 宛の設定は無視すること")
         finally:
             sim.close()
+
+    def test_legacy_config_packet_is_rejected(self):
+        """旧フォーマット (20 バイト・version 1) は受理しないこと。
+
+        中途半端に受理すると「kp だけ効いて ki/kd が効いていない機体」が黙って
+        混ざる。拒否してログに出すほうが現地で追える。
+        """
+        sim = Cm4Sim(robot_ids="0")
+        try:
+            legacy = struct.pack("<4sBBHfff", b"OC4C", 1, 0xFF, 0, 4.0, 3.0, 0.01)
+            sim.tx.sendto(legacy, ("127.0.0.1", sim.config_port))
+            time.sleep(0.05)
+            self.assertAlmostEqual(self._steady_state_speed(sim), 0.2, delta=5e-3,
+                                   msg="旧フォーマットは適用されず既定ゲインのままであること")
+        finally:
+            sim.close()
+            self.assertIn("WrongSize", sim.output)
+
+    def test_out_of_range_pid_gain_is_rejected(self):
+        """範囲外の ki/kd もクランプせずデータグラムごと捨てること。"""
+        sim = Cm4Sim(robot_ids="0")
+        try:
+            sim.send_config(kp=4.0, decel=3.0, tolerance=0.01, ki=1000.0)
+            time.sleep(0.05)
+            self.assertAlmostEqual(self._steady_state_speed(sim), 0.2, delta=5e-3,
+                                   msg="ki が範囲外なら kp も含めて適用しないこと")
+        finally:
+            sim.close()
+            self.assertIn("OutOfRange", sim.output)
 
     def test_out_of_range_config_is_rejected(self):
         """範囲外のゲインはクランプせずデータグラムごと捨てること。

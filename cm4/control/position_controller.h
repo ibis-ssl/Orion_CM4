@@ -9,12 +9,8 @@
 // シミュレータ用に第二の制御経路を書く羽目になり、この設計が防ごうとしている
 // 重複そのものが再発する。
 //
-// 制御則の参照実装は crane の
-//   crane/crane_sender/src/sim_position_controller.cpp calculateSimGlobalVelocity()
-// で、既定ゲインもそこに合わせてある (position_gain = 2.0, deceleration = 3.0)。
-// crane 版は crane_msgs に依存しているのでそのままは使えず、ここで再実装している。
-// 同一入力で同一出力になることは cm4/control/test_position_controller.cpp が
-// crane 側の単体テストと同じ数値ケースで固定している。
+// 制御則は PID である。既定ゲインは position_gain = 2.0, deceleration = 3.0。
+// 既定値 (ki = kd = 0) では従来の P 制御へ縮退する。
 
 #ifndef ORION_CM4__CONTROL__POSITION_CONTROLLER_H_
 #define ORION_CM4__CONTROL__POSITION_CONTROLLER_H_
@@ -28,6 +24,12 @@ struct PositionControllerConfig
 {
   // crane の position_control.kp と一致させること (crane.launch.xml)
   float position_gain = 2.0f;
+  // 積分ゲイン [1/s^2]。既定 0 (P制御)。
+  float integral_gain = 0.0f;
+  // 微分ゲイン [無次元] (微分先行形)。既定 0 (P制御)。
+  float derivative_gain = 0.0f;
+  // I 項単独の速度上限 [m/s]
+  float integral_velocity_limit = 0.5f;
   // crane の position_control.deceleration と一致させること [m/s^2]
   float deceleration = 3.0f;
   // 目標位置の許容誤差 [m]。crane では PositionTargetMode.position_tolerance として
@@ -107,12 +109,23 @@ enum class PositionControllerReason {
 // 復号される。encode が 0.0 を 0x7FFF へ写すので、memset でゼロ埋めしたフィールドは
 // 最大級の負値になる。座標としても速度としても物理的にありえない大きさなので、
 // これを「未設定」のシグネチャとして扱う。
-//
-// 実測（framework セッション、実チェーン）: crane 役が terminal_velocity_x/y を
-// 書き忘れただけで feedforward が (-32.767, -32.767) になり、位置制御がそれに支配されて
-// ロボットが目標と無関係な方向へ場外まで走った。終端速度スカラも -32.767（負）なので
-// 「スカラ > 0 のときだけクランプ」の規則に入らずクランプもされない。
 constexpr float kImplausibleMagnitude = 32.0f;
+
+// 微分先行形で使う実測速度の 1 次ローパス時定数 [s]。
+constexpr float kDerivativeFilterTimeConstantS = 0.02f;
+
+// 積分・微分の状態。呼び出し側がロボットごとに所有する。
+struct PositionControllerState
+{
+  float integral[2] = {0.f, 0.f};
+  float measured_velocity[2] = {0.f, 0.f};
+  float last_pos[2] = {0.f, 0.f};
+  uint64_t last_feedback_time_ms = 0;
+  bool has_last_feedback = false;
+};
+
+// 状態をリセットする。
+void resetPositionControllerState(PositionControllerState * state);
 
 struct PositionControllerOutput
 {
@@ -126,16 +139,11 @@ struct PositionControllerOutput
 };
 
 // crane からのパケットが途絶したか。
-//
-// mode 3 の素通し経路もこの述語を使うこと。素通し側で同じ式を書き直すと、
-// 判定に境界変更やヒステリシスが入ったときに片方だけ据え置かれ、A/B 比較の
-// 独立変数が「位置ループをどこで閉じるか」以外にも増えてしまう。
-// 内部で単調時刻の差分を取るので、時刻の巻き戻りによる unsigned underflow も
-// ここで潰れる (生の引き算を書くとアンダーフローで巨大値になる)。
 bool isCommandStale(bool has_command, uint64_t command_time_ms, uint64_t now_ms, const PositionControllerConfig & config);
 
-// 位置指令から速度指令を計算する。状態を持たない純関数なので決定論的。
-PositionControllerOutput computePositionControl(const PositionControllerInput & input, const PositionControllerConfig & config);
+// 位置指令から速度指令を計算する。
+PositionControllerOutput computePositionControl(
+  const PositionControllerInput & input, const PositionControllerConfig & config, PositionControllerState * state);
 
 // 理由のログ用文字列。
 const char * toString(PositionControllerReason reason);
