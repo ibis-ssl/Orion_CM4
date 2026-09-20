@@ -1,5 +1,69 @@
 # overview
 
+## CM4_108のmain反映（2026-09-20）
+
+- main `d7a2e07c47cf09c6d359e391f1cf2828f4fe7f5a` の `cm4/` を108へ反映。
+  ドキュメント・host側ファイル・PCの未コミット変更は転送していない。
+- 隔離ディレクトリでbuild.shのビルド・テストを完了し、生成したバイナリを配置。
+  配布ソースのcmpとai_cmd_v2.outのSHA-256一致、制御API応答を確認した。
+- カメラソース・specはmainと一致しており、既存カメラバイナリを保持。
+  runtime設定とGit管理情報は保持しているため、実機のgit HEADは配布版を示さない。
+  部分更新の記録は `/home/ibis/.orion_deploy/cm4_main_version.json` を参照。
+- 更新前cm4一式は `/home/ibis/.orion_deploy/main-d7a2e07-stage/before-cm4.tar.gz`、
+  サービス定義は同ディレクトリの `before-control_server.service` に退避した。
+
+## CM4内部mode 3周期診断（2026-09-20）
+
+`cm4/bridge/mode3_timing_probe.py` はlocalhostへ715 byteのmode 3指令を
+定期送信する。速度・キック・ドリブルはゼロ、STOP_EMERGENCYを常時設定する。
+予約領域38..45に診断マーカーと連番を載せる。通常指令送信元とは同時使用しない。
+時刻はmonotonic ns、絶対deadline方式とし、遅延時は期限を飛ばして連打を防ぐ。
+送信時刻は終了後にsend.csvへ保存する。Python/Linuxのスケジューリング遅延は
+残るため、入力の周期精度も必ずCSVで確認する。
+
+```bash
+# 独立したブリッジを疑似UARTで起動。本番ポート・実UARTは使わない。
+python3 cm4/bridge/mode3_timing_probe.py --pty --robot-id 8 --rate-hz 50 --seconds 30 --output /tmp/mode3-pty-run1
+
+# 実UARTの切り分け: 別端末で診断専用ポートのブリッジを起動。
+# 通常ブリッジを停止済みであること。本コマンドはSTM32へ停止指令を送る。
+./cm4/bin/ai_cmd_v2.out --robot-id 8 --ai-cmd-port 12445 --local-cam-port 12446 --feedback-port 12447 --config-port 12448
+# もう一方の端末でlocalhost送信。終了後、上記ブリッジもCtrl+Cで停止する。
+python3 cm4/bridge/mode3_timing_probe.py --robot-id 8 --port 12445 --rate-hz 50 --seconds 30 --output /tmp/mode3-uart-run1
+```
+
+`--pty`では通常のUART書き込み経路を通り、受信側の時刻をpty.csvへ記録する。
+同じreadで受けた複数フレームには同じ時刻が付くため、これは線上送信時刻ではない。
+疑似UARTで集中がなくても実UARTドライバ・STM32側は未検証である。
+実UARTではロジックアナライザのフレーム開始間隔とSTM32のIRQ/parser時刻を
+send.csvと照合する。`--debug`はUART送信を止めるため本診断には使わない。
+出力先は毎回新規ディレクトリを指定する。PTY時のbridge.logは通常ログを保存する。
+
+## CM4_107手動更新後の再確認（2026-09-16）
+
+- ユーザーによる旧FWからの手動更新後、107のFWVR応答と全基板の識別情報取得が成功した。以下の前回記録の107更新不可は解消した。
+- CM4経由でSub 9.868秒、BLDC CAN1 9.628秒/CAN2 9.420秒、Power 12.254秒で更新成功。各更新間は5秒待機。PowerでUART再送が1回発生したが自動回復した。
+- Main Slot B用の既存成果物が古かったため、現在のソースからA/Bを再ビルドし、B 9.688秒、A 10.016秒で更新成功。最終active A。
+- 最終照合は全6エントリ`SAME`。Main A/B build ID=`1789569865`、CRC32C A=`43EE803A`/B=`3626D013`、Sub=`12E9586C`、左右BLDC=`A0BDF386`、Power build ID=`1789569751`/CRC32C=`9172D70B`。制御サービスを復帰した。走行試験は未実施。
+
+## CM4_105・107・108更新可否確認（2026-09-16）
+
+- 3台ともネットワーク・SSH・制御API接続可能。107/108にはホスト公開鍵を追加した。UART排他のため制御サービスを止め、`/tmp/orion_fw_check`へ配置した更新ツールで確認した。
+- 105はSub 10.373秒、BLDC CAN1 12.203秒/CAN2 9.350秒、Power 11.353秒、Main B 9.980秒で再更新成功。最終active B。
+- 108は旧FWから更新成功。Power転送間隔修正版のMain Bを先行更新（9.900秒）、Sub 9.826秒、BLDC CAN1 9.859秒/CAN2 9.349秒、Power 11.304秒、Main A 9.920秒。最終active A。
+- 105/108ともSub直後のBLDC ENTERでCAN timeoutが一度発生した。再実行し、その後の各更新間に5秒待機を入れると完了した。起動待ちとの関連は未確定。両機とも最終6エントリが`SAME`で、Main build ID `1789484648`、CRC32C A=`AEC55D28`/B=`DB0D0D01`、Sub=`12E9586C`、左右BLDC=`A0BDF386`、Power=`A07D08B0`を確認した。
+- 107は`/dev/serial0 -> ttyS0`、1 Mbaudで3秒間に47,617 byteの通常データを受信したが、FWVR照会とMain bootloader INFO（5回試行）はtimeout。FWVRを1 byte/10 msで送っても応答なし。書込みBEGINには到達せずFlash未更新。搭載MainのOTA対応状況、bootloader導入状態、CM4→Main送信経路の追加確認が必要であり、原因は断定していない。
+- 終了時は全3台の制御サービスを復帰。走行試験は実施していない。107/108のsudoにはhostname `ibis`の名前解決警告があるが、サービス操作は成功した。
+
+## CM4_105更新実機記録（2026-09-16）
+
+- `192.168.20.105`へ現行CM4コードを配布し、ブリッジ再ビルド・systemd更新・制御API復帰を確認した。カメラバイナリは通常deployの仕様どおり再ビルドしていない。
+- Windowsの`core.autocrlf=true`で`git archive`にCRLFのシェルスクリプトが入って更新が失敗したため、配布時のみ`git -c core.autocrlf=false archive`とする修正を加えた。修正版の実機deployは成功（配布snapshot `ceb4ef073af5`）。
+- Subは9.871秒、BLDC node 16は9.850秒、node 17は9.358秒で個別更新した。左右同時更新はENTERでCAN timeoutとなったため個別更新へ切り替えた。原因は未確定。
+- Powerは安全停止確認後、3584 byte地点で`node=3`（欠落・順序異常）が繰り返され、通常再送では復旧しなかった。Mainの`Core/Src/fw_update_gateway.c`へPower対象時のみ8 CAN frameごとに1 ms待つ処理を追加し、Main Slot Bを先行更新後、Powerを13.244秒で復旧した（UART再送あり）。その後Main Slot Aも更新した。
+- ゲートウェイが失敗後に残る場合、OFW2 sequenceを連続させた`MSG_REBOOT`でPowerとMainを再起動できる。未確定Powerはbootloaderに留まる。sequence error応答でもMainのlast_sequenceは受信sequenceへ進むため、別プロセスの同期回復では同一プロセスから次sequenceを送る必要がある。
+- 最終照合は全6エントリが`SAME`。Main A/B build ID=`1789484648`、CRC32C A=`AEC55D28`/B=`DB0D0D01`、Sub=`12E9586C`、左右BLDC=`A0BDF386`、Power=`A07D08B0`。Main active slotはA。`control_server.service`をactiveへ復帰し、制御APIはStopped（走行停止）を確認した。走行試験は実施していない。
+
 ## MCUファームウェア更新
 
 - CM4→Main→CANノードの高速・同時更新仕様は `doc/firmware_update_protocol.md` にまとめる。
