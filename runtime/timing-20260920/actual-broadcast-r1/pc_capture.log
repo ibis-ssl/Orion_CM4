@@ -1,4 +1,0 @@
-Capturing on 'イーサネット 2'
-File: C:\Users\hiroyuki\Documents\Orion_CM4\runtime\timing-20260920\actual-broadcast-r1\pc.pcapng
-Packets: 1 Packets: 7 Packets: 24 Packets: 41 Packets: 58 Packets: 75 Packets: 92 Packets: 110 Packets: 127 Packets: 144 Packets: 160 Packets: 177 Packets: 195 Packets: 212 Packets: 229 Packets: 246 Packets: 263 Packets: 280 Packets: 297 Packets: 314 Packets: 331 Packets: 349 Packets: 366 Packets: 383 Packets: 400 Packets: 417 Packets: 434 Packets: 451 Packets: 468 Packets: 485 Packets: 502 Packets: 519 Packets: 536 Packets: 553 Packets: 570 Packets: 588 Packets: 605 Packets: 622 Packets: 639 Packets: 656 Packets: 667 Packets captured: 667
-Packets received/dropped on interface 'イーサネット 2': 667/0 (pcap:0/dumpcap:0/flushed:0/ps_ifdrop:0) (100.0%)

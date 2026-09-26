@@ -1,4 +1,0 @@
-Capturing on 'イーサネット 2'
-File: C:\Users\hiroyuki\Documents\Orion_CM4\runtime\timing-20260920\actual-mode4-unicast\pc.pcapng
-Packets: 1 Packets: 12 Packets: 29 Packets: 46 Packets: 63 Packets: 81 Packets: 98 Packets: 115 Packets: 132 Packets: 149 Packets: 166 Packets: 183 Packets: 201 Packets: 218 Packets: 235 Packets: 252 Packets: 270 Packets: 287 Packets: 304 Packets: 321 Packets: 338 Packets: 355 Packets: 372 Packets: 389 Packets: 406 Packets: 423 Packets: 441 Packets: 458 Packets: 474 Packets: 492 Packets: 509 Packets: 526 Packets: 544 Packets: 561 Packets: 578 Packets: 596 Packets: 613 Packets: 630 Packets: 647 Packets: 665 Packets: 667 Packets captured: 667
-Packets received/dropped on interface 'イーサネット 2': 667/0 (pcap:0/dumpcap:0/flushed:0/ps_ifdrop:0) (100.0%)
