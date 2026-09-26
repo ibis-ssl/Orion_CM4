@@ -1,14 +1,12 @@
-﻿# About Answers
-1. Provide your final response to the user in Japanese.
-2. Write text assuming it is in UTF-8. Please note that Japanese characters are easily garbled.
+﻿# 動作環境
+- Raspberry Pi CM4（BCM2711、クアッドコア ARM Cortex-A72）で動作する。
 
+# 開発
+- コードファイルの冒頭に、そのファイルの機能と責務をコメントで記述すること。
+- `host/apps/host_lancher.py` と `host/apps/cam_viewer.py` は Windows と Linux の両環境に対応させること
 
-# Operating environment
-1. It runs on an RaspberryPi CM4, BCM2711, a quad-core ARM Cortex-A72.
-2. Ignore portability as it only runs on specific chips.
-3. Describe the function and responsibility of the code file in a comment at the beginning of the file.
-4. Some tools work on Windows/Linux. : host/apps/host_lancher.py,host/apps/cam_viewer.py
-
-# Document
-1. Write important points in doc/overview.md to leave information for other developers.
-2. Documents should be written in Japanese
+# ドキュメント
+- 他の開発者に情報を残すため、重要な点をdoc/以下のドキュメントに記載してください。
+- 目的を考慮して記述･整理してください｡
+- 作業記録と仕様ドキュメントは分離してください｡
+- コードファイルの先頭に、そのファイルの機能と責務を説明するコメントを記載してください。
