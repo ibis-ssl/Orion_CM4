@@ -8,7 +8,7 @@
   - ホスト PC 上で実行する Python CLI / GUI ツールを置きます。
   - Windows/Linux の両方で動かすツールはここに集約します。
 - `cm4/`
-  - Raspberry Pi CM4 上で実行する制御 API、カメラサーバー、UART ブリッジ、セットアップ資材を置きます。
+  - Raspberry Pi CM4 上で実行する制御 API、カメラサーバー、現行機体のUARTブリッジ、セットアップ資材を置きます。
   - 生成される CM4 用実行ファイルは `cm4/bin/` に置きます。
 - `host/robot-manager/`
   - 複数台の CM4 をブラウザから操作する管理 Web UI です。
@@ -143,7 +143,7 @@ docker compose up --build
 
 ## 通信の基本
 
-機体番号を `N` とすると、基本的な接続先は次の通りです。
+現行のG474搭載機体について、機体番号を `N` とすると、基本的な接続先は次の通りです。
 
 - AI制御指令: `192.168.20.(100 + N):12345`（UDPユニキャスト、CHECK_COUNTER + 64バイトの指令）
 - 位置制御設定: `192.168.20.(100 + N):12350`（UDPユニキャスト、28バイト）
@@ -152,6 +152,8 @@ docker compose up --build
 - カメラ座標 multicast: `224.5.10.(100 + N):5100 + N`
 - robot feedback multicast: `224.5.20.(100 + N):50000 + (100 + N)`
 
+4輪駆動・4輪操舵の`4WS_MainFW`を通信相手に加える計画がある。crane→CM4の指令には4WS専用の`CONTROL_MODE=5`を追加し、CM4→MainをSPIにする案を検討中である。バイト配置と制御分担は未確定で、実装はない。[4WS MainとのSPI通信案](4ws_spi_packet_proposal.md)に仮仕様とOrion_CM4側の拡張方針を分離して記す。
+
 ## 関連ドキュメント
 
 - [ホスト PC 側ツール](host_tools.md)
@@ -159,6 +161,7 @@ docker compose up --build
 - [MCUファームウェア更新](firmware_update.md)
 - [カメラ制御・デバッグ](camera.md)
 - [制御パケット](control_packet.md)
+- [4WS MainとのSPI通信案（未確定・未実装）](4ws_spi_packet_proposal.md)
 - [フィードバックパケット](feedback_packet.md)
 - [開発とドキュメントのルール](development.md)
 - 統合仕様の正本（framework 側）: `framework/docs/robot-side-position-control.md`
