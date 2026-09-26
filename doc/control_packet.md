@@ -13,9 +13,9 @@
 | crane | `crane_sender/include/crane_sender/robot_packet.h` | **正本** |
 | G474_Orion_main | `Core/Inc/robot_packet.h` | byte 0..31 一致（32..37 は G474 が使わないので未定義） |
 | framework | `src/simulator/ibis_protocol.h` | 一致 |
-| Orion_CM4 | `cm4/bridge/robot_packet.h` | 一致（2026-09 に旧レイアウトから統一） |
+| Orion_CM4 | `cm4/bridge/robot_packet.h` | 一致 |
 
-過去に 2 度ドリフトしているため、`cm4/bridge/robot_packet_layout_test.cpp` が
+`cm4/bridge/robot_packet_layout_test.cpp` が
 byte 0..37 の全オフセット・`ControlMode`・`FlagAddress` を `static_assert` で固定し、
 さらにゴールデンベクタで量子化挙動（丸めずに切り捨てる）まで検査します。
 `cm4/build.sh` と CI から実行されます。**`robot_packet.h` を編集したら必ず通すこと。**
@@ -105,19 +105,13 @@ crane は 11 台分を **1 データグラム 715 バイト**にまとめて UDP
 | `34..35` | `TARGET_GLOBAL_POS_Y` | float, range `32.767` |
 | `36..37` | `TERMINAL_VELOCITY` | float, range `32.767` |
 
-> **旧レイアウトとの違い**: 2026-09 以前の Orion_CM4 は `ACCELERATION_LIMIT` を持たず
-> `SPEED_LIMIT`(12..13) / `OMEGA_LIMIT`(14..15) だったため、**byte 12 以降が 2 バイトずれて**
-> いました。`FLAGS` は 20、`CONTROL_MODE` は 21 でした。
-> `forward_ai_cmd_v2.cpp` が受信バイト列を `memcpy` で素通しするだけの
-> バイト転送器だったため顕在化していませんでしたが、デバッグ表示は誤った値を出していました。
-
 ### FLAGS
 
 - bit `0`: `IS_VISION_AVAILABLE`
 - bit `1`: `ENABLE_CHIP`
-- bit `2`: 未使用（旧 `LIFT_DRIBBLER` の跡地。常に 0）
+- bit `2`: 未使用（常に 0）
 - bit `3`: `STOP_EMERGENCY`
-- bit `4..7`: 未使用（旧 `PRIORITIZE_MOVE` / `PRIORITIZE_ACCURATE_ACCELERATION` の跡地。常に 0）
+- bit `4..7`: 未使用（常に 0）
 
 ### スケーリング
 
@@ -202,18 +196,14 @@ G474 と framework は一切変わりません。
 2 バイト固定小数ではなく素の float32 です。毎周期 11 台ぶんを運ぶわけではないので
 圧縮する理由が無く、量子化を挟むと crane の表示値と CM4 の実効値が食い違います。
 
-### 旧フォーマット（20 バイト・version 1）は受理しません
+### 受信時の検査
 
-**後方互換はありません。** サイズもバージョンも完全一致でしか受けないので、
-crane と CM4 のどちらかが古ければ設定パケットは `WrongSize` として全数拒否され、
-CM4 のログに拒否理由が出続けます。
-
-中途半端に受理すると「kp だけ効いて ki / kd が効いていない機体」が黙って混ざり、
-現地では「なんとなく追従が悪い」以外の症状が出ません。拒否して騒ぐほうが追えます。
+サイズは28バイト、versionは`2`を要求する。サイズ不一致は`WrongSize`、
+version不一致は`UnsupportedVersion`として拒否し、理由をログに出す。
 
 > [!IMPORTANT]
-> **crane と CM4 は同時に配ること。**
-> 片方だけ更新した機体は停止せず、**既定ゲイン（kp = 2.0）のまま走り続けます**。
+> **crane と CM4 は対応する版を同時に配ること。** 設定が拒否された場合、
+> CM4は現在のゲインを保持する。
 > `cm4_sim` を使う場合は Docker イメージ（`ghcr.io/ibis-ssl/orion-cm4-sim`）の
 > タグ固定も合わせて更新してください（crane 側 `docker/dev/docker-compose.yaml` と
 > `docker/scenario/docker-compose.yaml` の `CM4_SIM_TAG`）。
@@ -295,16 +285,14 @@ CM4 のログに拒否理由が出続けます。
 
 | 受信 mode | 動作 | 送信ゲート |
 |---|---|---|
-| `3`、または `--passthrough` 指定時 | 64 バイトをそのまま転送（旧構成） | crane の `CHECK_COUNTER` が変化したとき |
+| `3`、または `--passthrough` 指定時 | 64 バイトをそのまま転送 | crane の `CHECK_COUNTER` が変化したとき |
 | `4` | 位置制御ループを閉じて mode 3 を生成 | `--tx-rate-hz`（既定 100 Hz）の時間ゲート |
 
-素通し経路は `check_counter` が crane 由来なので、既存の「変化したときだけ送る」ゲートが
-**そのまま正しい**です（crane 断で G474 の `connected_ai` が false になるのが旧構成の
-期待挙動）。位置制御経路は CM4 が `check_counter` を採番するのでそのゲートが成立せず
-（常に変化してしまう）、時間ベースのレートで送ります。
+素通し経路では `check_counter` が crane 由来なので、値が変化したときに送ります。
+位置制御経路では CM4 が `check_counter` を採番し、時間ベースのレートで送ります。
 
-`--passthrough` は mode 4 が来ても強制的に素通しします。旧構成の挙動を再現したいとき
-（位置制御を疑う前に切り分けたいとき）に使います。
+`--passthrough` は mode 4 が来ても強制的に素通しします。G474 は mode 4 を処理しないため、
+mode 4 の診断では `--debug` と併用し、実機 UART へ送らないでください。
 
 ### 送信レートとポーリング
 
@@ -313,14 +301,10 @@ CM4 のログに拒否理由が出続けます。
 
 位置制御経路の UART 送信レートは `--tx-rate-hz`、**既定 100 Hz** です。
 
-- crane レート追随（旧構成と同じゲート）にはできません。crane 断のときに送信そのものが
-  止まり、G474 の `connected_ai` タイムアウト（250 ms）まで停止指令が届かず、
-  「crane 断から 100 ms 以内に止まる」を満たせないためです。
-- 500 Hz（G474 メインループ相当・UART 占有率 36%）も既定にしていません。現行の約 9 倍の
-  UART 負荷を、ST-Link での `ORE`/`FE`/`NE`/`PE` カウンタ確認なしに投入しないためです。
-- 100 Hz は 720 us x 100 = **7.2%** で現行（約 55 Hz = 約 4%）の約 2 倍にとどまり、
-  crane 断から 10 ms 以内に停止指令を届けられます。
-- 実機で ST-Link 確認が取れたら `--tx-rate-hz 500` を既定に上げてください。
+- crane からの指令が途絶しても停止指令を送れるよう、時間ゲートで送信します。
+- 100 Hz での UART 占有率は 720 us x 100 = **7.2%** です。
+- `--tx-rate-hz 500` では占有率が約36%になるため、使用前に G474 の
+  `ORE`/`FE`/`NE`/`PE` カウンタを確認してください。
 
 ### CHECK_COUNTER
 
@@ -333,17 +317,16 @@ G474 の `checkConnect2AI()`（`Core/Src/ai_comm.c`）は
 
 1 バイトなので値は周期的に一巡します。**ロス検出用のシーケンス番号としては使えません。**
 
-#### 新構成では採番者が CM4 に移ります
+#### mode 4 の採番
 
 mode 4 を受けて位置制御を回す経路では、**CM4 が `check_counter` を採番します**
 （送信ごとに `++c; if (c > 200) c = 0;`）。
 
-結果として **G474 の `connected_ai` は crane の生存を意味しなくなります**。
+この経路では **G474 の `connected_ai` は crane の生存を意味しません**。
 CM4 が生きていれば crane が死んでいても `check_counter` は変化し続けるからです。
 crane 断の安全停止は CM4 側で明示的に行います（下記）。
 
-素通し経路では従来どおり crane 由来の値をそのまま流すので、`connected_ai` の意味も
-従来どおりです。
+素通し経路では crane 由来の値をそのまま流します。
 
 ### 位置制御と安全停止
 
@@ -400,7 +383,7 @@ sys->stop_flag || ai_cmd->stop_emergency || !ai_cmd->is_vision_available
 
 このうち **`is_vision_available`（byte 22 bit0）と
 `elapsed_time_ms_since_last_vision`（byte 20..21）の 2 つ**を CM4 でも見ます。
-どちらも実機 G474 が同条件で止めるので、**実機の挙動はこれまでと変わりません**。
+実機 G474 も同条件で停止します。
 
 `vision_age_limit_ms`（500 ms）に CLI オプションを生やしていないのは意図的です。
 これは調整パラメータではなく実機ファームウェアの定数と一致させるための値で、
@@ -495,7 +478,7 @@ vision 断の安全停止はすべて下段（惰走）**です。約 104 ms で
 
 シミュレータの `SimRobot` も最後の指令から一定時間で standby に入り、車輪 PID に
 到達する手前で return するので、**この 2 経路の作り分けは実機とシミュレータで
-一致しています**（framework PR #10 以降）。惰走距離は能動制動の数倍になります。
+一致しています**。惰走距離は能動制動の数倍になります。
 
 実機の惰走距離は測っていません。duty 0 が空転か短絡制動かはモータボード側の
 ファームウェアが決めるので、**シミュレータの値は比較対象であって実機の予測値では
@@ -512,7 +495,7 @@ vision 断の安全停止はすべて下段（惰走）**です。約 104 ms で
 短い。したがって**指令途絶時の惰走距離はシミュレータの方が実機より短く出る**。
 
 ただしこれが効くのは **CM4 ごと落ちて G474 への送信が止まった場合だけ**である。
-新構成の通常運用では CM4 が送り続けるので `connected_ai` は発火せず、crane 断・
+mode 4 の位置制御では CM4 が送り続けるので `connected_ai` は発火せず、crane 断・
 feedback 断・vision 断はすべて `STOP_EMERGENCY` 経路（上表の 2 行目）に入る。
 
 なお **mode 4 がシミュレータまで届いた場合の停止だけは能動制動のまま**残されています。
@@ -524,19 +507,16 @@ feedback 断・vision 断はすべて `STOP_EMERGENCY` 経路（上表の 2 行�
 （約 104 ms、予算と照合する対象）と、機体が静止する時刻（惰走距離ぶん後ろ）**を
 分けて記録してください。
 
-判定は `position_controller` の中にあるので、**実機バイナリと `cm4_sim` が必ず同じ判定を
-通ります**。
+##### CM4とG474の停止判定
 
-##### この 104 ms と G474 の 250 ms は「二段構え」ではありません
-
-新構成で crane が沈黙しても、**CM4 は `check_counter` を進めながら送信を続けます**
+crane が沈黙しても、**CM4 は `check_counter` を進めながら送信を続けます**
 （`forward_ai_cmd_v2.cpp` の位置制御パスは毎送信で `nextCheckCounter()` を呼び、
 停止中も `--tx-rate-hz` で送り続ける）。したがって G474 の `connected_ai` は真のまま
 であり、車輪が止まる理由は **CM4 が立てた `STOP_EMERGENCY`** です。250 ms の
 `connected_ai` タイムアウトはこの経路には出てきません。
 
-新構成での 250 ms の役割は変わり、**CM4 側（`ai_cmd_v2.out` のプロセス死、UART 断）
-に対する最後の砦**になります。このときだけ `check_counter` が凍り、G474 が自力で
+250 ms の判定は **CM4 側（`ai_cmd_v2.out` のプロセス死、UART 断）の通信途絶**
+に適用されます。このとき `check_counter` が凍り、G474 が自力で
 止めます。
 
 | 何が落ちたか | 止めるのは誰か | 時間 |
@@ -544,9 +524,8 @@ feedback 断・vision 断はすべて `STOP_EMERGENCY` 経路（上表の 2 行�
 | crane（無線断・プロセス死） | CM4 の `STOP_EMERGENCY` | 約 104 ms |
 | CM4（`ai_cmd_v2.out` の死、UART 断） | G474 の `connected_ai` | 250 ms |
 
-旧構成（`--passthrough`）では `check_counter` が crane 由来なので、crane 断が
-そのまま `connected_ai` の 250 ms に出ます。**同じ 250 ms が構成によって別の障害を
-見ている**ので、実機で測るときに取り違えないこと。
+`--passthrough` では `check_counter` が crane 由来なので、crane 断は
+`connected_ai` の 250 ms 判定に現れます。
 
 出力パケットは受信した 64 バイトをコピーして `CHECK_COUNTER` / `CONTROL_MODE` /
 `CONTROL_MODE_ARGS` だけを差し替えて作ります。ゼロから組み立てると

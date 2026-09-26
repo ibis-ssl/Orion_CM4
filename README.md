@@ -89,9 +89,11 @@ Docker build context は `host/robot-manager/` です。
 ## 詳細ドキュメント
 
 - [概要](doc/overview.md)
+- [開発とドキュメントのルール](doc/development.md)
 - [CM4 セットアップ](SETUP.md)
 - [ホスト PC 側ツール](doc/host_tools.md)
 - [フリート管理(OTA・複数台一括設定)](doc/fleet.md)
+- [MCUファームウェア更新](doc/firmware_update.md)
 - [カメラ制御・デバッグ](doc/camera.md)
 - [制御パケット](doc/control_packet.md)
 - [フィードバックパケット](doc/feedback_packet.md)

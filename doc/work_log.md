@@ -39,7 +39,7 @@
 
 ## PC→CM4→G474 実機タイミング調査結果（2026-09-20）
 
-詳細は [timing_investigation_20260920.md](timing_investigation_20260920.md)。PC有線キャプチャ、CM4 kernel/recv/write、COM56、STM32記録SRAMを同時評価した。
+詳細は [timing_investigation_20260920.md](history/timing_investigation_20260920.md)。PC有線キャプチャ、CM4 kernel/recv/write、COM56、STM32記録SRAMを同時評価した。
 mode3の集中はCM4 kernel到着時点で既に存在し、broadcastで再現、108 unicastとlocalhostでは本試験で解消。
 最終代表値のSTM32受信間隔p50/p99/maxはbroadcast=1.157/97.263/198.403 ms、unicast=15.225/16.377/17.150 ms。
 CM4 kernel→読出しp99約1.1 ms、読出し→write p99 0.014～0.040 ms、STM32受信→採用p99約2 msで、約100 msの原因はブリッジ内ではない。

@@ -154,11 +154,11 @@ docker compose up --build
 
 - [ホスト PC 側ツール](host_tools.md)
 - [フリート管理(OTA・複数台一括設定)](fleet.md)
-- [STM32 ファームウェア更新仕様案](firmware_update.md)
-- [STM32 FW更新機能 開発・実機試験手順](firmware_update_development.md)
+- [MCUファームウェア更新](firmware_update.md)
 - [カメラ制御・デバッグ](camera.md)
 - [制御パケット](control_packet.md)
 - [フィードバックパケット](feedback_packet.md)
+- [開発とドキュメントのルール](development.md)
 - 統合仕様の正本（framework 側）: `framework/docs/robot-side-position-control.md`
 - [作業ログメモ](work_log.md)
 
@@ -166,61 +166,30 @@ docker compose up --build
 
 - ログはGitへ追加しない。`.gitignore`で`*.log`とルートの`runtime/`全体を除外し、実行ログ・計測CSV・packet capture・一時BINはローカルに保存する。
 
-## STM32 ファームウェア更新
-
-CM4 から UART 接続の STM32G474 と、その配下の 2 系統の CAN に接続された 4 台の STM32F303 を更新する方針は次の通りです。
-
-- 全 MCU の Flash 先頭へ書込保護した常駐ブートローダを置きます。
-- STM32内蔵System Memoryブートローダーは使わず、各基板の全GPIOを安全状態へ初期化する自作アプリケーションブートローダーを使います。
-- G474 ブートローダーを UART/CAN 更新ゲートウェイとし、CRC・対象基板・書込範囲を検証します。暗号署名や証明書は使用しません。
-- G474 は 512 KB Flash を利用した A/B 更新と自動 rollback、F303 は単一アプリ領域と中断後の再送復旧を採用します。
-- 更新中は全アクチュエータを無効化し、MainのブザーPWMも停止します。同一imageの左右BLDCはCAN1/CAN2へ並列配信し、G474は最後に更新します。
-- BLDC の CAN ID とキャリブレーションを保持する Flash 領域は、アプリ更新領域から分離して消去禁止にします。
-- CM4更新ツールだけでなく、G474/F303の基板別ブートローダーと全通常アプリFWの変更も開発範囲に含めます。
-- 初回導入時だけ、全アプリの再配置と常駐ブートローダ書込のため SWD 作業が必要です。
-
-Flash 配置、OFW-UART/OFW-CAN、bundle、状態遷移、障害復旧、受入試験の詳細は [STM32 ファームウェア更新仕様案](firmware_update.md) を参照してください。
-
 ## MCUファームウェア更新
 
-- CM4→Main→CANノードの高速・同時更新仕様は `doc/firmware_update_protocol.md` にまとめる。
-- 全CANノードを先に安全な更新状態へ移し、MainのFDCAN1/FDCAN2を並行使用する。Main自身はゲートウェイ処理完了後に最後に更新する。
-- 更新データは約896 byte単位で扱い、欠落・重複・順序ずれ・FIFO overflow・再接続を検出してchunk単位で回復する。
-- CM4→Main→Subのv2経路を実装済み。UART CRC破損、CAN欠落・重複・逆順・payload破損からの回復に対応する。
-- BLDC・電源基板にも同じアプリケーションブートローダーを実装済み。OTA node IDはSub=4、BLDC=16/17（Flashのboard ID 0/1に対応）、電源=100とする。
-- `cm4/firmware/all_can_updater.py`は全ノードを先に更新状態へ移し、左右BLDCをCAN1/CAN2へ並列配信し、全image確定後に一括再起動する。
-- MainはCM4経由のA/B更新を実装済み。通常USART2受信はIRQでRX FIFOを全量drainし、FWUP入口の72-byte要求取りこぼしを防ぐ。
-- F303系のSub・BLDC・Powerは、有効なmetadataとアプリCRC32CがあればCAN待受けをせず即時にアプリへ遷移する。OTA要求時はアプリが出力を安全化してmetadataを無効化してからresetし、bootloaderは無効時だけCAN更新を無期限に待つ。不完全imageは起動しない。
+CM4からMain（STM32G474）のA/Bスロットと、MainのCANゲートウェイ経由でSub・左右BLDC・Power（STM32F303）を更新する。
+更新順序、対象ノード、確認方法は [MCUファームウェア更新](firmware_update.md) を参照する。
 
 ## 開発用FWバージョン確認
 
-- 各アプリの先頭から`0x400`に、magic `FWVR`とUnix秒のbuild IDを8 byteで配置する。製品用の署名・SemVer・互換性判定は行わない。
-- MainはCM4から72 byte UART要求`FWVR`を受け、Main A/B、Sub、CAN1 BLDC、CAN2 BLDC、Powerのbuild IDとimage CRC32Cを60 byteで返す。CAN照会IDは`0x611`。
-- `cm4/firmware/fw_version_reader.py`は現在値を一覧表示し、任意の期待バイナリを渡した場合は`SAME`、`OLDER`、`NEWER`、`CRC_MISMATCH`を表示する。
-- STM32のアプリおよびブートローダー用PowerShellビルドスクリプトは、`Script/Logs/Build/`へbuild ID、UTC時刻、Git hash、dirty状態をJSON保存する。
-
-実行例:
+`cm4/firmware/fw_version_reader.py` はMain A/B、Sub、左右BLDC、Powerのbuild IDとimage CRC32Cを表示する。期待バイナリを指定すると、実機の内容との比較結果も表示する。
 
 ```bash
-python3 cm4/firmware/fw_version_reader.py \
+python3 cm4/firmware/fw_version_reader.py --port /dev/serial0 \
   --main-a main_a.bin --main-b main_b.bin --sub sub.bin \
-  --bldc-can1 bldc.bin --bldc-can2 bldc.bin
+  --bldc-can1 bldc.bin --bldc-can2 bldc.bin --power power.bin
 ```
 
-## ロボット側位置制御（CM4 で位置ループを閉じる）（2026-09-13）
+## ロボット側位置制御（CM4 で位置ループを閉じる）
 
-### 何を変えたか
+### 位置制御の流れ
 
-位置制御ループを crane（AI）側から CM4 側へ移した。crane は **位置指令（mode 4）** を送り、
+crane は **位置指令（mode 4）** を送り、
 CM4 が位置制御ループを閉じて **速度指令（mode 3）** を G474 へ渡す。
 
-これまでは crane がループを閉じて速度指令を無線で送っていたため、
-**不安定で遅延の乗る無線経路が位置制御ループの内側**に入っていた。新構成では無線経路が
-ループの外側（目標値の更新経路）へ移る。
-
 ```text
-旧: crane [位置ループ] --UDP 速度指令--> CM4 --UART--> G474
-新: crane --UDP 位置指令--> CM4 [位置ループ] --UART 速度指令--> G474
+crane --UDP 位置指令--> CM4 [位置ループ] --UART 速度指令--> G474
 ```
 
 ### 構成
@@ -254,22 +223,21 @@ CM4 の位置制御は `cm4_sim.out` が担当し、**実機と同一のソー�
 クランプせずデータグラムごと捨てる。形式と範囲は
 [制御パケット](control_packet.md#位置制御設定パケットudp-12350)を参照。
 
-**後方互換は無い。** 旧フォーマット（20 バイト・version 1）は `WrongSize` で拒否する。
-crane と CM4 は同時に配ること。片方だけ古い機体は停止せず既定ゲイン（kp = 2.0）のまま
-走り続け、現地では「なんとなく追従が悪い」としか見えない（CM4 のログには拒否理由が出る）。
+設定パケットのサイズとバージョンは完全一致で検査する。crane と CM4 の対応する版を
+同時に配ること。拒否された設定はログに理由が出て、ゲインは現在値を保持する。
 
-## 位置制御の PID 化
+## 位置制御の PID
 
-`position_controller` の制御則を P から **PID** に拡張した。
+`position_controller` は PID 制御を行う。
 
-- **既定値は `ki = kd = 0`**: 従来の P 制御へ縮退する。
-- **設定パケット (UDP 12350) の v2 拡張**: 28 バイトに拡張され、稼働中に `kp`, `ki`, `kd`, `deceleration`, `position_tolerance` を変更可能。旧 v1 (20 バイト) は拒否される。
+- **既定値は `ki = kd = 0`**: 積分項と微分項を適用しない。
+- **設定パケット (UDP 12350)**: 28 バイトで、稼働中に `kp`, `ki`, `kd`, `deceleration`, `position_tolerance` を変更可能。
 - **状態の所有**: 積分・微分の状態 (`PositionControllerState`) は呼び出し側がロボットごとに所有する（`cm4_sim` で全機の積分が混ざるのを防止）。
 - **feedback 更新時のみ計算**: 微積分は零次ホールドの feedback 更新時のみ行い、微分先行形（`-kd * 実測速度`）で目標キックを防止する。
 - **アンチワインドアップ**: 速度上限（制動エンベロープ含む）に飽和している間は積分を停止し、I 項の速度上限 (`integral_velocity_limit = 0.5`) でクランプする。
 - **状態のリセット**: 安全停止時や非制御時（素通しモード等）は状態をリセットする（`AtTarget` 到達時は定常偏差解消のため積分を保持）。
 
-### `check_counter` の採番者が CM4 に移った
+### `check_counter` の採番
 
 mode 4 を受けて位置制御を回す経路では、**CM4 が `check_counter` を採番する**。
 
@@ -278,25 +246,21 @@ crane が死んでいても `check_counter` は変化し続けるからである
 crane 断の安全停止は CM4 側で明示的に行う（`--command-timeout-ms`、既定 100 ms）。
 判定は `position_controller` の中にあるので実機と `cm4_sim` が必ず同じ判定を通る。
 
-mode 3 の素通し経路（`--passthrough` を含む）では従来どおり crane 由来の値を流すので、
-`connected_ai` の意味も従来どおりである。
+mode 3 の素通し経路（`--passthrough` を含む）では crane 由来の値を流す。
 
 ### UART 送信レート
 
 位置制御経路は `--tx-rate-hz`、**既定 100 Hz**（UART 占有率 7.2%）で送る。
 
-- crane レート追随（旧構成と同じ `check_counter` 変化ゲート）にはできない。crane 断で
-  送信そのものが止まり、`connected_ai` タイムアウト（250 ms）まで停止指令が届かない。
-- **500 Hz（G474 メインループ相当・占有率 36%）は既定にしていない。** 現行の約 9 倍の
-  UART 負荷を ST-Link での `ORE`/`FE`/`NE`/`PE` カウンタ確認なしに投入しないため。
-  `--tx-rate-hz 500` で opt-in できる。**実機で確認が取れたら既定を上げること。**
+- crane からの指令が途絶しても、安全停止指令を送れるように時間ゲートで送信する。
+- `--tx-rate-hz 500` を指定すると UART 占有率は約 36% になる。使用前に G474 の
+  `ORE`/`FE`/`NE`/`PE` カウンタを確認する。
 
 ### ゼロ埋め ≠ ゼロ値
 
 2 バイト固定小数（range 32.767）の未設定フィールドは `0.0` ではなく **`-32.767`** として
-復号される（encode が `0.0` を `0x7FFF` へ写すため）。実チェーンで crane 役が mode 4 の
-`terminal_velocity_x/y` を書き忘れただけで、フィードフォワードが `(-32.767, -32.767)` に
-なりロボットが目標と無関係な方向へ場外まで走った。
+復号される（encode が `0.0` を `0x7FFF` へ写すため）。mode 4 の
+`terminal_velocity_x/y` をゼロ埋めすると、フィードフォワードは `(-32.767, -32.767)` になる。
 
 `position_controller` は `|v| >= 32.0`（と NaN）を「未設定のシグネチャ」として扱う。
 終端速度は 0 とみなして P 制御を続け、目標位置・現在位置は `InvalidCommand` で停止する。
@@ -318,8 +282,8 @@ crane が見失っている、または vision が古すぎるロボットの `t
 | `is_vision_available` が 0 | byte 22 bit0 | `VisionUnavailable` |
 | `elapsed_time_ms_since_last_vision > 500` | byte 20..21 | `VisionStale` |
 
-実機 G474 は `state_func.c:314` でこの 2 つを含む 4 条件でホイールを止めるので
-**実機の挙動は変わらない**。500 ms は調整パラメータではなく実機ファームウェアの
+実機 G474 も `state_func.c:314` でこの 2 条件を確認してホイールを止める。
+500 ms は調整パラメータではなく実機ファームウェアの
 定数なので、CLI オプションを生やしていない。境界（500 は動く / 501 は止まる）まで
 実機と揃えてある。
 
@@ -370,9 +334,9 @@ crane が見失っている、または vision が古すぎるロボットの `t
 - **feedback 再配信の送出 IF は既定でループバック固定**（`--multicast-if`、既定 `127.0.0.1`）。
   省略して `IP_MULTICAST_IF` を設定しないと OS が既定ルートの IF（開発 PC では Wi-Fi に
   なりうる）を選ぶ。crane 側には multicast が Wi-Fi へ漏れて AP が過負荷になる問題があり、
-  対策（PR #1425）の iptables DROP は `224.5.23.0/24`（vision/referee）だけで
-  **`224.5.20.0/24`（feedback）は対象外**である。従来この帯域には何も流れていなかったが、
-  `cm4_sim` の再配信で実際に流れるようになったので発生元のソケットで閉じ込める。
+  iptables DROP は `224.5.23.0/24`（vision/referee）だけで
+  **`224.5.20.0/24`（feedback）は対象外**である。`cm4_sim` の再配信は送信元ソケットで
+  ループバックへ閉じ込める。
   実ネットワークへ出したいときだけ `--multicast-if <ip>` で明示する。
   `cm4_sim` はホスト専用なので、実機の `robot_feedback.out` には影響しない。
 - 再配信ポートは `--feedback-relay-port-base`（既定 50100）で入力ポートと独立に指定する。
@@ -392,7 +356,7 @@ crane が見失っている、または vision が古すぎるロボットの `t
   **実機では crane 由来の値をそのまま流す**（G474 が vision 融合に使うので、CM4 の
   推定値を書き戻すと自己帰還になる）。素通し経路（mode 3）でも同じエコーがかかる。
 
-  framework PR #7 でこの破棄に警告が付いた（`command dropped` で grep できる)。
+  この破棄は `command dropped` の警告で確認できる。
   **起動直後に数行出て以降止まるのは正常**で、feedback 未受信の間は crane 由来の値を
   そのまま流すブートストラップ期間だからである。**出続ける場合は feedback 経路が
   繋がっていないサイン**なので、`--vision-echo feedback` の動作確認に使える。
@@ -426,26 +390,8 @@ compose 側との契約は 3 つで、これを崩すと一括起動が壊れる
 イメージの検証は `simulator-cli` と crane を実際に繋いで行う。ローカルビルドの
 バイナリと同じ挙動になることを確認すること。
 
-**初回だけ手作業が要る。** ghcr のパッケージは最初の push で private として作られる。
-crane の compose はログイン無しの素の `image:` で pull するので、workflow が緑に
-なっても public にするまで `unauthorized` で失敗する。GitHub の Packages 設定で
-`orion-cm4-sim` を public にすること。同じ組織の `robot-manager` と
-`framework-simulatorcli` は既に public（匿名 pull が通ることを確認済み）。
+イメージを配布するときは、認証情報なしで pull と起動ができることを確認する。
 
-また `workflow_dispatch` は既定ブランチにファイルが無いと選べないので、
-**`:latest` が出るのはこのブランチが main へマージされたあと**である。
-
-#### public 化した直後に 1 回だけやること
-
-public 化は一度きりの操作で、間違えても**誰かが compose で使おうとするまで誰も
-気づかない**。そこで確認まで込みで 1 セットにする。
-
-1. `docker logout ghcr.io` してから `docker pull` できること（public 化そのものの確認）
-2. 既定 entrypoint のまま起動し、`docker stop` 後に `docker logs` へ行が残ること
-3. crane の compose から起動できること
-
-**1 を落としやすい。** 手元は `docker login` 済みなので private のままでも pull が
-通り、「public にした」と思い込める。
 ### シミュレータと実機の差（ゲインを詰めるときの注意）
 
 - シミュレータ側の G474 相当は **125 Hz** で、実機の G474（500 Hz）より粗い
@@ -466,10 +412,10 @@ public 化は一度きりの操作で、間違えても**誰かが compose で�
 - `test_forward_ai_cmd_v2.py` — 実機ブリッジの結合スモークテスト（`--debug` + pty）。
   1 件だけ `--debug` なしの実運用モードで動かし、位置制御の状態表示が実際に出ることを検査する
 
-### 未了（実機で確認すること）
+### 実機で確認すること
 
-- `--passthrough` で旧構成と同じ挙動になること（ホストでは 72 バイトのバイト一致を確認済み）
-- crane を mode 4 送出に切り替えて `ai_cmd_v2.out` の表示に `mode 4` と `tarPos` が出ること
+- `--passthrough` で受信した指令を素通しできること
+- crane が mode 4 を送出したときに `ai_cmd_v2.out` の表示に `mode 4` と `tarPos` が出ること
 - `--tx-rate-hz 500` での UART 占有率。G474 の `uart ORE/FE/NE/PE` と parser timeout
   カウンタが増えないことを ST-Link で確認する
 - **安全停止時の惰走距離**。G474 は `stop_emergency` で `omniStopAll()`（駆動力ゼロ）
@@ -489,6 +435,6 @@ public 化は一度きりの操作で、間違えても**誰かが compose で�
   あることが実機と sim の挙動一致の保証なので、オブジェクトも 1 つにするのが素直
 - 5 本の `g++` は互いに独立なので並列に投げる
 - `--targets=sim` は `cm4_sim.out` に必要なものだけをビルドする。`cm4/Dockerfile`
-  がこれを使う（イメージに入るのは `cm4_sim.out` 1 本だけ）。boost も不要になった
+  がこれを使う（イメージに入るのは `cm4_sim.out` 1 本だけ）
 - テストの起動待ちは固定 `sleep` ではなく、`cm4_sim` は最初の出力データグラムを、
   `ai_cmd_v2` は起動バナー最終行を待つ
