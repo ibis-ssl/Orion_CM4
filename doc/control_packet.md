@@ -342,9 +342,10 @@ mode 4 を受けると `cm4/control/position_controller.cpp` を通します。�
 `position_gain = 2.0` / `deceleration = 3.0`（`--kp` / `--decel` は起動時の初期値。
 稼働中は crane からの設定パケットで上書きされます）です。
 
-ロボットの現在位置は **G474 feedback の byte 44..51（`vision_based_position_x/y`）** を
+更新後の仕様では、ロボットの現在位置は **G474 feedback の byte 100..107（`vision_based_position_x/y`）** を
 使います。crane のパケットに入っている `vision_global_pos` では閉じません。
 それは今回ループの外へ出そうとしている無線経路そのものだからです。
+このbyte配置の送信・受信実装への反映は別作業です。
 
 `position_tolerance` は65バイトの指令パケットに載らないので CM4 側の設定値です
 （既定 0.01 m、`--tolerance`）。

@@ -236,9 +236,11 @@ flowchart LR
     uart --> output
 ```
 
-入力はcrane出力、G474 feedback、ローカルカメラの3系統で、出力はG474向け72バイトUARTパケットである。未定義領域byte 64..70はCM4が0で初期化する。mode 4の位置制御にはfeedbackのbyte 44..51を現在位置として使用する。mode 7・8ではCM4内部の制御にカメラ観測値を反映する。ボール未検出、カメラ未起動、更新途絶から100 ms超過はいずれも「有効なボール観測なし」とし、mode 7はmode 3、mode 8はmode 4相当の指令へ切り替える。詳細は[制御パケット](control_packet.md)と[制御モード互換性](control_mode_compatibility.md)を参照。
+入力はcrane出力、G474 feedback、ローカルカメラの3系統で、出力はG474向け72バイトUARTパケットである。未定義領域byte 64..70はCM4が0で初期化する。更新後のfeedback仕様では、mode 4の位置制御にbyte 100..107を現在位置として使用する。mode 7・8ではCM4内部の制御にカメラ観測値を反映する。ボール未検出、カメラ未起動、更新途絶から100 ms超過はいずれも「有効なボール観測なし」とし、mode 7はmode 3、mode 8はmode 4相当の指令へ切り替える。詳細は[制御パケット](control_packet.md)と[制御モード互換性](control_mode_compatibility.md)を参照。
 
 G474 feedbackは128バイト固定で、byte 2にbyte 3..127のCRC-8/ATMを格納する。CM4は長さ・同期バイト・CRCを検証し、不正なfeedbackを制御と再配信から除外する。詳細は[フィードバックパケット](feedback_packet.md)を参照。
+
+feedbackのbyte 116..119は仕様上未定義とし、ローカルカメラ情報はCM4が別経路で受信する。ペイロードの項目と配置は[フィードバックパケット](feedback_packet.md)に記す。実装への反映は別作業とする。
 
 ### シミュレータ構成
 

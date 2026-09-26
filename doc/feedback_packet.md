@@ -8,7 +8,7 @@
   - STM32 から UART で受信した 128 バイトの状態パケットを UDP multicast へ転送します。
     あわせて同一 CM4 上の `ai_cmd_v2.out` へ loopback unicast でも渡します。
 - `cm4/bridge/forward_ai_cmd_v2.cpp`
-  - loopback unicast で受けた位置（byte 44..51）で位置制御ループを閉じます。
+  - loopback unicast で受けた位置を使って位置制御ループを閉じます。更新後の配置はbyte 100..107です。
 - `host/lib/feedback/packet.py`
   - 128 バイトのフィードバックパケットを Python でデコードします。
 - `host/lib/feedback/receiver.py`
@@ -31,7 +31,7 @@ STM32
 ## loopback unicast（位置制御ループ用）
 
 `ai_cmd_v2.out` は mode 4 を受けたとき位置制御ループを閉じるため、ロボットの現在位置
-（byte 44..51）を必要とします。しかし **`/dev/serial0` の読み手は増やしません**。
+（更新後の配置はbyte 100..107）を必要とします。しかし **`/dev/serial0` の読み手は増やしません**。
 2 プロセスで読むと取り合いになるためです。
 
 `forward_robot_feedback.cpp` が multicast 再配信と同時に
@@ -80,62 +80,78 @@ byte 3 は指令の `check_counter` の反射です。mode 4 の位置制御経�
 （下記「シミュレータとの一致」を参照）。
 
 ### ペイロード
+ヘッダの後、byte 4から下表の記述順に隙間なく配置します。`tx_value_array[n]`は項目の論理番号です。
+各値は表の位置に配置し、14要素を連続した配列としては扱いません。
 
-- `4..7`: `imu_yaw_deg`、little-endian IEEE754 float
-- `8..11`: `battery_voltage_bldc_right`、little-endian IEEE754 float
-- `12..13`: `ball_detection`
-- `14`: `tx_cycle_count`（feedback 送信ごとにインクリメントする 1 バイトのカウンタ）
-- `15`: `kick_state_div10`
-- `16..17`: `current_error_id`、little-endian `uint16_t`
-- `18..19`: `current_error_info`、little-endian `uint16_t`
-- `20..23`: `current_error_value`、little-endian IEEE754 float
-- `24..27`: `motor_current_x10`
-- `28`: `ball_detection_extra`
-- `29..32`: `temp_motor`
-- `33`: `temp_fet`
-- `34..35`: `temp_coil`
-- `36..39`: `diff_angle_deg`、little-endian IEEE754 float
-- `40..43`: `capacitor_boost_voltage`、little-endian IEEE754 float
-- `44..47`: `vision_based_position_x`、little-endian IEEE754 float
-- `48..51`: `vision_based_position_y`、little-endian IEEE754 float
-- `52..55`: `global_odom_speed_x`、little-endian IEEE754 float
-- `56..59`: `global_odom_speed_y`、little-endian IEEE754 float
-- `60`: `camera_pos_x_div2`
-- `61`: `camera_pos_y`
-- `62`: `camera_radius_div4`
-- `63`: `camera_fps`
-- `64..119`: `tx_value_array[14]`、little-endian IEEE754 float
-- `120..127`: reserved
+#### コア機能
 
-### feedback byte 60..63のデコード
+| バイト | 項目 | 形式・意味 |
+| --- | --- | --- |
+| `4` | `tx_cycle_count` | 送信ごとに1増える`uint8_t` |
+| `5..6` | `current_error_id` | little-endian `uint16_t` |
+| `7..8` | `current_error_info` | little-endian `uint16_t` |
+| `9..12` | `current_error_value` | little-endian IEEE754 float |
 
-`host/lib/feedback/packet.py` はbyte 60..63を次の計算でデコードします。これらの値をCM4のローカルカメラ観測値として制御に使用しません。
+#### メイン基板
 
-- `camera_pos_x = camera_pos_x_div2 * 2`
-- `camera_radius = camera_radius_div4 * 4`
-- `camera_pos_y` と `camera_fps` はそのまま使います。
+| バイト | 項目 | 形式 |
+| --- | --- | --- |
+| `13..16` | `imu_yaw_deg` | little-endian IEEE754 float |
+| `17..18` | `ball_detection[2]` | 各1バイト |
+| `19` | `ball_detection_extra` | 1バイト |
+| `20..23` | `diff_angle_deg` | little-endian IEEE754 float |
 
-feedbackのbyte 60..63はレイアウト上のフィールドとして残しますが、CM4のローカルカメラ観測値としては利用しません。CM4が受けるカメラパケットの形式は[カメラ](camera.md)を参照してください。
+#### 電源基板
 
-### tx_value_array
+| バイト | 項目 | 形式 |
+| --- | --- | --- |
+| `24..27` | `battery_voltage` | little-endian IEEE754 float |
+| `28` | `kick_state_div10` | 1バイト |
+| `29` | `temp_fet` | 1バイト |
+| `30..31` | `temp_coil[2]` | 各1バイト |
+| `32..35` | `capacitor_boost_voltage` | little-endian IEEE754 float |
+| `36..39` | `tx_value_array[0]`: `mouse_odom_x` | little-endian IEEE754 float |
+| `40..43` | `tx_value_array[1]`: `mouse_odom_y` | little-endian IEEE754 float |
+| `44..47` | `tx_value_array[2]`: `mouse_global_vel_x` | little-endian IEEE754 float |
+| `48..51` | `tx_value_array[3]`: `mouse_global_vel_y` | little-endian IEEE754 float |
+| `52..55` | `tx_value_array[13]`: `mouse_quality` | little-endian IEEE754 float |
 
-`tx_value_array[14]` のラベルは次です。
-送信元は STM32 側 `Core/Src/ai_comm.c` の `sendRobotInfo()` で、`enqueueFloatArray()` に追加した順番のまま `buf[64..119]` に little-endian float として格納されます。
+#### モーター基板
 
-- `0`: `mouse_odom_x`
-- `1`: `mouse_odom_y`
-- `2`: `mouse_global_vel_x`
-- `3`: `mouse_global_vel_y`
-- `4`: `output_vel_x`
-- `5`: `output_vel_y`
-- `6`: `motor_feedback_0`
-- `7`: `motor_feedback_1`
-- `8`: `motor_feedback_2`
-- `9`: `motor_feedback_3`
-- `10`: `local_odom_speed_mvf_x`
-- `11`: `local_odom_speed_mvf_y`
-- `12`: `local_odom_speed_mvf_w`
-- `13`: `mouse_quality`
+| バイト | 項目 | 形式 |
+| --- | --- | --- |
+| `56..59` | `motor_current_x10[4]` | 各1バイト、電流の10倍 |
+| `60..63` | `temp_motor[4]` | 各1バイト |
+| `64..67` | `tx_value_array[4]`: `output_vel_x` | little-endian IEEE754 float |
+| `68..71` | `tx_value_array[5]`: `output_vel_y` | little-endian IEEE754 float |
+| `72..75` | `tx_value_array[6]`: `motor_feedback_0` | little-endian IEEE754 float |
+| `76..79` | `tx_value_array[7]`: `motor_feedback_1` | little-endian IEEE754 float |
+| `80..83` | `tx_value_array[8]`: `motor_feedback_2` | little-endian IEEE754 float |
+| `84..87` | `tx_value_array[9]`: `motor_feedback_3` | little-endian IEEE754 float |
+| `88..91` | `tx_value_array[10]`: `local_odom_speed_mvf_x` | little-endian IEEE754 float |
+| `92..95` | `tx_value_array[11]`: `local_odom_speed_mvf_y` | little-endian IEEE754 float |
+| `96..99` | `tx_value_array[12]`: `local_odom_speed_mvf_w` | little-endian IEEE754 float |
+
+#### 制御
+
+| バイト | 項目 | 形式 |
+| --- | --- | --- |
+| `100..103` | `vision_based_position_x` | little-endian IEEE754 float |
+| `104..107` | `vision_based_position_y` | little-endian IEEE754 float |
+| `108..111` | `global_odom_speed_x` | little-endian IEEE754 float |
+| `112..115` | `global_odom_speed_y` | little-endian IEEE754 float |
+
+#### 未定義・予約領域
+
+| バイト | 取り扱い |
+| --- | --- |
+| `116..119` | 未定義。受信側は制御に使用しない。 |
+| `120..127` | 予約領域。 |
+
+FWゲートウェイ応答を載せる場合はbyte 112..126を応答データとして使います。この間は、重なる`global_odom_speed_y`・未定義領域・予約領域の値を通常の状態値として解釈しません。
+
+CM4のローカルカメラ情報は、このfeedbackパケットとは別の経路で受けます。形式は[カメラ](camera.md)を参照してください。
+この節は更新後のパケット仕様を示します。送信側とホスト側の実装変更は別作業です。
 
 ## host/lib/feedback/packet.py
 
@@ -145,7 +161,7 @@ feedbackのbyte 60..63はレイアウト上のフィールドとして残しま�
 - CRC-8/ATM検証
 - 128 バイト固定長レイアウトのデコード
 - little-endian IEEE754 float の復元
-- `tx_value_array[14]` のラベル付け
+- 各`tx_value_array[n]`のラベル付け（配置は上表）
 
 ## host/lib/feedback/receiver.py
 
@@ -160,7 +176,6 @@ GUI フロントエンドや Rerun には依存しないため、通信とパー
 - 姿勢
 - エラー情報
 - モーター電流
-- カメラ座標
 - JSON Lines 形式の全フィールド
 
 ### CLI 例
@@ -183,7 +198,6 @@ GUI フロントエンドや Rerun には依存しないため、通信とパー
 
 - 電圧
 - 姿勢
-- カメラ座標
 - モーター電流
 - `mouse->global_vel[0]`, `mouse->global_vel[1]`
 - `omni->local_odom_speed_mvf[0]`, `omni->local_odom_speed_mvf[1]`
@@ -210,7 +224,6 @@ GUI フロントエンドや Rerun には依存しないため、通信とパー
 - エラー情報
 - モーター電流
 - 温度
-- カメラ座標
 - `tx_value_array`
 
 ### CLI 例
@@ -227,23 +240,23 @@ GUI フロントエンドや Rerun には依存しないため、通信とパー
 `framework` の `simulator-cli` も128バイト形式を使います。CM4のCRC検証を通すには、
 シミュレータ側もbyte 3..127からCRC-8/ATMを計算してbyte 2に入れる必要があります。
 このリポジトリ内のシミュレータ用テストフレームはCRCを生成します。
-`cm4_sim` と `ai_cmd_v2.out` は位置制御に byte 44..51 の位置を使用します。
-byte 4..7 は度単位の `imu_yaw_deg`、byte 14 は
-`tx_cycle_count`、byte 60 は `camera_pos_x_div2` です。
+更新後の仕様では、位置制御にbyte 100..107の位置を使用します。
+byte 13..16は度単位の`imu_yaw_deg`、byte 4は`tx_cycle_count`です。
+`framework`・`cm4_sim`・`ai_cmd_v2.out`の送受信位置も、この配置への更新が必要です。
 
 CRC付きのシミュレータ出力は `host/lib/feedback/packet.py` で復号でき、
 `robot-feedback-viewer` などのツールで表示できます。
 
-### シミュレータのbyte 52..59（速度）
+### シミュレータの速度フィールド（byte 108..115）
 
 シミュレータの速度フィールドは `RadioResponse` 由来のキャッシュから作られ、
 `RadioResponse` は**指令が届いたときにしか生成されません**。したがって指令が
 落ちている間（経路劣化によるロス、`vision_global_pos` の 0.5 m 照合ゲートによる
-破棄）は、**同じパケットの中で位置（byte 44/48、毎周期 vision から）は新鮮なのに、
-速度（byte 52/56）は破棄直前の値で凍ります**。ロボットが実際に停止したあとも
+破棄）は、**同じパケットの中で位置（byte 100/104、毎周期 vision から）は新鮮なのに、
+速度（byte 108/112）は破棄直前の値で凍ります**。ロボットが実際に停止したあとも
 停止前の速度を返し続けます。
 
-`cm4_sim` も `ai_cmd_v2.out` も **byte 44..51 の位置しか使わない**ので制御には
+位置制御が参照するのは **byte 100..107 の位置**なので制御には
 影響しません。**騙されるのは速度を見る診断だけ**です。feedback の速度を見て
 「動いていないのに速度が出ている」と読んだら、まず指令が届いているかを疑って
 ください。
