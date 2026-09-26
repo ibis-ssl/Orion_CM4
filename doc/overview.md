@@ -152,7 +152,7 @@ docker compose up --build
 - カメラ座標 multicast: `224.5.10.(100 + N):5100 + N`
 - robot feedback multicast: `224.5.20.(100 + N):50000 + (100 + N)`
 
-Orion（4輪オムニ）と4WS（4輪駆動・4輪操舵）はmode 3・4を共通で使う方針とし、各輪目標には4WS専用のmode 5、Orion専用のmode 6を定義した。mode 4はCM4でmode 3・5・6のいずれかに変換し、G474へ直接送らない。[制御モード互換性](control_mode_compatibility.md)に機体別の対応とmode 6の配置、[4WS MainとのSPI通信案](4ws_spi_packet_proposal.md)にmode 5の配置とSPIの仮仕様を記す。mode 5・6と4WS向け経路は未実装。
+Orion（4輪オムニ）と4WS（4輪駆動・4輪操舵）はmode 3・4を共通で使う方針とし、各輪目標には4WS専用のmode 5、Orion専用のmode 6を定義した。さらに両機体共通で、CM4のローカルカメラを使うボール基準の相対速度mode 7と相対位置mode 8を定義した。ボール未検出時はそれぞれmode 3・4相当の指令へ切り替える。mode 4はCM4でmode 3・5・6のいずれかに変換し、G474へ直接送らない。[制御モード互換性](control_mode_compatibility.md)に機体別の対応とmode 6～8の配置、[4WS MainとのSPI通信案](4ws_spi_packet_proposal.md)にmode 5の配置とSPIの仮仕様を記す。mode 5～8と4WS向け経路は未実装。
 
 ## 関連ドキュメント
 

@@ -1,6 +1,6 @@
 ﻿# 制御パケット
 
-このドキュメントは、現行のG474搭載機体でAI(crane)からCM4を経由してSTM32(G474)へ送る制御パケットの責務とレイアウトをまとめます。Orionと4WSのmode 3～6の対応関係は[制御モード互換性](control_mode_compatibility.md)、4WS MainとのSPI通信は[仮仕様](4ws_spi_packet_proposal.md)を参照してください。
+このドキュメントは、現行のG474搭載機体でAI(crane)からCM4を経由してSTM32(G474)へ送る制御パケットの責務とレイアウトをまとめます。Orionと4WSのmode 3～8の対応関係は[制御モード互換性](control_mode_compatibility.md)、4WS MainとのSPI通信は[仮仕様](4ws_spi_packet_proposal.md)を参照してください。
 
 ## SSOT（この仕様の正本）
 
@@ -138,7 +138,7 @@ GUI_Qtの送信実装も
 | `3` | `POLAR_VELOCITY_TARGET_MODE` | `target_global_velocity_r`, `target_global_velocity_theta` | CM4 → G474 / cm4_sim → simulator-cli |
 | `4` | `POSITION_TARGET_WITH_TERMINAL_VELOCITY_MODE` | `terminal_velocity_x`, `terminal_velocity_y` | crane → CM4 / crane → cm4_sim |
 
-4WS専用のmode 5とOrion専用のmode 6は[制御モード互換性](control_mode_compatibility.md)で定義しています。どちらも未実装で、この表の実装済みモードには含めません。
+4WS専用のmode 5、Orion専用のmode 6、両機体共通のボール基準mode 7・8は[制御モード互換性](control_mode_compatibility.md)で定義しています。いずれも未実装で、この表の実装済みモードには含めません。
 
 > **`CONTROL_MODE_ARGS` は union です。`CONTROL_MODE` を見ずに復号してはいけません。**
 > mode 4 のパケットを mode 3 として復号すると `terminal_velocity_x/y` が `r/theta` として
