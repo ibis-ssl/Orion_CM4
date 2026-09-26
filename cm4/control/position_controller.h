@@ -33,7 +33,7 @@ struct PositionControllerConfig
   // crane の position_control.deceleration と一致させること [m/s^2]
   float deceleration = 3.0f;
   // 目標位置の許容誤差 [m]。crane では PositionTargetMode.position_tolerance として
-  // プランナが決めるが 715 バイトパケットには載らないので CM4 側の設定値にする。
+  // プランナが決めるが65バイトの指令には載らないのでCM4側の設定値にする。
   float position_tolerance = 0.01f;
   // crane からのパケットが途絶してから速度指令をゼロにするまで [ms]。
   //

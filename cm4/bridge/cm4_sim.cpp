@@ -1,6 +1,6 @@
 // このファイルはシミュレータ用の CM4 相当プロセスを担当する。
 //
-// crane から mode 4 (位置指令) の 715 バイトを UDP で受け、実機と同一の
+// crane から機体別の65バイト指令をUDPで受け、実機と同一の
 // position_controller で位置制御ループを閉じ、mode 3 (速度指令) の 715 バイトを
 // simulator-cli へ UDP で送る。simulator-cli は G474 とロボット物理を担当し、
 // 位置制御は行わない。
@@ -51,7 +51,8 @@ namespace
 constexpr int kRobotSlots = 11;
 constexpr int kCmdSize = 64;
 constexpr int kSlotSize = kCmdSize + 1;
-constexpr int kPacketSize = kSlotSize * kRobotSlots;  // 715
+constexpr int kInputPacketSize = kSlotSize;  // craneからの自機宛てユニキャスト: 65B
+constexpr int kPacketSize = kSlotSize * kRobotSlots;  // simulator-cliへの出力: 715B
 // feedback のレイアウトと位置の取り出しは robot_feedback_packet.h が正本。
 constexpr int kFeedbackSize = FEEDBACK_PACKET_SIZE;
 
@@ -106,7 +107,7 @@ void printUsage(const char * argv0)
     "使い方: %s [オプション]\n"
     "\n"
     "  --robot-ids 0,1,2         担当するスロット (既定: 0..10 の全 11 台)\n"
-    "  --in-port 12345           crane からの mode 4 を受ける UDP ポート\n"
+    "  --in-port 12345           crane からの65B指令を受ける UDP ポート\n"
     "  --out-addr 127.0.0.1      simulator-cli の待つアドレス\n"
     "  --out-port 12346          simulator-cli の --ibis-port と揃える\n"
     "  --feedback-port-base 50100 simulator-cli の --ibis-feedback-port-base と揃える\n"
@@ -122,7 +123,7 @@ void printUsage(const char * argv0)
     "  --rx-jitter-ms 0          同 ジッタ (一様分布 +-)\n"
     "  --rx-loss-rate 0.0        同 パケットロス率 0.0..1.0\n"
     "  --seed 0                  劣化注入の乱数シード (再現性のため)\n"
-    "  --config-port %d          crane からの位置制御設定パケット (20B) を受けるポート\n"
+    "  --config-port %d          crane からの位置制御設定パケット (28B) を受けるポート\n"
     "  --vision-echo feedback|crane\n"
     "                            出力パケットの VISION_GLOBAL_X/Y に何を入れるか\n"
     "  --kp / --decel / --tolerance / --command-timeout-ms / --feedback-timeout-ms\n"
@@ -314,7 +315,7 @@ public:
     mixHash(static_cast<uint64_t>(delay * 1000.0 + 0.5));
     Entry e;
     e.deliver_ms = now_ms + static_cast<uint64_t>(delay + 0.5);
-    memcpy(e.data, data, kPacketSize);
+    memcpy(e.data, data, kInputPacketSize);
     queue_.push_back(e);
     // ジッタで順序が入れ替わりうるので配送時刻順に保つ
     std::stable_sort(queue_.begin(), queue_.end(), [](const Entry & a, const Entry & b) { return a.deliver_ms < b.deliver_ms; });
@@ -325,7 +326,7 @@ public:
   bool pop(uint64_t now_ms, uint8_t * out)
   {
     if (queue_.empty() || queue_.front().deliver_ms > now_ms) return false;
-    memcpy(out, queue_.front().data, kPacketSize);
+    memcpy(out, queue_.front().data, kInputPacketSize);
     queue_.pop_front();
     return true;
   }
@@ -346,7 +347,7 @@ private:
   struct Entry
   {
     uint64_t deliver_ms;
-    uint8_t data[kPacketSize];
+    uint8_t data[kInputPacketSize];
   };
   std::mt19937 rng_;
   double delay_ms_, jitter_ms_, loss_rate_;
@@ -528,7 +529,7 @@ int main(int argc, char * argv[])
   const int in_sock = bindUdp(nullptr, opt.in_port, /*reuse_addr=*/false);
   if (in_sock < 0) return 1;
 
-  // crane からの位置制御設定。crane は broadcast で送るので INADDR_ANY に bind する。
+  // 設定入力はユニキャストとloopbackの双方を受けるためINADDR_ANYにbindする。
   const int config_sock = orion::openConfigSocket(opt.config_port);
   if (config_sock < 0) return 1;
 
@@ -580,10 +581,10 @@ int main(int argc, char * argv[])
   }
 
   printf("cm4_sim 開始\n");
-  printf("  crane 入力      : 0.0.0.0:%d (mode 4, 715B)\n", opt.in_port);
+  printf("  crane 入力      : 0.0.0.0:%d (機体別65B)\n", opt.in_port);
   printf("  simulator 出力  : %s:%d (mode 3, 715B)\n", opt.out_addr.c_str(), opt.out_port);
   printf("  feedback 入力   : 127.0.0.1:%d+id\n", opt.feedback_port_base);
-  printf("  設定入力        : 0.0.0.0:%d (20B)\n", opt.config_port);
+  printf("  設定入力        : 0.0.0.0:%d (28B)\n", opt.config_port);
   if (opt.feedback_relay) printf("  feedback 再配信 : 224.5.20.(100+id):%d+id\n", opt.feedback_relay_port_base);
   printf("  担当スロット    :");
   for (int id : opt.robot_ids) printf(" %d", id);
@@ -598,7 +599,7 @@ int main(int argc, char * argv[])
   printf("  feedback を 1 度も受けるまでは r=0 を出し続ける (simulator の vision キャッシュを埋めるため)\n");
   fflush(stdout);
 
-  uint8_t rx[kPacketSize + 64];
+  uint8_t rx[kInputPacketSize + 64];
   uint8_t tx[kPacketSize];
   uint8_t fb[kFeedbackSize + 64];
   uint8_t check_counter = 0;
@@ -608,31 +609,25 @@ int main(int argc, char * argv[])
   // --- crane からの受信を劣化キューへ積む（ノンブロッキング） ---
   auto drainCraneInput = [&]() {
     while (true) {
-      // MSG_TRUNC でデータグラムの実長を得る。付けないと 716 バイトが
-      // 715 バイトへ切り詰められ「正常な全ゼロパケット」に化ける。
+      // MSG_TRUNCで実長を得て、65バイトを超えるデータグラムを拒否する。
       const ssize_t n = recv(in_sock, rx, sizeof(rx), MSG_DONTWAIT | MSG_TRUNC);
       if (n < 0) break;
-      if (n != kPacketSize) continue;  // 715 バイト以外は捨てる
+      if (n != kInputPacketSize) continue;
       degrader.push(rx, clock.nowMs());
     }
   };
 
   // --- 劣化キューから期限到来分を取り出してロボット状態へ反映 ---
   auto applyDeliveredCommands = [&]() {
-    uint8_t pkt[kPacketSize];
+    uint8_t pkt[kInputPacketSize];
     while (degrader.pop(clock.nowMs(), pkt)) {
-      for (int slot = 0; slot < kRobotSlots; ++slot) {
-        const int offset = slot * kSlotSize;
-        const uint8_t robot_id = pkt[offset];
-        if (robot_id >= kRobotSlots || !robots[robot_id].handled) continue;
-        const uint8_t * cmd = pkt + offset + 1;
-        // 空スロット (コマンド 64 バイトが全ゼロ) はスキップ。
-        // 判定は実機経路と共有する (robot_command_ops.h)。
-        if (commandSlotIsEmpty(cmd)) continue;
-        memcpy(robots[robot_id].command, cmd, kCmdSize);
-        robots[robot_id].has_command = true;
-        robots[robot_id].command_time_ms = clock.nowMs();
-      }
+      const uint8_t robot_id = pkt[0];
+      if (robot_id >= kRobotSlots || !robots[robot_id].handled) continue;
+      const uint8_t * cmd = pkt + 1;
+      if (commandSlotIsEmpty(cmd)) continue;
+      memcpy(robots[robot_id].command, cmd, kCmdSize);
+      robots[robot_id].has_command = true;
+      robots[robot_id].command_time_ms = clock.nowMs();
     }
   };
 

@@ -28,7 +28,7 @@ namespace orion
 //
 //   0..3   magic 'O','C','4','C'
 //   4      version (= 2)
-//   5      robot_id (0xFF = 全機宛)
+//   5      robot_id (0xFF = 全機に適用、UDP宛先は機体ごとに指定)
 //   6..7   予約 (0)
 //   8..11  position_gain       float32 little endian
 //   12..15 deceleration        float32 little endian
@@ -141,7 +141,7 @@ struct ConfigReceiver
 
 // 設定ポートを bind した非ブロッキング UDP ソケットを返す。失敗なら -1。
 //
-// crane は broadcast で送るので INADDR_ANY に bind する。127.0.0.1 では届かない。
+// 各CM4のIP宛てユニキャストと診断用loopbackの双方を受けるためINADDR_ANYにbindする。
 // SO_REUSEADDR は付けない。同じポートを 2 プロセスが bind できてしまうと、
 // 設定パケットが両者に振り分けられて「たまに効かない」状態になる。
 inline int openConfigSocket(int port)
@@ -172,7 +172,7 @@ inline int openConfigSocket(int port)
 // 同じ値を定期送信するので、毎回出すと現地で本当に読みたいログが流れてしまう。
 inline void drainConfigSocket(int sock, const int * robot_ids, size_t robot_count, PositionControllerConfig * config, ConfigReceiver * state)
 {
-  // 20 バイトより大きいデータグラムを WrongSize として数えるために余裕を持たせる。
+  // 28バイト以外のデータグラムをWrongSizeとして数えるために余裕を持たせる。
   uint8_t buf[64];
   while (true) {
     const ssize_t n = recv(sock, buf, sizeof(buf), MSG_DONTWAIT | MSG_TRUNC);
@@ -180,7 +180,7 @@ inline void drainConfigSocket(int sock, const int * robot_ids, size_t robot_coun
 
     PositionControllerConfig candidate = *config;
     const ConfigPacketStatus status = decodeConfigPacket(buf, static_cast<size_t>(n), robot_ids, robot_count, &candidate);
-    // 他機宛は異常ではないので数えもログもしない (crane は broadcast で送る)。
+    // 他機宛は異常ではないので数えもログもしない。
     if (status == ConfigPacketStatus::NotForThisRobot) continue;
 
     if (status != ConfigPacketStatus::Applied) {

@@ -10,7 +10,7 @@ import socket
 import struct
 import time
 
-from packet_codec import PACKET_SIZE, SLOT_SIZE, CHECK_COUNTER, CONTROL_MODE
+from packet_codec import INPUT_PACKET_SIZE, CHECK_COUNTER, CONTROL_MODE
 
 # Linux UAPI。CM4の64bit Raspberry Pi OSを対象とする。
 SO_TIMESTAMPNS_NEW = 64
@@ -22,15 +22,11 @@ CSV_FIELDS = ('realtime_ns', 'monotonic_ns', 'kernel_ns', 'source_ip',
 
 
 def decode(data, robot_id):
-    if len(data) != PACKET_SIZE:
+    if len(data) != INPUT_PACKET_SIZE:
         return 'invalid', None, None
-    commands = [data[i + 1:i + SLOT_SIZE] for i in range(0, PACKET_SIZE, SLOT_SIZE)
-                if data[i] == robot_id and any(data[i + 1:i + SLOT_SIZE])]
-    if not commands:
+    if data[0] != robot_id or not any(data[1:]):
         return 'empty', None, None
-    if len(commands) != 1:
-        return 'ambiguous', None, None
-    cmd = commands[0]
+    cmd = data[1:]
     return 'ok', cmd[CONTROL_MODE], cmd[CHECK_COUNTER]
 
 

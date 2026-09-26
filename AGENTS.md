@@ -1,14 +1,13 @@
-﻿# About Answers
-1. Provide your final response to the user in Japanese.
-2. Write text assuming it is in UTF-8. Please note that Japanese characters are easily garbled.
+﻿# 動作環境
+- Raspberry Pi CM4（BCM2711、クアッドコア ARM Cortex-A72）で動作する。
 
+# 開発
+- 趣味開発の少人数チーム（2～3人）を前提に、変更に必要な最小限の手順を使う。詳細は `doc/development.md` を参照する。
+- コードファイルの冒頭に、そのファイルの機能と責務をコメントで記述すること。
+- `host/apps/host_lancher.py` と `host/apps/cam_viewer.py` は Windows と Linux の両環境に対応させること。
 
-# Operating environment
-1. It runs on an RaspberryPi CM4, BCM2711, a quad-core ARM Cortex-A72.
-2. Ignore portability as it only runs on specific chips.
-3. Describe the function and responsibility of the code file in a comment at the beginning of the file.
-4. Some tools work on Windows/Linux. : host/apps/host_lancher.py,host/apps/cam_viewer.py
-
-# Document
-1. Write important points in doc/overview.md to leave information for other developers.
-2. Documents should be written in Japanese
+# ドキュメント
+- 日本語・UTF-8で記述すること。
+- README・セットアップ手順・仕様書には、現在の実装と運用に対応する内容だけを書く。過去の仕様との比較や変更経緯は書かない。
+- 作業記録は `doc/work_log.md`、過去の計画資料は `doc/history/` に分離し、現在の仕様の根拠として扱わない。
+- 仕様を変更したら該当文書を同じ変更で更新し、古くなった説明を削除する。重要な構成と文書への入口は `doc/overview.md` に残す。

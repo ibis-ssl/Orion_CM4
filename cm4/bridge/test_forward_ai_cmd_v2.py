@@ -38,7 +38,7 @@ BIN = os.path.normpath(BIN)
 from packet_codec import (  # noqa: E402
     CHECK_COUNTER, CMD_SIZE, CONTROL_MODE, CONTROL_MODE_ARGS, DRIBBLE_POWER, FEEDBACK_POS_X_OFFSET,
     FEEDBACK_POS_Y_OFFSET, FEEDBACK_SIZE, FEEDBACK_SYNC, FLAGS, KICK_POWER,
-    LINEAR_VELOCITY_LIMIT_HIGH, PACKET_SIZE, STOP_EMERGENCY_BIT, TARGET_GLOBAL_POS_X_HIGH,
+    LINEAR_VELOCITY_LIMIT_HIGH, INPUT_PACKET_SIZE, STOP_EMERGENCY_BIT, TARGET_GLOBAL_POS_X_HIGH,
     TERMINAL_VELOCITY_HIGH, build_config_packet, build_packet, encode_two_byte as enc)
 from packet_codec import MODE_POLAR_VELOCITY as POLAR_VELOCITY_TARGET_MODE  # noqa: E402
 from packet_codec import MODE_POSITION_TARGET as POSITION_TARGET_WITH_TERMINAL_VELOCITY_MODE  # noqa: E402
@@ -466,13 +466,14 @@ class ForwardAiCmdV2Test(unittest.TestCase):
         self.assertLessEqual(len(lines), 45, "UART 送信のたびに出ている (%d 行)" % len(lines))
 
     def test_malformed_datagrams_are_discarded(self):
-        """715 バイト以外は捨てる。旧実装は recv の戻り値を見ていなかった。"""
+        """65バイト以外と他機宛ての指令は採用しない。"""
         bridge = self.start(12480)
         command = build_command(7, POLAR_VELOCITY_TARGET_MODE)
         bridge.send_command(command)
         time.sleep(0.1)
         before = len(bridge.frames())
-        for payload in (b"", b"\x00" * 64, b"\x00" * (PACKET_SIZE - 1), b"\x00" * (PACKET_SIZE + 1)):
+        for payload in (b"", b"\x00" * 64, b"\x00" * (INPUT_PACKET_SIZE + 1),
+                        b"\x00" * 715, build_packet(bridge.robot_id + 1, command)):
             bridge.send_raw(payload)
             time.sleep(0.05)
         time.sleep(0.2)

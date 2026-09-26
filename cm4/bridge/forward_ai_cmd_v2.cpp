@@ -53,8 +53,7 @@
 
 constexpr int AI_CMD_V2_SIZE = 64;
 constexpr int AI_CMD_V2_ROBOT_NUM = 11;
-constexpr int AI_CMD_V2_SLOT_SIZE = AI_CMD_V2_SIZE + 1;  // robot_id 1B + コマンド 64B
-constexpr int AI_CMD_V2_PACKET_SIZE = AI_CMD_V2_SLOT_SIZE * AI_CMD_V2_ROBOT_NUM;  // 715B
+constexpr int AI_CMD_V2_PACKET_SIZE = AI_CMD_V2_SIZE + 1;  // robot_id 1B + コマンド 64B
 constexpr int CAM_BUF_SIZE = 7;                                      // camera 7 + ck1
 constexpr int UART_PACKET_SIZE = AI_CMD_V2_SIZE + CAM_BUF_SIZE + 1;  // local cam + ck
 constexpr long long LOCAL_CAMERA_TIMEOUT_MS = 100;
@@ -355,7 +354,7 @@ void printUsage()
     "  -s <bps>                    UART ボーレート (既定 1000000)\n"
     "  --serial-port <path>        UART デバイス (既定 %s)\n"
     "  --robot-id <n>              ロボット ID を明示指定 (既定: wlan0 の最終オクテット-100)\n"
-    "  --ai-cmd-port <port>        crane からの 715B 受信ポート (既定 12345)\n"
+    "  --ai-cmd-port <port>        crane からの 65B 受信ポート (既定 12345)\n"
     "  --local-cam-port <port>     ローカルカメラ受信ポート (既定 8890)\n"
     "  --feedback-port <port>      G474 feedback の loopback 受信ポート (既定 50000+100+id)\n"
     "  --config-port <port>        crane からの位置制御設定パケット受信ポート (既定 %d)\n"
@@ -475,7 +474,7 @@ int main(int argc, char * argv[])
   char ai_cmd_buf[AI_CMD_V2_PACKET_SIZE] = {};
   char feedback_buf[FEEDBACK_PACKET_SIZE] = {};
 
-  // 自機スロットの最新コマンド 64 バイト。uart_tx_buf とは分けて持つ。
+  // 自機宛ての最新コマンド 64 バイト。uart_tx_buf とは分けて持つ。
   // uart_tx_buf は header / camera / checksum で上書きされるため、次周期の
   // 入力として使い回すと位置制御の入力が汚れる。
   char latest_cmd[AI_CMD_V2_SIZE] = {};
@@ -538,7 +537,7 @@ int main(int argc, char * argv[])
   ioctl(ai_cmd_sock, FIONBIO, &val);
   ioctl(feedback_sock, FIONBIO, &val);
 
-  // crane からの位置制御設定パケット。crane は broadcast で送るので INADDR_ANY に bind する。
+  // 設定パケットは自機IP宛てのユニキャストで受ける。診断用loopbackも受けられるようINADDR_ANYにbindする。
   const int config_sock = orion::openConfigSocket(config_port);
   if (config_sock < 0) return 1;
 
@@ -590,19 +589,17 @@ int main(int argc, char * argv[])
     }
     const long long now_ms = get_current_time_ms();
 
-    // --- crane からの位置制御設定 (20 バイト) ---
+    // --- crane からの位置制御設定 (28 バイト) ---
     // 受信・検証・適用・ログは cm4_sim と共有する (config_packet.h)。
     // 途絶しても最後の値を保持する。ゲインは安全信号ではないので、
     // 設定が届かないことを理由に既定値へ戻すとかえって挙動が飛ぶ。
     orion::drainConfigSocket(config_sock, &machine_id, 1, &control_config, &config_receiver);
 
-    // --- crane からの 715 バイト ---
-    // 715 バイト以外は捨てる。旧実装は recv の戻り値を見ておらず、短いパケットや
-    // 受信失敗 (-1) でも前回バッファのまま回り続けていた。
+    // --- crane からの自機宛て65バイト ---
+    // データグラム長とrobot_idを検査し、自機の最新コマンドだけを採用する。
     size_t last_trace_adopt_index = SIZE_MAX;
     while (1) {
-      // MSG_TRUNC を付けるとデータグラムの実長が返る。付けないと 716 バイトが
-      // 715 バイトに切り詰められて「正常な全ゼロパケット」に化ける。
+      // MSG_TRUNCを付けると、65バイトより長いデータグラムも実長で拒否できる。
       iovec iov = {};
       char control[CMSG_SPACE(sizeof(timespec)) + CMSG_SPACE(sizeof(uint32_t))] = {};
       msghdr message = {};
@@ -651,24 +648,16 @@ int main(int argc, char * argv[])
           timing_trace.socket_drop_total});
         continue;
       }
-      for (int i = 0; i < AI_CMD_V2_ROBOT_NUM; i++) {
-        const int offset = i * AI_CMD_V2_SLOT_SIZE;
-        if ((uint8_t)ai_cmd_buf[offset] != (uint8_t)machine_id) continue;
-        // 空スロット (コマンド 64 バイトが全ゼロ) は指令ではないので採用しない。
-        // framework の ibisSlotIsEmpty() と同じ判定で、cm4_sim も同じ実装を使う
-        // (robot_command_ops.h)。全ゼロを採用してしまうと、位置制御では
-        // target_global_pos が (-32.767, -32.767) として復号される。
-        if (commandSlotIsEmpty((const uint8_t *)&ai_cmd_buf[offset + 1])) continue;
+      if ((uint8_t)ai_cmd_buf[0] == (uint8_t)machine_id &&
+        !commandSlotIsEmpty((const uint8_t *)&ai_cmd_buf[1])) {
+        const uint8_t * command = (const uint8_t *)&ai_cmd_buf[1];
         if (timing_trace.enabled) {
-          const uint8_t * command = (const uint8_t *)&ai_cmd_buf[offset + 1];
           trace_valid_self = true;
           trace_counter = command[CHECK_COUNTER];
           trace_has_sequence = memcmp(command + 38, "TPRB", 4) == 0;
           if (trace_has_sequence) memcpy(&trace_sequence, command + 42, sizeof(trace_sequence));
         }
-        // コマンドは 64 バイト。旧実装は sizeof(uart_tx_buf) = 72 バイト読んでおり、
-        // i == 10 で ai_cmd_buf[651..722] の 8 バイト境界外読み出しになっていた。
-        memcpy(latest_cmd, &ai_cmd_buf[offset + 1], AI_CMD_V2_SIZE);
+        memcpy(latest_cmd, command, AI_CMD_V2_SIZE);
         has_command = true;
         command_time_ms = now_ms;
         if (timing_trace.enabled) {

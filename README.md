@@ -81,6 +81,8 @@ Docker build context は `host/robot-manager/` です。
 
 機体番号を `N` とすると:
 
+- AI 制御指令: `192.168.20.(100 + N):12345`（UDP ユニキャスト、65バイト）
+- 位置制御設定: `192.168.20.(100 + N):12350`（UDP ユニキャスト、28バイト）
 - 制御 API: `192.168.20.(100 + N):8000`
 - カメラ API: `192.168.20.(100 + N):8001`
 - カメラ multicast: `224.5.10.(100 + N):5100 + N`
@@ -89,9 +91,11 @@ Docker build context は `host/robot-manager/` です。
 ## 詳細ドキュメント
 
 - [概要](doc/overview.md)
+- [開発とドキュメントのルール](doc/development.md)
 - [CM4 セットアップ](SETUP.md)
 - [ホスト PC 側ツール](doc/host_tools.md)
 - [フリート管理(OTA・複数台一括設定)](doc/fleet.md)
+- [MCUファームウェア更新](doc/firmware_update.md)
 - [カメラ制御・デバッグ](doc/camera.md)
 - [制御パケット](doc/control_packet.md)
 - [フィードバックパケット](doc/feedback_packet.md)

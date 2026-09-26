@@ -42,8 +42,9 @@ class PacketCodecOffsetTest(unittest.TestCase):
                 "packet_codec.%s が C++ 側とずれている (python=%r cpp=%r)" % (name, getattr(packet_codec, name), value))
 
     def test_derived_sizes(self):
-        """C++ 側は 715 バイトを組み立てないので、派生値はここで固定する。"""
+        """CM4入力は65バイト、シミュレータ出力は715バイト。"""
         self.assertEqual(packet_codec.SLOT_SIZE, packet_codec.CMD_SIZE + 1)
+        self.assertEqual(packet_codec.INPUT_PACKET_SIZE, 65)
         self.assertEqual(packet_codec.PACKET_SIZE, packet_codec.SLOT_SIZE * packet_codec.SLOTS)
         self.assertEqual(packet_codec.SLOTS, 11)
         self.assertEqual(packet_codec.PACKET_SIZE, 715)
