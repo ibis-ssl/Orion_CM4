@@ -107,22 +107,15 @@ byte 3 は指令の `check_counter` の反射です。mode 4 の位置制御経�
 - `64..119`: `tx_value_array[14]`、little-endian IEEE754 float
 - `120..127`: reserved
 
-### カメラ値の復元
+### feedback byte 60..63のデコード
 
-`host/lib/feedback/packet.py` では、通信量削減用に圧縮された値を次のように復元します。
+`host/lib/feedback/packet.py` はbyte 60..63を次の計算でデコードします。これらの値をCM4のローカルカメラ観測値として制御に使用しません。
 
 - `camera_pos_x = camera_pos_x_div2 * 2`
 - `camera_radius = camera_radius_div4 * 4`
 - `camera_pos_y` と `camera_fps` はそのまま使います。
 
-### CM4 カメラから feedback までの経路
-
-`cm4/camera/cam_server_v3.py` は検出した `x, y, radius, fps` をローカル UDP `127.0.0.1:8890` へ 7 バイトで送ります。
-`cm4/bridge/forward_ai_cmd_v2.cpp` はこの値を STM32 へ送る UART パケットへ挿入します。
-STM32 は受け取ったカメラ値を feedback パケットの `camera_pos_x_div2`, `camera_pos_y`, `camera_radius_div4`, `camera_fps` に反映します。
-
-カメラ更新レートは STM32 の feedback 受信周期 125Hz より低いため、`cm4/bridge/forward_ai_cmd_v2.cpp` は最後に受信したカメラ値を短時間保持して使います。
-一定時間更新が無い場合やカメラが接続されていない場合は、`x=0, y=0, radius=0, fps=0` を STM32 へ送ります。
+feedbackのbyte 60..63はレイアウト上のフィールドとして残しますが、CM4のローカルカメラ観測値としては利用しません。CM4が受けるカメラパケットの形式は[カメラ](camera.md)を参照してください。
 
 ### tx_value_array
 

@@ -64,9 +64,9 @@
 - `--mcast-if` で送信インターフェイス名を指定できます。
 - `--mcast-if-ip` で送信元 IPv4 アドレスを直接指定できます。
 
-### STM32 feedback 用ローカルカメラ UDP
+### CM4向けローカルカメラ UDP
 
-`cm4/bridge/forward_ai_cmd_v2.cpp` が STM32 へカメラ情報を渡せるよう、`cam_server_v3.py` は検出結果をローカル UDP にも送ります。
+`cam_server_v3.py` はCM4内で使う検出結果をローカルUDPにも送ります。`cm4/bridge/forward_ai_cmd_v2.cpp`が受信します。
 
 - 既定の送信先: `127.0.0.1:8890`
 - 送信ペイロード: 7 バイト
@@ -78,7 +78,7 @@
 - `--disable-local-cam-udp` でこのローカル UDP 送信を無効化できます。
 
 カメラが未接続、切断、またはボール未検出の場合は `radius=0, x=0, y=0` になるよう扱います。
-カメラ更新が途絶えた場合は `cm4/bridge/forward_ai_cmd_v2.cpp` 側のタイムアウトで STM32 へ送る値が 0 に戻ります。
+カメラ更新が途絶えた場合は `cm4/bridge/forward_ai_cmd_v2.cpp` 側で100 ms後に観測値を無効とします。ローカルカメラの値はG474向けUARTパケットに含めません。
 
 ボール基準のmode 7・8では、CM4がこのローカルUDPを使って検出状態を判定する案です。画像座標からメートル座標・速度への変換と、未検出時のmode 3・4相当への切り替えは[制御モード互換性](control_mode_compatibility.md)を参照してください。mode 7・8の処理は未実装です。
 

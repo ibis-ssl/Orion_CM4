@@ -222,7 +222,7 @@ class ForwardAiCmdV2Test(unittest.TestCase):
         """素通し経路は byte0 を 0xFE にする以外、受信 64 バイトを変えない。"""
         self.assertEqual(frame[0], 0xFE)
         self.assertEqual(bytes(frame[1:CMD_SIZE]), command[1:CMD_SIZE])
-        # カメラ未接続なので byte 64..70 はゼロ、byte 71 はチェックサム。
+        # byte 64..70 は未定義領域。送信側は常にゼロで初期化する。
         self.assertEqual(frame[CMD_SIZE:UART_PACKET_SIZE - 1], [0] * 7)
         self.assertEqual(frame[UART_PACKET_SIZE - 1], checksum(frame))
 

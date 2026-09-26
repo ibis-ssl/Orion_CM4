@@ -54,8 +54,9 @@
 constexpr int AI_CMD_V2_SIZE = 64;
 constexpr int AI_CMD_V2_ROBOT_NUM = 11;
 constexpr int AI_CMD_V2_PACKET_SIZE = AI_CMD_V2_SIZE + 1;  // CHECK_COUNTER 1B + コマンド 64B
-constexpr int CAM_BUF_SIZE = 7;                                      // camera 7 + ck1
-constexpr int UART_PACKET_SIZE = AI_CMD_V2_SIZE + CAM_BUF_SIZE + 1;  // local cam + ck
+constexpr int CAM_BUF_SIZE = 7;  // CM4内で受け取るローカルカメラUDP
+constexpr int UART_UNDEFINED_SIZE = 7;  // G474向けフレームのbyte 64..70。意味は定義しない
+constexpr int UART_PACKET_SIZE = AI_CMD_V2_SIZE + UART_UNDEFINED_SIZE + 1;
 constexpr long long LOCAL_CAMERA_TIMEOUT_MS = 100;
 
 // G474 feedback パケット (robot_feedback.out が loopback unicast で渡してくる) の
@@ -475,7 +476,7 @@ int main(int argc, char * argv[])
   char feedback_buf[FEEDBACK_PACKET_SIZE] = {};
 
   // 自機宛ての最新コマンド 64 バイト。uart_tx_buf とは分けて持つ。
-  // uart_tx_buf は header / camera / checksum で上書きされるため、次周期の
+  // uart_tx_buf は header / 末尾未定義領域 / checksum で上書きされるため、次周期の
   // 入力として使い回すと位置制御の入力が汚れる。
   char latest_cmd[AI_CMD_V2_SIZE] = {};
   char uart_tx_buf[UART_PACKET_SIZE] = {};
@@ -711,6 +712,9 @@ int main(int argc, char * argv[])
     // --- 送信パケットの組み立て ---
     memcpy(uart_tx_buf, latest_cmd, AI_CMD_V2_SIZE);
     uart_tx_buf[0] = 254;  //パケットヘッダ
+    // フレーム長とチェックサム位置を維持する。byte 64..70 は未定義領域として
+    // 毎回ゼロに初期化し、ローカルカメラの値をG474へ渡さない。
+    memset(&uart_tx_buf[AI_CMD_V2_SIZE], 0, UART_UNDEFINED_SIZE);
 
     // mode 4 を G474 へ流してはならない。G474 は mode 4 を解釈できず、
     // CONTROL_MODE_ARGS を union として mode 3 の (r, theta) に読み違える。
@@ -768,13 +772,11 @@ int main(int argc, char * argv[])
       camera.pos_xy[1] = ((uint8_t)latest_local_cam_buf[2] << 8) + (uint8_t)latest_local_cam_buf[3];
       camera.radius = ((uint8_t)latest_local_cam_buf[4] << 8) + (uint8_t)latest_local_cam_buf[5];
       camera.fps = (uint8_t)latest_local_cam_buf[6];
-      memcpy(&uart_tx_buf[UART_PACKET_SIZE - CAM_BUF_SIZE - 1], latest_local_cam_buf, CAM_BUF_SIZE);
     } else {
       camera.pos_xy[0] = 0;
       camera.pos_xy[1] = 0;
       camera.radius = 0;
       camera.fps = 0;
-      memset(&uart_tx_buf[UART_PACKET_SIZE - CAM_BUF_SIZE - 1], 0, CAM_BUF_SIZE);
     }
 
     // cksum計算

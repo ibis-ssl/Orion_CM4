@@ -27,7 +27,7 @@ byte 0..37 の全オフセット・`ControlMode`・`FlagAddress` を `static_ass
 - `cm4/bridge/robot_packet_layout_test.cpp`
   - 上記のレイアウトが正本からドリフトしていないことを検査します。
 - `cm4/bridge/forward_ai_cmd_v2.cpp`
-  - AI から受け取った制御パケットとローカルカメラ情報をまとめ、UART で STM32 へ送ります。
+  - AI から受け取った制御パケットをUARTでSTM32へ送ります。ローカルカメラ情報はCM4内で受信します。
     mode 4 を受けたときは位置制御ループを閉じて mode 3 へ変換します。
 - `cm4/control/position_controller.h` / `.cpp`
   - 位置指令から速度指令を作る制御則と、通信途絶時の安全停止判定です。
@@ -245,7 +245,7 @@ version不一致は`UnsupportedVersion`として拒否し、理由をログに�
 
 ## cm4/bridge/forward_ai_cmd_v2.cpp
 
-`cm4/bridge/forward_ai_cmd_v2.cpp` は AI 側 UDP とローカルカメラ UDP を受け、STM32 へ UART 送信します。
+`cm4/bridge/forward_ai_cmd_v2.cpp` はAI側UDPの制御指令をSTM32へUART送信します。ローカルカメラUDPもCM4内で受信します。
 
 ### 入力
 
@@ -276,8 +276,9 @@ version不一致は`UnsupportedVersion`として拒否し、理由をログに�
 - UART port: `/dev/serial0`（CM4_108ではPL011の`ttyAMA0`）。`--serial-port` で変更可。
 - 既定 baudrate: `1000000`
 - `-s` で baudrate を変更できます。
-- 送信サイズは `AI_CMD_V2_SIZE + CAM_BUF_SIZE + 1`、つまり `72` バイトです。
+- 送信サイズは指令64バイト＋未定義領域7バイト＋チェックサム1バイトの`72`バイトです。
 - UART 送信バッファの先頭は `254` に上書きします。
+- byte 64..70はプロトコル上の未定義領域です。CM4は毎フレーム0で初期化します。受信側は値に意味を持たせません。
 - 末尾 1 バイトはチェックサムです（byte 0..70 の総和 & 0xFF）。
 
 72 バイト x 10 bit / 1 Mbps = **720 us/パケット**です。送信レートを上げると UART 占有率が
@@ -540,18 +541,9 @@ crane が沈黙しても、**CM4 は `check_counter` を進めながら送信を
 使うので、CM4 の推定値を書き戻すと自己帰還になります。`cm4_sim` だけは simulator-cli の
 0.5 m 照合ゲートを通すために feedback 由来の実位置で上書きします。
 
-### ローカルカメラ情報の挿入
+### CM4内のローカルカメラ受信
 
-`cm4/camera/cam_server_v3.py` は、検出したカメラ情報をローカル UDP `127.0.0.1:8890` へ 7 バイトで送ります。
-`cm4/bridge/forward_ai_cmd_v2.cpp` はこの値を受け、UART パケット末尾手前に挿入します。
-
-- `0..1`: x 座標
-- `2..3`: y 座標
-- `4..5`: radius
-- `6`: fps
-
-カメラ更新レートは STM32 への送信周期より低いため、`cm4/bridge/forward_ai_cmd_v2.cpp` は最後に受信したカメラ情報を短時間保持して使います。
-一定時間更新が無い場合、またはカメラが接続されていない場合は、カメラ領域を 0 で埋め、`x=0, y=0, radius=0, fps=0` として扱います。
+`cm4/camera/cam_server_v3.py` は検出結果をローカルUDP `127.0.0.1:8890`へ7バイトで送ります。`cm4/bridge/forward_ai_cmd_v2.cpp`はCM4内でこれを受信し、100 ms以内の最新値を保持します。UARTのbyte 64..70には反映しません。カメラパケットの形式とmode 7・8の利用案は[カメラ](camera.md)と[制御モード互換性](control_mode_compatibility.md)を参照してください。
 
 ## ホスト側制御ツール
 
