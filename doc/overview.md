@@ -1,5 +1,202 @@
 # overview
 
+## ログの管理方針（2026-09-26）
+
+- ログはGitへ追加しない。`.gitignore`で`*.log`とルートの`runtime/`全体を除外し、実行ログ・計測CSV・packet capture・一時BINはローカルに保存する。既存の追跡対象もファイル本体を残してindexから除外した。過去のGit履歴は書き換えていない。
+
+## CM4_101・103～110のMain更新結果（2026-09-20実施）
+
+- 対象9台すべてでMainのbuild ID=`1789881653`、CONFIRMED状態、期待BINとのCRC32C一致を確認した。103は導入済みのため再書込みせず、他8台を更新した。
+- 105はSlot A（CRC32C=`78EAC00D`）、101・103・104・106～110はSlot B（CRC32C=`736AA93F`）から起動。各機の旧active slotは保持し、CAN基板のFWは書き換えていない。
+- 最終確認では全9台の制御APIが`running:true`、`ai_cmd_v2.out`と`robot_feedback`の稼働を確認した。一部の更新直後にはBLDCのFW情報照会が一時的に応答しなかったため、全機のCAN状態まで保証する結果ではない。
+- 103・104・105・106・109・110では制御再開時、`cm4/camera/dist/cam_server_v3`欠落によるHTTP 500を確認した。制御ブリッジは起動しているが、カメラ起動は別途修正が必要である。
+
+## CM4_107のデフォルトゲートウェイ調査（2026-09-20）
+
+- SSHで確認したNetworkManager 1.52.1の接続`SSL_ibis`（wlan0）は、`ipv4.method=manual`、`192.168.20.107/24`、DNS=`8.8.8.8`。保存設定は`ipv4.never-default=yes`、`ipv4.gateway`と`ipv4.routes`は空だった。デフォルト経路を禁止する設定のため、ゲートウェイ入力だけでは解決しない。
+- 実行時には`default via 192.168.20.1 dev wlan0`（metric 0）が存在し、ユーザー申告の手動追加と整合する。`https://example.com`へのHEADはHTTP 200で成功。保存プロファイルと実行時の経路は区別する。
+- nmtuiでは`SSL_ibis`のIPv4設定で「デフォルト経路として使用しない」に相当するチェックを外し、ゲートウェイ`192.168.20.1`を保存する。CLIでの同等操作は`sudo nmcli connection modify SSL_ibis ipv4.never-default no ipv4.gateway 192.168.20.1`、適用は`sudo nmcli device reapply wlan0`。調査時には機体設定の変更・再適用は実施していない。
+- `doc/fleet.md`の「ロボット用LANはインターネットに到達できない」は従来の環境前提であり、今回のAP環境には一律に当てはまらない。
+
+## CM4_103のMain単独更新完了（2026-09-20）
+
+- ユーザー指示によりMainのみ更新した。Mainリポジトリのコミット`7cf72de6e07db6908fc7986888de542e6482ed6f`（dirtyなし）から`Script/build_slot_b.ps1 -Rebuild`でA/Bを再ビルドし、build ID=`1789881653`を生成した。
+- CM4_103の`/home/ibis/main-fw-update-oqubcbwn/`へ更新CLI・確認CLI・A/B BINを配置し、転送前後のSHA-256一致を確認。`main_ab_updater.py`で非active Slot Bへ84,864 byteを書込み、generation=2、CRC32C=`736AA93F`、9.672秒で成功した。ログは同ディレクトリの`update.log`に保存した。
+- 更新後のFWVR応答は`active_slot=B`、Main Bのbuild ID=`1789881653`・CRC32C=`736AA93F`で期待BINと`SAME`。Mainソースではvalid maskをCONFIRMED metadata（state=4）の場合にだけ立てるため、確定済み状態も確認できた。
+- 旧Main Aはbuild ID=`1789875047`・CRC32C=`D79444C7`のまま保持。Sub=`1789483368/12E9586C`、BLDC CAN1=`1789881156/4E0D4BEB`、BLDC CAN2=`1789870533/F542F566`、Power=`1789874792/F4F0A5A2`も更新前後で一致し、CAN基板には書込みを行っていない。
+- 通常制御APIは更新前後とも`running:false`。走行試験は行っていない。
+
+## CM4_103のMain更新可否確認（2026-09-20）
+
+- `CM4_103`（`192.168.20.103`）へSSH接続し、確認前後とも同IPの8000番APIで`running:false`、UART使用プロセスなしを確認した。APIはlocalhostにはbindしていない。
+- `/dev/serial0`は`ttyS0`（mini UART）。1 MbaudでFWVR照会とMain bootloaderのOFW1通信に成功した。長時間転送の安定性は今回未検証。
+- MainはSlot Aで稼働し、build ID=`1789875047`（2026-09-20 03:30:47 UTC）、CRC32C=`D79444C7`。Slot BはFWVRで`UNREACHABLE`（descriptor未検出）。
+- FWUP command 4でMainを一時的に更新モードへ移し、書込みを伴わないINFOを実行。`status=0, target_slot=1(B), valid_mask=1(Aのみ有効), generation=2`を取得し、Aを保持してBへ更新する入口が実機で動作することを確認した。BEGIN/CHUNK/FINALIZE/CONFIRMは送信していない。
+- REBOOT後、Slot Aの同一build ID・CRC32Cと全CAN基板のFW情報応答を再確認した。FW書込みは未実施で、更新成功そのものを検証した結果ではない。
+- CM4側checkoutは`28c3ca0`。`/home/ibis`配下を深さ5まで探索した範囲にはMain更新CLIやBINがなかった。今回はローカルの既存PythonツールをSSH標準入力から実行した。実更新時は更新対象版のSlot A/B用BINと更新ツールを用意する。
+
+## PC→CM4→G474 実機タイミング調査結果（2026-09-20）
+
+詳細は [timing_investigation_20260920.md](timing_investigation_20260920.md)。PC有線キャプチャ、CM4 kernel/recv/write、COM56、STM32記録SRAMを同時評価した。
+mode3の集中はCM4 kernel到着時点で既に存在し、broadcastで再現、108 unicastとlocalhostでは本試験で解消。
+最終代表値のSTM32受信間隔p50/p99/maxはbroadcast=1.157/97.263/198.403 ms、unicast=15.225/16.377/17.150 ms。
+CM4 kernel→読出しp99約1.1 ms、読出し→write p99 0.014～0.040 ms、STM32受信→採用p99約2 msで、約100 msの原因はブリッジ内ではない。
+mode4のSTOP試験では入力集中があってもUART約100 Hzを維持した。走行時制御まで保証する結果ではない。
+COMデバッグログに文字欠落があったため最終評価には計測終了後のST-Link HOTPLUG SRAM読出しも併用。制御UARTエラーは最終全条件0。
+試験送信停止、control_server.service active、通常アプリ再開、HTTP running=trueを確認済み。
+CM4本番バイナリは未変更、G474は診断追加build1789867492をSlot Aに配置。変更前Flashバックアップと全ログはPCのruntime/timing-20260920に保存した。
+
+## PC→CM4→G474 同時計測の当初計画（2026-09-20、実施結果は上記）
+
+- 目的は約102.4 ms周期のバーストが最初に現れる処理境界を特定すること。journal表示時刻やPCのCOM受信時刻は物理到着時刻とは区別する。
+- PCの送信器候補は `Documents/GUI_Qt/Qt Communication Tester/Qt_Communication_Tester`。ソースは15 msタイマー、宛先192.168.20.255:12345固定、送信ごとにQUdpSocketを生成・bind・closeする。稼働exeとの一致は未確認。bind/sendの戻り値、GUIイベント配送の遅れも測る。既存挙動の測定前にソケット寿命やタイマーを修正しない。
+- G474 repoは `C:/Users/hiroyuki/STM32CubeIDE/workspace_1.17.0/G474_Orion_main`。通常USART2受信はIRQ→cm4_uart_rx_byte→HAL_UART_RxCpltCallbackで72 byte組立・チェックサム・cmd_v2_buf更新まで実行する。2 KBリングからmain loopで解析する経路はFW gateway用であり、通常指令とは区別する。
+- G474 USART2は1 Mbps、COM56/LPUART1は2 Mbps・8N1、TIM7制御は500 Hz。通常デバッグ表示は設定60 Hzの状態snapshot。Dtはcounter変化からの経過時間、Ltcyは指令値、AI_CMDのHz欄は未実装とのコメントがあり、いずれもフレームごとの実受信間隔として扱わない。UART RAWのbyte/rxirq/frame/valid/PE/FE/NE/OREを補助指標にする。
+- 同一run内でPCのdeadline/send前後/戻り値、CM4のkernel到着/recv直後/UART write前後・実書込byte数、G474のフレーム完了/checksum/制御採用時刻を採取する。mode3予約領域のTPRB＋32bit連番で対応付ける（既存probeの38..45 byte）。既存送信器の初回測定はcounter・payloadで暫定照合し、連番導入は別条件とする。
+- CM4は本体受信ソケットにrecvmsgとkernel timestampを追加する案を優先し、受信全件と最新値採用・間引きを分けて記録する。udp_rx_monitor.pyは単独受信専用で、通常ai_cmd_v2と同じポートへ並行bindしない。ソケットの競合やパケット分配を避ける。
+- G474に追加する場合はフレーム完了時の単調増加時刻・連番を固定長リングに保存し、main側からCOM56へ排出する。IRQ内printfは禁止。診断リングのoverflow、ログ欠落、時計wrap、計測有効/無効による負荷差を記録する。必要ならRX byte/IRQ時刻の短時間traceを追加し、IRQサービス時刻を線上到着時刻と断定しない。
+- 試験は各30秒×3回を基本に、(A)既存送信器・元の宛先、(B)宛先のみ108ユニキャスト、(C)計測用PC送信器・同一周期ユニキャスト、(D)CM4 localhost・同一周期、の順。power_save off、カメラ/feedback/ログ条件を揃える。通常負荷の有無や省電力on/offは別の一変数比較とし、mode4はmode3の境界特定後に評価する。
+- 周期分布p50/p95/p99/max、短間隔(<3ms)と長間隔(>30ms)の組合せ、連番欠落・重複・間引き、約102.4ms周期の持続を比較する。PCとCM4とSTM32の時計を直接減算しない。同一装置内遅延と連番対応した間隔を主指標にし、装置間絶対遅延には別途時計同期・誤差評価が必要。
+- 全試験は対象ID8のみ、STOP設定・速度/キック/ドリブルゼロ、送信器1個を前提とする。物理的な安全状態を確認する。監視開始→送信→送信停止→残ログ回収の順にし、試験終了後は診断プロセスを停止、元のサービス状態を復元してhost-launcherのstatus/start/stopを確認する。
+- ST-Linkは必要時だけ使用し、対象シリアル・搭載build・active slot・復元用イメージを確認してからアプリ領域を更新する。bootloader/metadataを無計画に上書きしない。計測中のhalt/resetは禁止。既存flash.ps1のConnectOnlyもresetするため非侵襲確認には使わない。
+- この計画と結果資料はPC側に保存する。CM4へドキュメントは配置しない。計画作成時点では送信試験・FW変更は未実施だった。実施後の結果・条件変更は上記の調査報告を参照。
+
+## CM4_108入出力遅延評価・制御API復帰（2026-09-20）
+
+- host-launcherからOfflineになった原因は内部診断で停止したcontrol_server.serviceが
+  inactiveのままだったこと。サービスを起動し、PCのhost.lib.cm4_control_clientで
+  Stopped→POST start(200)→Running→POST stop(200)→Stoppedを確認。終了時はAPI active、アプリ停止。
+- localhostから停止状態mode 3を50 Hz送信。通常カメラ・feedback転送は停止した条件。
+  疑似UART試験750件: UDP send直前→PTY readはp50=0.650、p95=1.159、p99=1.221、
+  max=2.021 ms。送信器・受信器のスケジューリングも含み、純粋なブリッジ時間ではない。
+- 実UART試験500件: strace -ttt -Tでrecvfrom(715 byte)終了→write(72 byte)開始を
+  診断連番で対応付け、p50=0.544、p99=0.625、max=0.661 ms。
+  write呼出し所要時間p50=0.059、p99=0.068、max=0.073 ms。
+  write開始間隔18.846〜21.110 ms、p99=20.939 ms。追いつきバーストは観測していない。
+  straceによる計測負荷を含み、recvfrom以前のソケット待ち時間とUART線上完了は含まない。
+  UART線上時間は72 byte・1 Mbps・8N1で0.720 msだが、本試験では実測していない。
+- 生データは108の `/tmp/orion-latency-pty-20260920/` と
+  `/tmp/orion-latency-uart-20260920/` に保存。後者はtrace.log/latency.csv/sender/を含む。
+  実機時計がずれているため暦時刻は参照しない。PTY評価は同一機monotonic時刻を使用。
+  WindowsからのWi-Fi入力や通常アプリ負荷における遅延の保証ではない。
+
+## UDP受信タイミングの単独監視（2026-09-20）
+
+`cm4/bridge/udp_rx_monitor.py`をCM4_108に配置済み。Windows側の既存送信器から
+108のUDP 12345へ送信し、CM4のSSH端末で次を実行する。
+
+```bash
+cd /home/ibis/Orion_CM4
+python3 cm4/bridge/udp_rx_monitor.py --port 12345 --robot-id 8
+# 60秒測定してCSV保存。保存先は未作成のファイルを指定。
+python3 cm4/bridge/udp_rx_monitor.py --port 12345 --robot-id 8 --duration 60 --csv /tmp/udp-rx-108.csv
+```
+
+- UARTは開かず、STM32へ転送しない。同じポートのai_cmd_v2は事前に停止する。
+  SO_REUSEPORTは使わず、競合時は終了。Ctrl+CまたはSIGTERMで最終集計とCSVを保存。
+- SO_TIMESTAMPNS_NEW + recvmsgでカーネル受信時刻、直後にアプリ時刻を取得。
+  kernel/appの間隔は有効な自機指令について送信元IP別に計算し、分布は合算する。
+  送信元portが毎回変わるWindows送信器を考慮し、既定は `--stream-key ip`。
+  同じIPの複数送信器を分離したい場合は `--stream-key peer` でIP/port別にする。
+  rx pkt/sは空スロット・不正パケットを含む全データグラム数。
+  batch_maxは一度の読み切りで受信した全件数。読み切りは100ms/4096件で打ち切る。
+- 通常は1秒集計。kernel gap>=30msまたはread delay>=5msの詳細は1秒に3件まで。
+  `--gap-ms` / `--delay-ms`で変更可能。duplicate_counterは同一送信元でのcounter重複で、
+  欠落数ではない。SO_RXQ_OVFLはソケットドロップのみで、無線損失は含まない。
+- kernel時刻とread delayにはrealtime、app間隔にはmonotonicを使用する。
+  realtime-monotonicの差が1ms超変化したサンプルと直前比較を除外する。
+  時計変更時に既にキューへ溜まっていたパケットの区間も分析対象から除外すること。
+  ソフトウェアタイムスタンプなので、無線の物理到着時刻ではない。
+- CSVは終了時に保存し、既定10万件を超えると古い記録から破棄。
+  `--max-records`で調整でき、csv_evictedに破棄数を表示する。
+  分布も各表示区間の最新max-records件に制限し、cumulativeカウンタは全期間。
+- 単独CLIの読み出し遅延はai_cmd_v2の読み出し遅延そのものではない。
+  カーネル到着が正常なら、次にブリッジ内部の受信計測へ進む。
+- 108で実ソケットの受信・timestamp・CSV・ポート競合・異常分類テストを通過。
+  文書はPC側にのみ保存する。
+
+## CM4_108内部mode 3連続送信の稼働（2026-09-20）
+
+- `feature/cm4_debug_tools` の診断ツールと `cm4/run_mode3_debug.sh` を108へ配置。
+  `control_server.service`を停止し、一時unit `orion-mode3-debug.service` で稼働する。
+  localhost:12445へ50 Hzのmode 3停止指令を生成し、既存mainのブリッジが
+  `/dev/serial0`・1 MbpsでSTM32へ送る。通常のcrane入力12345は使わない。
+- 速度・キック・ドリブルはゼロ、STOP_EMERGENCY付き。カメラ・feedback転送は起動しない。
+  通常運用の負荷条件とは異なる。1時間ごとに送信器を更新してCSVを保存するため、
+  その境界には短い送信中断がある。CSVは `cm4/runtime/mode3-debug/run-*/capture/`。
+  SIGTERMでも保存し、ブリッジ異常時には送信器も終了させる。
+- `sudo systemctl stop orion-mode3-debug.service`で診断停止。
+  続いて `sudo systemctl start control_server.service` で通常APIを復帰できる。
+  通常アプリの起動は別途Runまたは/startが必要。一時unitは再起動後に自動起動しない。
+- 108上で停止・CSV保存・再起動を確認。694入力の間隔は18.704〜21.305 ms、
+  p99=20.050 ms。これは送信器のUDP入力時刻でありUART線上時刻ではない。
+  実機時計は2026-08-29を表示していた。周期計測はmonotonic clockを使用している。
+  本文書はPC側のみに保存し、実機には転送しない。
+
+## CM4_108のmain反映（2026-09-20）
+
+- main `d7a2e07c47cf09c6d359e391f1cf2828f4fe7f5a` の `cm4/` を108へ反映。
+  ドキュメント・host側ファイル・PCの未コミット変更は転送していない。
+- 隔離ディレクトリでbuild.shのビルド・テストを完了し、生成したバイナリを配置。
+  配布ソースのcmpとai_cmd_v2.outのSHA-256一致、制御API応答を確認した。
+- カメラソース・specはmainと一致しており、既存カメラバイナリを保持。
+  runtime設定とGit管理情報は保持しているため、実機のgit HEADは配布版を示さない。
+  部分更新の記録は `/home/ibis/.orion_deploy/cm4_main_version.json` を参照。
+- 更新前cm4一式は `/home/ibis/.orion_deploy/main-d7a2e07-stage/before-cm4.tar.gz`、
+  サービス定義は同ディレクトリの `before-control_server.service` に退避した。
+
+## CM4内部mode 3周期診断（2026-09-20）
+
+`cm4/bridge/mode3_timing_probe.py` はlocalhostへ715 byteのmode 3指令を
+定期送信する。速度・キック・ドリブルはゼロ、STOP_EMERGENCYを常時設定する。
+予約領域38..45に診断マーカーと連番を載せる。通常指令送信元とは同時使用しない。
+時刻はmonotonic ns、絶対deadline方式とし、遅延時は期限を飛ばして連打を防ぐ。
+送信時刻は終了後にsend.csvへ保存する。Python/Linuxのスケジューリング遅延は
+残るため、入力の周期精度も必ずCSVで確認する。
+
+```bash
+# 独立したブリッジを疑似UARTで起動。本番ポート・実UARTは使わない。
+python3 cm4/bridge/mode3_timing_probe.py --pty --robot-id 8 --rate-hz 50 --seconds 30 --output /tmp/mode3-pty-run1
+
+# 実UARTの切り分け: 別端末で診断専用ポートのブリッジを起動。
+# 通常ブリッジを停止済みであること。本コマンドはSTM32へ停止指令を送る。
+./cm4/bin/ai_cmd_v2.out --robot-id 8 --ai-cmd-port 12445 --local-cam-port 12446 --feedback-port 12447 --config-port 12448
+# もう一方の端末でlocalhost送信。終了後、上記ブリッジもCtrl+Cで停止する。
+python3 cm4/bridge/mode3_timing_probe.py --robot-id 8 --port 12445 --rate-hz 50 --seconds 30 --output /tmp/mode3-uart-run1
+```
+
+`--pty`では通常のUART書き込み経路を通り、受信側の時刻をpty.csvへ記録する。
+同じreadで受けた複数フレームには同じ時刻が付くため、これは線上送信時刻ではない。
+疑似UARTで集中がなくても実UARTドライバ・STM32側は未検証である。
+実UARTではロジックアナライザのフレーム開始間隔とSTM32のIRQ/parser時刻を
+send.csvと照合する。`--debug`はUART送信を止めるため本診断には使わない。
+出力先は毎回新規ディレクトリを指定する。PTY時のbridge.logは通常ログを保存する。
+
+## CM4_107手動更新後の再確認（2026-09-16）
+
+- ユーザーによる旧FWからの手動更新後、107のFWVR応答と全基板の識別情報取得が成功した。以下の前回記録の107更新不可は解消した。
+- CM4経由でSub 9.868秒、BLDC CAN1 9.628秒/CAN2 9.420秒、Power 12.254秒で更新成功。各更新間は5秒待機。PowerでUART再送が1回発生したが自動回復した。
+- Main Slot B用の既存成果物が古かったため、現在のソースからA/Bを再ビルドし、B 9.688秒、A 10.016秒で更新成功。最終active A。
+- 最終照合は全6エントリ`SAME`。Main A/B build ID=`1789569865`、CRC32C A=`43EE803A`/B=`3626D013`、Sub=`12E9586C`、左右BLDC=`A0BDF386`、Power build ID=`1789569751`/CRC32C=`9172D70B`。制御サービスを復帰した。走行試験は未実施。
+
+## CM4_105・107・108更新可否確認（2026-09-16）
+
+- 3台ともネットワーク・SSH・制御API接続可能。107/108にはホスト公開鍵を追加した。UART排他のため制御サービスを止め、`/tmp/orion_fw_check`へ配置した更新ツールで確認した。
+- 105はSub 10.373秒、BLDC CAN1 12.203秒/CAN2 9.350秒、Power 11.353秒、Main B 9.980秒で再更新成功。最終active B。
+- 108は旧FWから更新成功。Power転送間隔修正版のMain Bを先行更新（9.900秒）、Sub 9.826秒、BLDC CAN1 9.859秒/CAN2 9.349秒、Power 11.304秒、Main A 9.920秒。最終active A。
+- 105/108ともSub直後のBLDC ENTERでCAN timeoutが一度発生した。再実行し、その後の各更新間に5秒待機を入れると完了した。起動待ちとの関連は未確定。両機とも最終6エントリが`SAME`で、Main build ID `1789484648`、CRC32C A=`AEC55D28`/B=`DB0D0D01`、Sub=`12E9586C`、左右BLDC=`A0BDF386`、Power=`A07D08B0`を確認した。
+- 107は`/dev/serial0 -> ttyS0`、1 Mbaudで3秒間に47,617 byteの通常データを受信したが、FWVR照会とMain bootloader INFO（5回試行）はtimeout。FWVRを1 byte/10 msで送っても応答なし。書込みBEGINには到達せずFlash未更新。搭載MainのOTA対応状況、bootloader導入状態、CM4→Main送信経路の追加確認が必要であり、原因は断定していない。
+- 終了時は全3台の制御サービスを復帰。走行試験は実施していない。107/108のsudoにはhostname `ibis`の名前解決警告があるが、サービス操作は成功した。
+
+## CM4_105更新実機記録（2026-09-16）
+
+- `192.168.20.105`へ現行CM4コードを配布し、ブリッジ再ビルド・systemd更新・制御API復帰を確認した。カメラバイナリは通常deployの仕様どおり再ビルドしていない。
+- Windowsの`core.autocrlf=true`で`git archive`にCRLFのシェルスクリプトが入って更新が失敗したため、配布時のみ`git -c core.autocrlf=false archive`とする修正を加えた。修正版の実機deployは成功（配布snapshot `ceb4ef073af5`）。
+- Subは9.871秒、BLDC node 16は9.850秒、node 17は9.358秒で個別更新した。左右同時更新はENTERでCAN timeoutとなったため個別更新へ切り替えた。原因は未確定。
+- Powerは安全停止確認後、3584 byte地点で`node=3`（欠落・順序異常）が繰り返され、通常再送では復旧しなかった。Mainの`Core/Src/fw_update_gateway.c`へPower対象時のみ8 CAN frameごとに1 ms待つ処理を追加し、Main Slot Bを先行更新後、Powerを13.244秒で復旧した（UART再送あり）。その後Main Slot Aも更新した。
+- ゲートウェイが失敗後に残る場合、OFW2 sequenceを連続させた`MSG_REBOOT`でPowerとMainを再起動できる。未確定Powerはbootloaderに留まる。sequence error応答でもMainのlast_sequenceは受信sequenceへ進むため、別プロセスの同期回復では同一プロセスから次sequenceを送る必要がある。
+- 最終照合は全6エントリが`SAME`。Main A/B build ID=`1789484648`、CRC32C A=`AEC55D28`/B=`DB0D0D01`、Sub=`12E9586C`、左右BLDC=`A0BDF386`、Power=`A07D08B0`。Main active slotはA。`control_server.service`をactiveへ復帰し、制御APIはStopped（走行停止）を確認した。走行試験は実施していない。
+
 ## MCUファームウェア更新
 
 - CM4→Main→CANノードの高速・同時更新仕様は `doc/firmware_update_protocol.md` にまとめる。

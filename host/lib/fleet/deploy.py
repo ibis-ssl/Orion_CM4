@@ -64,7 +64,8 @@ def build_archive(ref="HEAD", allow_dirty=False, repo_dir=None, scratch_dir=None
     scratch_dir = Path(scratch_dir) if scratch_dir else Path(tempfile.gettempdir())
     scratch_dir.mkdir(parents=True, exist_ok=True)
     archive_path = scratch_dir / f"orion-{commit_sha[:12]}.tar.gz"
-    _run_git(["archive", "--format=tar.gz", "-o", str(archive_path), archive_ref], cwd=repo_dir)
+    # Windows の core.autocrlf による変換を避け、Linux 用スクリプトを LF で配布する。
+    _run_git(["-c", "core.autocrlf=false", "archive", "--format=tar.gz", "-o", str(archive_path), archive_ref], cwd=repo_dir)
     return archive_path, commit_sha, dirty
 
 

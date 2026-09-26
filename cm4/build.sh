@@ -115,6 +115,9 @@ run_tests() {
   # 実機 UART も STM32 も要らない。
   log "ai_cmd_v2 の結合スモークテストを実行します"
   (cd "${BRIDGE_DIR}" && python3 -m unittest test_forward_ai_cmd_v2)
+
+  log "ai_cmd_v2 のタイミングCSV結合テストを実行します"
+  (cd "${BRIDGE_DIR}" && python3 -m unittest test_forward_ai_cmd_v2_timing_trace)
 }
 
 main() {
