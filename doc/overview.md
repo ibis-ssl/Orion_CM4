@@ -195,28 +195,48 @@ Orion/G474のmode 3・4の実装経路と、mode 7・8でCM4のローカルカ�
 
 ```mermaid
 flowchart LR
-    crane["crane<br/>制御指令 65B"] -->|"UDPユニキャスト :12345"| receive["CM4 / ai_cmd_v2.out<br/>長さ・カウンタ・空指令検査"]
-    receive --> mode{"CONTROL_MODE"}
-    mode -->|"3"| pass["速度指令を素通し<br/>craneのカウンタで送信"]
-    mode -->|"4"| position["位置制御・停止判定<br/>CM4がカウンタを採番"]
-    mode -->|"7・8（仕様案）"| camera_check{"CM4 / 有効なボール観測?"}
-    camera["CM4 / ローカルカメラ<br/>検出結果 7B"] -->|"UDP :8890"| camera_check
-    camera_check -->|"有効な観測値"| ball_control["CM4 / ボール基準制御<br/>7:相対速度・8:相対位置"]
-    camera_check -->|"観測なし / 7"| fallback3["CM4 / mode 3相当の<br/>速度指令を生成"]
-    camera_check -->|"観測なし / 8"| fallback4["CM4 / mode 4相当の<br/>位置指令を生成"]
-    config["crane<br/>位置制御設定 28B"] -->|"UDP :12350"| position
-    feedback["CM4 / robot_feedback.out<br/>128B受信・再配信"] -->|"loopback UDP :50100+ID<br/>ai_cmd_v2.outが位置抽出"| position
-    feedback -->|"位置・安全状態"| ball_control
-    pass --> uart["CM4 / UARTフレーム生成<br/>64B指令 + 7B未定義領域 + 1Bチェックサム"]
-    fallback3 --> uart
+    subgraph inputs["入力"]
+        crane["crane出力<br/>制御指令 65B・設定 28B"]
+        feedback["G474 feedback<br/>128B / UART"]
+        camera["ローカルカメラ<br/>検出結果 7B / UDP"]
+    end
+    subgraph cm4["CM4内部処理"]
+        receive["指令の長さ・カウンタ・空指令を検査"]
+        fb_receive["feedback受信・再配信<br/>現在位置と鮮度を取得"]
+        cam_receive["カメラ受信<br/>ボール検出・鮮度を判定"]
+        mode{"CONTROL_MODE"}
+        pass["mode 3<br/>速度指令を素通し"]
+        position["mode 4<br/>位置制御・停止判定"]
+        camera_check{"mode 7・8<br/>有効なボール観測?"}
+        ball_control["ボール基準制御<br/>7:相対速度・8:相対位置"]
+        fallback3["mode 7 → mode 3相当<br/>通常速度指令を生成"]
+        fallback4["mode 8 → mode 4相当<br/>通常位置指令を生成"]
+        uart["G474向けフレーム生成<br/>64B指令 + 7B未定義領域 + 1Bチェックサム"]
+    end
+    output["出力: G474向けパケット<br/>72B / UART"]
+    crane -->|"制御指令 UDP :12345"| receive
+    crane -->|"制御設定 UDP :12350"| position
+    feedback --> fb_receive
+    camera -->|"UDP :8890"| cam_receive
+    receive --> mode
+    fb_receive -->|"位置・鮮度"| position
+    fb_receive -->|"位置・安全状態"| ball_control
+    cam_receive --> camera_check
+    mode -->|"3"| pass
+    mode -->|"4"| position
+    mode -->|"7・8（仕様案）"| camera_check
+    camera_check -->|"有効な観測値"| ball_control
+    camera_check -->|"観測なし / 7"| fallback3
+    camera_check -->|"観測なし / 8"| fallback4
     fallback4 --> position
+    pass --> uart
+    fallback3 --> uart
     position -->|"mode 3へ変換"| uart
     ball_control -->|"mode 3へ変換"| uart
-    uart -->|"UART 72B / 1Mbps"| g474["G474<br/>速度制御・安全判定"]
-    g474 -->|"feedback 128B / UART"| feedback
+    uart --> output
 ```
 
-UARTの未定義領域はbyte 64..70に置き、CM4が0で初期化する。mode 4の位置制御にはG474 feedbackのbyte 44..51を現在位置として使用する。mode 7・8ではCM4内部の制御にカメラ観測値を反映する。ボール未検出、カメラ未起動、更新途絶から100 ms超過はいずれも「有効なボール観測なし」とし、mode 7はmode 3、mode 8はmode 4相当の指令へ切り替える。詳細は[制御パケット](control_packet.md)と[制御モード互換性](control_mode_compatibility.md)を参照。
+入力はcrane出力、G474 feedback、ローカルカメラの3系統で、出力はG474向け72バイトUARTパケットである。未定義領域byte 64..70はCM4が0で初期化する。mode 4の位置制御にはfeedbackのbyte 44..51を現在位置として使用する。mode 7・8ではCM4内部の制御にカメラ観測値を反映する。ボール未検出、カメラ未起動、更新途絶から100 ms超過はいずれも「有効なボール観測なし」とし、mode 7はmode 3、mode 8はmode 4相当の指令へ切り替える。詳細は[制御パケット](control_packet.md)と[制御モード互換性](control_mode_compatibility.md)を参照。
 
 ### シミュレータ構成
 
