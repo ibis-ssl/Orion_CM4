@@ -145,6 +145,8 @@ docker compose up --build
 
 機体番号を `N` とすると、基本的な接続先は次の通りです。
 
+- AI制御指令: `192.168.20.(100 + N):12345`（UDPユニキャスト、`N` + 64バイトの指令）
+- 位置制御設定: `192.168.20.(100 + N):12350`（UDPユニキャスト、28バイト）
 - CM4 制御 API: `http://192.168.20.(100 + N):8000`
 - カメラ API: `http://192.168.20.(100 + N):8001`
 - カメラ座標 multicast: `224.5.10.(100 + N):5100 + N`
@@ -189,23 +191,25 @@ crane は **位置指令（mode 4）** を送り、
 CM4 が位置制御ループを閉じて **速度指令（mode 3）** を G474 へ渡す。
 
 ```text
-crane --UDP 位置指令--> CM4 [位置ループ] --UART 速度指令--> G474
+crane --UDPユニキャスト 65B位置指令--> CM4 [位置ループ] --UART速度指令--> G474
 ```
 
 ### 構成
 
 ```text
-実機: crane --UDP:12345 mode4--> ai_cmd_v2.out --UART mode3--> G474
+実機: crane --UDP:12345 65B mode4--> ai_cmd_v2.out --UART mode3--> G474
                                       ^
                                       | UDP 127.0.0.1:(50000+機体番号) 128B feedback
                                  robot_feedback.out <--UART-- G474
 
-sim : crane --UDP:12345 mode4--> cm4_sim.out --UDP:12346 mode3--> simulator-cli
+sim : crane --UDP:12345 65B mode4--> cm4_sim.out --UDP:12346 715B mode3--> simulator-cli
                                       ^                                 |
                                       +---- UDP 127.0.0.1:(50100+id) ---+
 ```
 
 `simulator-cli`（framework）は **G474 とロボット物理**を担当し、位置制御は行わない。
+simでは機体別の65バイト指令を同じ`cm4_sim.out`の受信アドレスへ送り、先頭のIDで振り分ける。
+`cm4_sim.out`から`simulator-cli`への出力は11台分を含む715バイト固定とする。
 CM4 の位置制御は `cm4_sim.out` が担当し、**実機と同一のソース**
 （`cm4/control/position_controller.cpp`）をリンクする。コピーを作らないことが、
 実機とシミュレータの挙動が一致することの唯一の保証である。
@@ -213,7 +217,7 @@ CM4 の位置制御は `cm4_sim.out` が担当し、**実機と同一のソー�
 ### 位置制御ゲインは crane から実行中に変えられる
 
 ゲインの正本は CM4 の `position_controller` だが、現地で詰めるために crane が
-**UDP 12350 へ 28 バイトの設定パケットを broadcast** して稼働中に上書きできる。
+**各機体のUDP 12350へ28バイトの設定パケットをユニキャスト**して稼働中に上書きできる。
 再起動は要らない。`ai_cmd_v2.out` と `cm4_sim.out` は同じ `config_packet.h` を
 通るので、sim で確かめた値は実機でも同じ扱いになる。
 
@@ -318,8 +322,8 @@ crane が見失っている、または vision が古すぎるロボットの `t
 
 | 用途 | アドレス:ポート |
 |---|---|
-| crane からの mode 4 | bind `0.0.0.0:12345` |
-| simulator-cli への mode 3 | `127.0.0.1:12346`（`--ibis-port` と揃える） |
+| crane からの機体別mode 4（65B） | bind `0.0.0.0:12345` |
+| simulator-cli へのmode 3（715B） | `127.0.0.1:12346`（`--ibis-port` と揃える） |
 | simulator-cli からの feedback | bind `127.0.0.1:50100+id` |
 | crane からの設定パケット | bind `0.0.0.0:12350`（`--config-port`） |
 | feedback 再配信 | `224.5.20.(100+id):50100+id`（実機と同じ） |

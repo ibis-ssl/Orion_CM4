@@ -4,7 +4,7 @@ cm4_sim.out 単体を相手にする（simulator-cli は起動しない）ので
 framework リポジトリに依存しない。
 
 検査するもの:
-  1. mode 4 の 715B を投げると mode 3 の 715B が出る（CHECK_COUNTER が毎回変化）
+  1. mode 4 の65Bを投げると mode 3 の715Bが出る（CHECK_COUNTER が毎回変化）
   2. 担当しないスロットが robot_id=0xFF + コマンド 64B ゼロ
   3. feedback の位置が出力の VISION_GLOBAL_X/Y へ反映される
   4. crane 無通信で速度指令がゼロになり STOP_EMERGENCY が立つ
@@ -312,6 +312,22 @@ class Cm4SimSmokeTest(unittest.TestCase):
                 else:
                     self.assertEqual(robot_id, 0xFF, f"担当外スロット {slot} の robot_id は 0xFF")
                     self.assertEqual(cmd, bytes(CMD_SIZE), f"担当外スロット {slot} はゼロ埋め")
+        finally:
+            sim.close()
+
+    def test_input_requires_one_robot_command(self):
+        """入力は65バイト固定で、出力の715バイトを送り返しても採用しない。"""
+        sim = Cm4Sim(robot_ids="0")
+        try:
+            sim.send_command(bytes(PACKET_SIZE))
+            sim.send_command(bytes(66))
+            sim.send_command(build_packet(1, build_command(1)))
+            time.sleep(0.05)
+            out = sim.recv_latest_output()
+            self.assertIsNotNone(out)
+            robot_id, cmd = slot_of(out, 0)
+            self.assertEqual(robot_id, 0xFF)
+            self.assertEqual(cmd, bytes(CMD_SIZE))
         finally:
             sim.close()
 

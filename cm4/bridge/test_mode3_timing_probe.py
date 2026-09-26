@@ -19,11 +19,9 @@ class ProbePacketTest(unittest.TestCase):
                 self.assertEqual(decode_two_byte(cmd, offset, 32.767), 0)
             self.assertEqual(struct.unpack_from('<I', cmd, 42)[0], sequence)
             packet = build_packet(8, cmd)
-            self.assertEqual(len(packet), 715)
-            self.assertEqual(packet[8 * 65 + 1:9 * 65], cmd)
-            for robot_id in range(11):
-                if robot_id != 8:
-                    self.assertEqual(packet[robot_id * 65 + 1:(robot_id + 1) * 65], bytes(64))
+            self.assertEqual(len(packet), 65)
+            self.assertEqual(packet[0], 8)
+            self.assertEqual(packet[1:], cmd)
 
 
 if __name__ == '__main__':

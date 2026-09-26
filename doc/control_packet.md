@@ -54,27 +54,28 @@ byte 0..37 の全オフセット・`ControlMode`・`FlagAddress` を `static_ass
 `cm4_sim.out` は**ホスト PC 専用**です。実機では起動しないので `cm4/lancher.py` の
 起動プロセス一覧と `/stop` の `pkill -f` パターンには入れていません。
 
-## パケット全体（715 バイト）
+## 機体別の制御パケット（65バイト）
 
-crane は 11 台分を **1 データグラム 715 バイト**にまとめて UDP ポート `12345` へ送ります。
+送信側は機体ごとに **1データグラム65バイト**を、そのCM4の
+`192.168.20.(100 + ロボットID):12345` へユニキャストで送る。
 
 ```text
-1 スロット = robot_id 1 バイト + RobotCommandSerializedV2 64 バイト = 65 バイト
-715 バイト = 65 バイト x 11 スロット（固定）
+byte 0    : robot_id（0..10）
+byte 1..64: RobotCommandSerializedV2（64バイト）
 ```
 
-- スロット `i`（0..10）の先頭バイトは **スロット添字そのもの**が入ります。
-- crane がコマンドを持たないロボットのスロットは **コマンド 64 バイトがすべてゼロ**になります。
-  受信側は「64 バイトが全ゼロ」または「`robot_id` が範囲外」で明示的にスキップしてください。
-  `control_mode = 0` は現在の `ControlMode` に存在しない値なので、無効スロットの印として使えます。
-- **使用中スロットの byte 28..31 と 38..63 はゼロとは限りません。**
-  crane の `ibis_sender_node.cpp` は `RobotCommandSerializedV2` を `{}` なしで宣言しており、
-  シリアライズが書かない領域にはスタックの残骸が乗ります。
-  受信側は「予約領域＝0」を前提にしないでください。
+- 送信対象が複数機体なら、各機体のIPへ個別にデータグラムを送る。
+- 受信側は65バイト以外、`robot_id`が自機と異なるパケット、コマンド64バイトが
+  全ゼロのパケットを採用しない。
+- **使用中コマンドのbyte 28..31と38..63はゼロとは限らない。**
+  受信側は予約領域がゼロであることを前提にしない。
 
-`cm4/bridge/forward_ai_cmd_v2.cpp` は自機の `robot_id` と一致するスロットだけを取り出します。
-`robot_id` は `wlan0` の IPv4 最終オクテットから `-100` して求めます
-（`get_machine_id()`。`wlan0` が無い環境では 0 になります）。
+`cm4/bridge/forward_ai_cmd_v2.cpp` は先頭IDを自機IDと照合する。自機IDは
+`wlan0` のIPv4最終オクテットから100を引いて求める。取得できない場合は起動を中止する。
+
+GUI_Qtの[送信実装](https://github.com/ibis-ssl/GUI_Qt/blob/86cf84503891cb6f86029cf5bedc1c195c0fc976/Qt%20Communication%20Tester/Qt_Communication_Tester/qt_communication_tester.cpp)も
+この65バイト形式を使う。GUI_Qtはmode 3の速度指令を送る。mode 4の位置指令を送る側は
+同じ外枠に加え、下記のmode 4フィールドを設定する。
 
 ## RobotCommandSerializedV2
 
@@ -173,19 +174,20 @@ CM4 では**上流（位置制御器）の解釈が先に勝ちます**。`linea
 ## 位置制御設定パケット（UDP 12350）
 
 位置制御ゲインの正本は CM4 の `position_controller` ですが、現地で詰めるには
-crane 側から変えられる必要があります。715 バイトの指令パケットとは**別ポートの
+crane 側から変えられる必要があります。65バイトの指令パケットとは**別ポートの
 28 バイトのデータグラム**で運びます。相乗りさせないのは、64 バイトのレイアウトが
 crane / G474 / framework / CM4 の 4 者一致を不変条件にしており、しかも crane が
-使用スロットの byte 28..31 / 38..63 をゼロ初期化していないためです。別ポートなら
+使用中のコマンドの byte 28..31 / 38..63 をゼロ初期化していないためです。別ポートなら
 G474 と framework は一切変わりません。
 
-正本は `cm4/bridge/config_packet.h` です。crane は指令と同じく **broadcast** で送ります。
+正本は `cm4/bridge/config_packet.h` です。送信側は設定パケットも対象機体のIPへ
+ユニキャストで送る。複数機体に同じ設定を適用する場合は各機体へ個別に送る。
 
 | byte | 内容 |
 |---|---|
 | 0..3 | magic `'O' 'C' '4' 'C'` |
 | 4 | version（`2`） |
-| 5 | robot_id（`0xFF` = 全機宛） |
+| 5 | robot_id（`0xFF` = 全機に適用する値。UDPは各機体へ個別送信） |
 | 6..7 | 予約（0） |
 | 8..11 | `position_gain`（kp） float32 little endian |
 | 12..15 | `deceleration` float32 little endian |
@@ -193,8 +195,8 @@ G474 と framework は一切変わりません。
 | 20..23 | `integral_gain`（ki） float32 little endian |
 | 24..27 | `derivative_gain`（kd） float32 little endian |
 
-2 バイト固定小数ではなく素の float32 です。毎周期 11 台ぶんを運ぶわけではないので
-圧縮する理由が無く、量子化を挟むと crane の表示値と CM4 の実効値が食い違います。
+2バイト固定小数ではなく素のfloat32です。量子化を挟まないため、
+craneの表示値とCM4の実効値を一致させられます。
 
 ### 受信時の検査
 
@@ -245,17 +247,15 @@ version不一致は`UnsupportedVersion`として拒否し、理由をログに�
 
 - AI 制御パケット
   - UDP port: `12345`（`--ai-cmd-port` で変更可。ホスト PC でのテスト用）
-  - 715 バイト固定（`(64 + 1) * 11`）。これ以外の長さは捨てます。
-    `recv()` には `MSG_TRUNC` を付けてデータグラムの実長を得ます。付けないと
-    716 バイトが 715 バイトに切り詰められ「正常な全ゼロパケット」に化けます。
-  - コマンド 64 バイトが全ゼロのスロットは指令とみなしません
-    （framework の `ibisSlotIsEmpty()` と同じ判定）。
+  - 65バイト固定。これ以外の長さは捨てます。`recv()`に`MSG_TRUNC`を付けて
+    データグラムの実長を検査します。
+  - 先頭IDが自機IDと異なるパケットと、コマンド64バイトが全ゼロのパケットは採用しません。
 - ローカルカメラパケット
   - UDP port: `8890`（`--local-cam-port` で変更可）
   - `CAM_BUF_SIZE` は `7` バイトです。
 - 位置制御設定パケット
   - UDP port: `12350`（`--config-port` で変更可）
-  - 20 バイト固定。crane がゲインを稼働中に変更するために送ります。
+  - 28バイト固定。crane がゲインを稼働中に変更するために送ります。
     詳細は上の[位置制御設定パケット](#位置制御設定パケットudp-12350)を参照。
 - G474 feedback（位置制御ループを閉じるため）
   - UDP port: `127.0.0.1:(50000 + 100 + ロボット ID)`（`--feedback-port` で変更可）
@@ -339,7 +339,7 @@ mode 4 を受けると `cm4/control/position_controller.cpp` を通します。�
 使います。crane のパケットに入っている `vision_global_pos` では閉じません。
 それは今回ループの外へ出そうとしている無線経路そのものだからです。
 
-`position_tolerance` は 715 バイトパケットに載らないので CM4 側の設定値です
+`position_tolerance` は65バイトの指令パケットに載らないので CM4 側の設定値です
 （既定 0.01 m、`--tolerance`）。
 
 次のいずれかで速度指令をゼロにし、`STOP_EMERGENCY`(byte 22 bit3) を立てます。

@@ -14,7 +14,8 @@ import struct
 CMD_SIZE = 64
 SLOTS = 11
 SLOT_SIZE = CMD_SIZE + 1
-PACKET_SIZE = SLOT_SIZE * SLOTS  # 715
+INPUT_PACKET_SIZE = SLOT_SIZE  # crane -> CM4: 機体ごとに65バイト
+PACKET_SIZE = SLOT_SIZE * SLOTS  # cm4_sim -> simulator-cli: 715バイト
 FEEDBACK_SIZE = 128
 FEEDBACK_SYNC = (0xAB, 0xEA)
 FEEDBACK_POS_X_OFFSET = 44
@@ -68,18 +69,16 @@ def decode_two_byte(data, offset, value_range):
 
 
 def build_packet(robot_id, command):
-    """715 バイト。crane と同じく未使用スロットは添字 + 64B ゼロ埋め。"""
-    pkt = bytearray()
-    for slot in range(SLOTS):
-        pkt += bytes([slot]) + (command if slot == robot_id else bytes(CMD_SIZE))
-    return bytes(pkt)
+    """craneからCM4へ送る65バイトの機体別指令を作る。"""
+    if not 0 <= robot_id < SLOTS or len(command) != CMD_SIZE:
+        raise ValueError("robot_idは0..10、commandは64バイトが必要")
+    return bytes([robot_id]) + bytes(command)
 
 
 # --- 位置制御の設定パケット (config_packet.h) ---
 # crane が位置制御ゲイン (PID) を稼働中に変更するための 28 バイト。指令パケットとは
 # 別ポートで、2 バイト固定小数ではなく素の float32 little endian を使う。
-# 旧フォーマット (20 バイト・version 1) は受理されない。crane と CM4 のどちらかが
-# 古ければ設定パケットは全数拒否され、CM4 のログに拒否理由が出続ける。
+# 設定も各機体のIP宛てへ送る。robot_idフィールドを指定して受信側で照合する。
 CONFIG_PACKET_SIZE = 28
 CONFIG_PACKET_VERSION = 2
 CONFIG_BROADCAST_ID = 0xFF

@@ -113,6 +113,7 @@ uv run cm4-fleet deploy --all
 
 ### ai_cmd_v2.out
 
+- AI指令は自機IPのUDP `12345`へ65バイト（機体ID 1バイト + 指令64バイト）で送る。
 - `--debug` バイナリ表示になる。マイコン側には送信されない。
 - `-s` オプションでボーレートを変更できる。**デフォルト 1 Mbps**。
 - `--serial-port` で UART デバイスを変更できる（既定 `/dev/serial0`）。

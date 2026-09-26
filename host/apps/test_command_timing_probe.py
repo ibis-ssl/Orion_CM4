@@ -97,7 +97,8 @@ class CommandTimingProbeTest(unittest.TestCase):
             self.assertEqual([target for _, target in factory.sockets[0].sent],
                              [("127.0.0.1", 12345)] * 2)
             for sequence, (packet, _) in enumerate(factory.sockets[0].sent, 1):
-                slot = packet[8 * 65 + 1:9 * 65]
+                self.assertEqual(packet[0], 8)
+                slot = packet[1:]
                 self.assertEqual(slot[CHECK_COUNTER], sequence % 201)
                 self.assertEqual(slot[FLAGS], 1 << STOP_EMERGENCY_BIT)
                 self.assertEqual(slot[CONTROL_MODE], MODE_POLAR_VELOCITY)
@@ -110,7 +111,7 @@ class CommandTimingProbeTest(unittest.TestCase):
             with (Path(output) / "send.csv").open(newline="", encoding="utf-8") as stream:
                 rows = list(csv.reader(stream))
             self.assertEqual(tuple(rows[0]), probe.CSV_HEADER)
-            self.assertEqual(rows[1], ["1", "0", "10", "20", "715", ""])
+            self.assertEqual(rows[1], ["1", "0", "10", "20", "65", ""])
 
     def test_mode4_changes_only_control_mode_of_safe_command(self):
         factory = FakeSocketFactory()
@@ -126,7 +127,8 @@ class CommandTimingProbeTest(unittest.TestCase):
 
         self.assertEqual(summary["sent"], 1)
         packet, _ = factory.sockets[0].sent[0]
-        slot = packet[8 * 65 + 1:9 * 65]
+        self.assertEqual(packet[0], 8)
+        slot = packet[1:]
         expected = probe.command(1)
         expected[CONTROL_MODE] = MODE_POSITION_TARGET
         self.assertEqual(slot, expected)
