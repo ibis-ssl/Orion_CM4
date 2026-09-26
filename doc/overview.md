@@ -152,7 +152,7 @@ docker compose up --build
 - カメラ座標 multicast: `224.5.10.(100 + N):5100 + N`
 - robot feedback multicast: `224.5.20.(100 + N):50000 + (100 + N)`
 
-Orion（4輪オムニ）と4WS（4輪駆動・4輪操舵）はmode 3・4を共通で使う方針とし、各輪目標には4WS専用のmode 5、Orion専用のmode 6を定義した。さらに両機体共通で、CM4のローカルカメラを使うボール基準の相対速度mode 7と相対位置mode 8を定義した。ボール未検出時はそれぞれmode 3・4相当の指令へ切り替える。mode 4はCM4でmode 3・5・6のいずれかに変換し、G474へ直接送らない。[制御モード互換性](control_mode_compatibility.md)に機体別の対応とmode 6～8の配置、[4WS MainとのSPI通信案](4ws_spi_packet_proposal.md)にmode 5の配置とSPIの仮仕様を記す。mode 5～8と4WS向け経路は未実装。
+Orion（4輪オムニ）と4WS（4輪駆動・4輪操舵）はmode 3・4を共通で使う方針とし、各輪目標には4WS専用のmode 5、Orion専用のmode 6を定義した。さらに両機体共通で、CM4のローカルカメラを使うボール基準の相対速度mode 7と相対位置mode 8を定義した。有効なボール観測がないときは、カメラ非稼働も含めてそれぞれmode 3・4相当の指令へ切り替える。mode 4はCM4でmode 3・5・6のいずれかに変換し、G474へ直接送らない。[制御モード互換性](control_mode_compatibility.md)に機体別の対応とmode 6～8の配置、[4WS MainとのSPI通信案](4ws_spi_packet_proposal.md)にmode 5の配置とSPIの仮仕様を記す。mode 5～8と4WS向け経路は未実装。
 
 ## 関連ドキュメント
 
@@ -187,28 +187,43 @@ python3 cm4/firmware/fw_version_reader.py --port /dev/serial0 \
   --bldc-can1 bldc.bin --bldc-can2 bldc.bin --power power.bin
 ```
 
-## ロボット側位置制御（CM4 で位置ループを閉じる）
+## ロボット側制御（CM4で位置制御・モード変換を行う）
 
-### 位置制御の流れ
+### 実機の処理ブロック図
 
-crane は **位置指令（mode 4）** を送り、
-CM4 が位置制御ループを閉じて **速度指令（mode 3）** を G474 へ渡す。
+Orion/G474のmode 3・4の実装経路と、mode 7・8でCM4のローカルカメラを使う処理案を示す。mode 7・8の制御は未実装。
 
-```text
-crane --UDPユニキャスト 65B位置指令--> CM4 [位置ループ] --UART速度指令--> G474
+```mermaid
+flowchart LR
+    crane["crane<br/>制御指令 65B"] -->|"UDPユニキャスト :12345"| receive["CM4 / ai_cmd_v2.out<br/>長さ・カウンタ・空指令検査"]
+    receive --> mode{"CONTROL_MODE"}
+    mode -->|"3"| pass["速度指令を素通し<br/>craneのカウンタで送信"]
+    mode -->|"4"| position["位置制御・停止判定<br/>CM4がカウンタを採番"]
+    mode -->|"7・8（仕様案）"| camera_check{"CM4 / 有効なボール観測?"}
+    camera["CM4 / ローカルカメラ<br/>検出結果 7B"] -->|"UDP :8890"| camera_check
+    camera_check -->|"有効な観測値"| ball_control["CM4 / ボール基準制御<br/>7:相対速度・8:相対位置"]
+    camera_check -->|"観測なし / 7"| fallback3["CM4 / mode 3相当の<br/>速度指令を生成"]
+    camera_check -->|"観測なし / 8"| fallback4["CM4 / mode 4相当の<br/>位置指令を生成"]
+    config["crane<br/>位置制御設定 28B"] -->|"UDP :12350"| position
+    feedback["CM4 / robot_feedback.out<br/>128B受信・再配信"] -->|"loopback UDP :50100+ID<br/>ai_cmd_v2.outが位置抽出"| position
+    feedback -->|"位置・安全状態"| ball_control
+    pass --> uart["CM4 / UARTフレーム生成<br/>64B指令 + 7B未定義領域 + 1Bチェックサム"]
+    fallback3 --> uart
+    fallback4 --> position
+    position -->|"mode 3へ変換"| uart
+    ball_control -->|"mode 3へ変換"| uart
+    uart -->|"UART 72B / 1Mbps"| g474["G474<br/>速度制御・安全判定"]
+    g474 -->|"feedback 128B / UART"| feedback
 ```
 
-### 構成
+UARTの未定義領域はbyte 64..70に置き、CM4が0で初期化する。mode 4の位置制御にはG474 feedbackのbyte 44..51を現在位置として使用する。mode 7・8ではCM4内部の制御にカメラ観測値を反映する。ボール未検出、カメラ未起動、更新途絶から100 ms超過はいずれも「有効なボール観測なし」とし、mode 7はmode 3、mode 8はmode 4相当の指令へ切り替える。詳細は[制御パケット](control_packet.md)と[制御モード互換性](control_mode_compatibility.md)を参照。
+
+### シミュレータ構成
 
 ```text
-実機: crane --UDP:12345 65B mode4--> ai_cmd_v2.out --UART mode3--> G474
-                                      ^
-                                      | UDP 127.0.0.1:(50000+機体番号) 128B feedback
-                                 robot_feedback.out <--UART-- G474
-
-sim : crane --UDP:12400+id 65B mode4--> cm4_sim.out --UDP:12346 715B mode3--> simulator-cli
-                                      ^                                 |
-                                      +---- UDP 127.0.0.1:(50100+id) ---+
+crane --UDP:12400+id 65B mode4--> cm4_sim.out --UDP:12346 715B mode3--> simulator-cli
+                                    ^                                 |
+                                    +---- UDP 127.0.0.1:(50100+id) ---+
 ```
 
 `simulator-cli`（framework）は **G474 とロボット物理**を担当し、位置制御は行わない。
