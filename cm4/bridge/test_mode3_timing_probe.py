@@ -18,9 +18,9 @@ class ProbePacketTest(unittest.TestCase):
             for offset in (24, 26):
                 self.assertEqual(decode_two_byte(cmd, offset, 32.767), 0)
             self.assertEqual(struct.unpack_from('<I', cmd, 42)[0], sequence)
-            packet = build_packet(8, cmd)
+            packet = build_packet(cmd)
             self.assertEqual(len(packet), 65)
-            self.assertEqual(packet[0], 8)
+            self.assertEqual(packet[0], cmd[1])
             self.assertEqual(packet[1:], cmd)
 
 

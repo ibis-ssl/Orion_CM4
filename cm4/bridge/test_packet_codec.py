@@ -50,6 +50,12 @@ class PacketCodecOffsetTest(unittest.TestCase):
         self.assertEqual(packet_codec.PACKET_SIZE, 715)
         self.assertEqual(packet_codec.FEEDBACK_SYNC, (0xAB, 0xEA))
 
+    def test_input_prefix_copies_check_counter(self):
+        command = bytearray(packet_codec.CMD_SIZE)
+        command[packet_codec.CHECK_COUNTER] = 37
+        packet = packet_codec.build_packet(command)
+        self.assertEqual(packet, bytes([37]) + command)
+
     def test_encode_matches_cpp_truncation(self):
         """0.0 が 0x7FFF になること（ゼロ埋め ≠ ゼロ値の根拠）と、
         範囲外がクランプ後に量子化されること。"""

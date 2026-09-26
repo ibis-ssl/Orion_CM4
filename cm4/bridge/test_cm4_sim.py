@@ -40,13 +40,13 @@ from packet_codec import (  # noqa: E402
     TERMINAL_VELOCITY_HIGH, VISION_GLOBAL_THETA_HIGH, VISION_GLOBAL_X_HIGH, VISION_GLOBAL_Y_HIGH,
     build_config_packet, build_packet, decode_two_byte, encode_two_byte)
 
-# 既定 (12345 / 12346 / 50100) から離す
+# 既定 (12400+id / 12346 / 50100) から離す
 # ポートはテストごとにずらし、さらにプロセスごとにもずらす。
 # 全テストで同じポートを使うと、前のテストの cm4_sim がまだ終了しきっていない
 # ときに bind が EADDRINUSE で失敗し（crane 入力ソケットには意図的に
 # SO_REUSEADDR を付けていない）、「起動したつもりで何も返ってこない」形で
 # 散発的に落ちる。落ちたテストが残したプロセスが次の実行まで生き残る例もあった。
-PORT_BASE = 20000 + (os.getpid() % 300) * 64
+PORT_BASE = 18000 + (os.getpid() % 100) * 256
 FEEDBACK_BASE = 40000 + (os.getpid() % 90) * 256
 _port_slot = itertools.count()
 
@@ -117,19 +117,19 @@ _live_sims = []
 class Cm4Sim:
     """cm4_sim.out を起動し、crane 側と simulator-cli 側の両方を演じるヘルパ。"""
 
-    def __init__(self, robot_ids="0", extra_args=(), out_port=None, in_port=None,
+    def __init__(self, robot_ids="0", extra_args=(), out_port=None, in_port_base=None,
                  feedback_base=None, relay=False, relay_port_base=None, config_port=None):
         slot = next(_port_slot) % 16
-        in_port = PORT_BASE + slot * 4 if in_port is None else in_port
-        out_port = PORT_BASE + slot * 4 + 1 if out_port is None else out_port
-        config_port = PORT_BASE + slot * 4 + 2 if config_port is None else config_port
+        in_port_base = PORT_BASE + slot * 16 if in_port_base is None else in_port_base
+        out_port = PORT_BASE + slot * 16 + 11 if out_port is None else out_port
+        config_port = PORT_BASE + slot * 16 + 12 if config_port is None else config_port
         feedback_base = FEEDBACK_BASE + slot * 16 if feedback_base is None else feedback_base
         # 再配信先は入力ポートと独立 (crane の crane_robot_receiver は 50100+id 固定)。
         # テストでは既定の 50100 を塞がないよう、入力と同じ値を明示指定する。
         relay_port_base = feedback_base if relay_port_base is None else relay_port_base
         self.feedback_relay_port_base = relay_port_base
         _live_sims.append(self)
-        self.in_port = in_port
+        self.in_port_base = in_port_base
         self.config_port = config_port
         self.feedback_base = feedback_base
         # simulator-cli 役: cm4_sim の出力を受ける
@@ -144,7 +144,7 @@ class Cm4Sim:
         args = [str(BINARY),
                 "--rate-hz", "100",
                 "--robot-ids", robot_ids,
-                "--in-port", str(in_port),
+                "--in-port-base", str(in_port_base),
                 "--out-addr", "127.0.0.1", "--out-port", str(out_port),
                 "--feedback-port-base", str(feedback_base),
                 "--config-port", str(config_port),
@@ -178,8 +178,8 @@ class Cm4Sim:
                 continue
         raise RuntimeError(f"cm4_sim.out が {deadline_s}s 以内に出力を始めませんでした")
 
-    def send_command(self, packet):
-        self.tx.sendto(packet, ("127.0.0.1", self.in_port))
+    def send_command(self, packet, robot_id=0):
+        self.tx.sendto(packet, ("127.0.0.1", self.in_port_base + robot_id))
 
     def send_config(self, kp, decel, tolerance, robot_id=0xFF, ki=0.0, kd=0.0):
         self.tx.sendto(build_config_packet(kp, decel, tolerance, robot_id, ki, kd), ("127.0.0.1", self.config_port))
@@ -264,14 +264,14 @@ class Cm4SimSmokeTest(unittest.TestCase):
         try:
             # cm4_sim は起動直後から制御周期ごとに送り続けるので、最初の数個は
             # crane コマンド未受信の空スロット。まず 1 つ流し込んで排水する。
-            sim.send_command(build_packet(0, build_command(1, target=(1.0, 0.0))))
+            sim.send_command(build_packet(build_command(1, target=(1.0, 0.0))))
             sim.send_feedback(0, 1, 0.0, 0.0)
             time.sleep(0.1)
             sim.drain_output()
 
             counters = []
             for i in range(2, 32):
-                sim.send_command(build_packet(0, build_command(i, target=(1.0, 0.0))))
+                sim.send_command(build_packet(build_command(i, target=(1.0, 0.0))))
                 sim.send_feedback(0, i, 0.0, 0.0)
                 time.sleep(0.03)
                 out = sim.recv_latest_output()
@@ -293,13 +293,13 @@ class Cm4SimSmokeTest(unittest.TestCase):
         sim = Cm4Sim(robot_ids="0,3")
         try:
             for i in range(1, 6):
-                sim.send_command(build_packet(0, build_command(i)))
-                sim.send_command(build_packet(3, build_command(i)))
+                sim.send_command(build_packet(build_command(i)))
+                sim.send_command(build_packet(build_command(i)), robot_id=3)
                 sim.send_feedback(0, i, 0.0, 0.0)
                 sim.send_feedback(3, i, 0.0, 0.0)
                 time.sleep(0.02)
             sim.drain_output()
-            sim.send_command(build_packet(0, build_command(50)))
+            sim.send_command(build_packet(build_command(50)))
             time.sleep(0.05)
             out = sim.recv_latest_output()
             self.assertIsNotNone(out)
@@ -316,12 +316,15 @@ class Cm4SimSmokeTest(unittest.TestCase):
             sim.close()
 
     def test_input_requires_one_robot_command(self):
-        """入力は65バイト固定で、出力の715バイトを送り返しても採用しない。"""
+        """長さ違い・カウンタ不一致・担当外ポートの指令は採用しない。"""
         sim = Cm4Sim(robot_ids="0")
         try:
             sim.send_command(bytes(PACKET_SIZE))
             sim.send_command(bytes(66))
-            sim.send_command(build_packet(1, build_command(1)))
+            malformed_counter = bytearray(build_packet(build_command(1)))
+            malformed_counter[0] ^= 1
+            sim.send_command(malformed_counter)
+            sim.send_command(build_packet(build_command(1)), robot_id=1)
             time.sleep(0.05)
             out = sim.recv_latest_output()
             self.assertIsNotNone(out)
@@ -342,7 +345,7 @@ class Cm4SimSmokeTest(unittest.TestCase):
             fb_x, fb_y = 1.25, -0.75
             crane_vision = (-2.0, 2.0)  # わざと feedback と離す
             for i in range(1, 20):
-                sim.send_command(build_packet(0, build_command(i, target=(2.0, 0.0), vision=crane_vision)))
+                sim.send_command(build_packet(build_command(i, target=(2.0, 0.0), vision=crane_vision)))
                 sim.send_feedback(0, i, fb_x, fb_y)
                 time.sleep(0.01)
             sim.drain_output()
@@ -362,11 +365,11 @@ class Cm4SimSmokeTest(unittest.TestCase):
         ゲインの変化がそのまま r に出る領域を選んである。
         """
         for i in range(first_counter, first_counter + 12):
-            sim.send_command(build_packet(0, build_command(i, target=(target_x, 0.0))))
+            sim.send_command(build_packet(build_command(i, target=(target_x, 0.0))))
             sim.send_feedback(0, i, 0.0, 0.0)
             time.sleep(0.01)
         sim.drain_output()
-        sim.send_command(build_packet(0, build_command(first_counter + 20, target=(target_x, 0.0))))
+        sim.send_command(build_packet(build_command(first_counter + 20, target=(target_x, 0.0))))
         sim.send_feedback(0, first_counter + 20, 0.0, 0.0)
         time.sleep(0.05)
         out = sim.recv_latest_output()
@@ -452,7 +455,7 @@ class Cm4SimSmokeTest(unittest.TestCase):
             # 見てしまう。最新を見る recv_latest_output を使う。
             moving = False
             for i in range(1, 40):
-                sim.send_command(build_packet(0, build_command(i, target=(2.0, 0.0))))
+                sim.send_command(build_packet(build_command(i, target=(2.0, 0.0))))
                 sim.send_feedback(0, i, 0.0, 0.0)
                 time.sleep(0.02)
                 out = sim.recv_latest_output(timeout=0.5)
@@ -489,7 +492,7 @@ class Cm4SimSmokeTest(unittest.TestCase):
             deadline = time.time() + 0.8
             counter = 1
             while time.time() < deadline:
-                sim.send_command(build_packet(0, build_command(counter, target=(2.0, 0.0))))
+                sim.send_command(build_packet(build_command(counter, target=(2.0, 0.0))))
                 counter += 1
                 time.sleep(0.01)
             sim.drain_output()
@@ -558,7 +561,7 @@ class Cm4SimSmokeTest(unittest.TestCase):
 
             got = None
             for _ in range(40):
-                sim.send_command(build_packet(0, command))
+                sim.send_command(build_packet(command))
                 sim.send_feedback(0, 1, 4.3, -2.8)
                 time.sleep(0.02)
                 out = sim.recv_latest_output(timeout=0.5)
@@ -588,7 +591,7 @@ class Cm4SimSmokeTest(unittest.TestCase):
             command = bytes(command)
             got = None
             for _ in range(40):
-                sim.send_command(build_packet(0, command))
+                sim.send_command(build_packet(command))
                 sim.send_feedback(0, 1, 0.0, 0.0)
                 time.sleep(0.02)
                 out = sim.recv_latest_output(timeout=0.5)
@@ -616,7 +619,7 @@ class Cm4SimSmokeTest(unittest.TestCase):
             command = build_command(1, target=(3.0, 0.0), linear_velocity_limit=2.0, vision_available=False)
             got = None
             for _ in range(40):
-                sim.send_command(build_packet(0, command))
+                sim.send_command(build_packet(command))
                 sim.send_feedback(0, 1, 0.0, 0.0)
                 time.sleep(0.02)
                 out = sim.recv_latest_output(timeout=0.5)
@@ -647,7 +650,7 @@ class Cm4SimSmokeTest(unittest.TestCase):
                                     vision_available=True, elapsed_ms_since_last_vision=65535)
             got = None
             for _ in range(40):
-                sim.send_command(build_packet(0, command))
+                sim.send_command(build_packet(command))
                 sim.send_feedback(0, 1, 0.0, 0.0)
                 time.sleep(0.02)
                 out = sim.recv_latest_output(timeout=0.5)
@@ -677,7 +680,7 @@ class Cm4SimSmokeTest(unittest.TestCase):
                                     terminal_velocity_xy=(1.25, -0.5), target=(9.0, 9.0))
             got = None
             for _ in range(40):
-                sim.send_command(build_packet(0, command))
+                sim.send_command(build_packet(command))
                 sim.send_feedback(0, 1, 0.0, 0.0)
                 time.sleep(0.02)
                 out = sim.recv_latest_output(timeout=0.5)
@@ -712,7 +715,7 @@ class Cm4SimSmokeTest(unittest.TestCase):
             command = build_command(7, mode=MODE_POLAR_VELOCITY, terminal_velocity_xy=(1.25, 0.0),
                                     kick_power=200, dribble_power=100, enable_chip=True)
             for _ in range(20):
-                sim.send_command(build_packet(0, command))
+                sim.send_command(build_packet(command))
                 sim.send_feedback(0, 1, 0.0, 0.0)
                 time.sleep(0.02)
             time.sleep(0.4)  # crane を止める
@@ -746,7 +749,7 @@ class Cm4SimSmokeTest(unittest.TestCase):
         try:
             for i in range(1, packets + 1):
                 target_x = 0.05 * i  # コマンドごとに一意な目印
-                sim.send_command(build_packet(0, build_command(i, target=(target_x, 0.0))))
+                sim.send_command(build_packet(build_command(i, target=(target_x, 0.0))))
                 sim.send_feedback(0, i, 0.0, 0.0)
                 time.sleep(0.02)
                 sim.out_rx.settimeout(0.005)

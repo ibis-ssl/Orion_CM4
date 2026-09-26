@@ -165,7 +165,7 @@ class Bridge(object):
         return text
 
     def send_command(self, command):
-        self.tx.sendto(build_packet(self.robot_id, command), ("127.0.0.1", self.cmd_port))
+        self.tx.sendto(build_packet(command), ("127.0.0.1", self.cmd_port))
 
     def send_raw(self, payload):
         self.tx.sendto(payload, ("127.0.0.1", self.cmd_port))
@@ -466,14 +466,16 @@ class ForwardAiCmdV2Test(unittest.TestCase):
         self.assertLessEqual(len(lines), 45, "UART 送信のたびに出ている (%d 行)" % len(lines))
 
     def test_malformed_datagrams_are_discarded(self):
-        """65バイト以外と他機宛ての指令は採用しない。"""
+        """長さ違いと先頭CHECK_COUNTER不一致の指令は採用しない。"""
         bridge = self.start(12480)
         command = build_command(7, POLAR_VELOCITY_TARGET_MODE)
         bridge.send_command(command)
         time.sleep(0.1)
         before = len(bridge.frames())
+        bad_counter = bytearray(build_packet(build_command(8, POLAR_VELOCITY_TARGET_MODE)))
+        bad_counter[0] ^= 1
         for payload in (b"", b"\x00" * 64, b"\x00" * (INPUT_PACKET_SIZE + 1),
-                        b"\x00" * 715, build_packet(bridge.robot_id + 1, command)):
+                        b"\x00" * 715, bad_counter):
             bridge.send_raw(payload)
             time.sleep(0.05)
         time.sleep(0.2)

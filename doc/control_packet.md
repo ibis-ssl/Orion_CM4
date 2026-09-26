@@ -60,20 +60,22 @@ byte 0..37 の全オフセット・`ControlMode`・`FlagAddress` を `static_ass
 `192.168.20.(100 + ロボットID):12345` へユニキャストで送る。
 
 ```text
-byte 0    : robot_id（0..10）
+byte 0    : CHECK_COUNTER（指令内byte 1と同じ値）
 byte 1..64: RobotCommandSerializedV2（64バイト）
 ```
 
 - 送信対象が複数機体なら、各機体のIPへ個別にデータグラムを送る。
-- 受信側は65バイト以外、`robot_id`が自機と異なるパケット、コマンド64バイトが
+- シミュレータは `127.0.0.1:(12400+ロボットID)` の受信ポートで機体を識別する。
+  `cm4_sim.out` は担当機体のポートだけを開く（`--in-port-base` で基点を変更可能）。
+- 受信側は65バイト以外、先頭CHECK_COUNTERと指令内byte 1が異なるパケット、コマンド64バイトが
   全ゼロのパケットを採用しない。
 - **使用中コマンドのbyte 28..31と38..63はゼロとは限らない。**
   受信側は予約領域がゼロであることを前提にしない。
 
-`cm4/bridge/forward_ai_cmd_v2.cpp` は先頭IDを自機IDと照合する。自機IDは
+`cm4/bridge/forward_ai_cmd_v2.cpp` は先頭CHECK_COUNTERと指令内byte 1の一致を確認する。自機IDは
 `wlan0` のIPv4最終オクテットから100を引いて求める。取得できない場合は起動を中止する。
 
-GUI_Qtの[送信実装](https://github.com/ibis-ssl/GUI_Qt/blob/86cf84503891cb6f86029cf5bedc1c195c0fc976/Qt%20Communication%20Tester/Qt_Communication_Tester/qt_communication_tester.cpp)も
+GUI_Qtの送信実装も
 この65バイト形式を使う。GUI_Qtはmode 3の速度指令を送る。mode 4の位置指令を送る側は
 同じ外枠に加え、下記のmode 4フィールドを設定する。
 
@@ -249,7 +251,7 @@ version不一致は`UnsupportedVersion`として拒否し、理由をログに�
   - UDP port: `12345`（`--ai-cmd-port` で変更可。ホスト PC でのテスト用）
   - 65バイト固定。これ以外の長さは捨てます。`recv()`に`MSG_TRUNC`を付けて
     データグラムの実長を検査します。
-  - 先頭IDが自機IDと異なるパケットと、コマンド64バイトが全ゼロのパケットは採用しません。
+  - 先頭CHECK_COUNTERと指令内byte 1が異なるパケットと、コマンド64バイトが全ゼロのパケットは採用しません。
 - ローカルカメラパケット
   - UDP port: `8890`（`--local-cam-port` で変更可）
   - `CAM_BUF_SIZE` は `7` バイトです。

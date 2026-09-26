@@ -68,11 +68,11 @@ def decode_two_byte(data, offset, value_range):
     return (raw - 32767.0) / 32767.0 * value_range
 
 
-def build_packet(robot_id, command):
-    """craneからCM4へ送る65バイトの機体別指令を作る。"""
-    if not 0 <= robot_id < SLOTS or len(command) != CMD_SIZE:
-        raise ValueError("robot_idは0..10、commandは64バイトが必要")
-    return bytes([robot_id]) + bytes(command)
+def build_packet(command):
+    """craneからCM4へ送るCHECK_COUNTER 1バイトと指令64バイトを作る。"""
+    if len(command) != CMD_SIZE:
+        raise ValueError("commandは64バイトが必要")
+    return bytes([command[CHECK_COUNTER]]) + bytes(command)
 
 
 # --- 位置制御の設定パケット (config_packet.h) ---

@@ -97,7 +97,7 @@ class CommandTimingProbeTest(unittest.TestCase):
             self.assertEqual([target for _, target in factory.sockets[0].sent],
                              [("127.0.0.1", 12345)] * 2)
             for sequence, (packet, _) in enumerate(factory.sockets[0].sent, 1):
-                self.assertEqual(packet[0], 8)
+                self.assertEqual(packet[0], sequence % 201)
                 slot = packet[1:]
                 self.assertEqual(slot[CHECK_COUNTER], sequence % 201)
                 self.assertEqual(slot[FLAGS], 1 << STOP_EMERGENCY_BIT)
@@ -127,10 +127,10 @@ class CommandTimingProbeTest(unittest.TestCase):
 
         self.assertEqual(summary["sent"], 1)
         packet, _ = factory.sockets[0].sent[0]
-        self.assertEqual(packet[0], 8)
         slot = packet[1:]
         expected = probe.command(1)
         expected[CONTROL_MODE] = MODE_POSITION_TARGET
+        self.assertEqual(packet[0], expected[CHECK_COUNTER])
         self.assertEqual(slot, expected)
         self.assertEqual(slot[FLAGS], 1 << STOP_EMERGENCY_BIT)
         self.assertEqual(slot[CONTROL_MODE], MODE_POSITION_TARGET)

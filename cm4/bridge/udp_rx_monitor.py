@@ -21,10 +21,10 @@ CSV_FIELDS = ('realtime_ns', 'monotonic_ns', 'kernel_ns', 'source_ip',
               'socket_drop_total', 'clock_jump')
 
 
-def decode(data, robot_id):
+def decode(data):
     if len(data) != INPUT_PACKET_SIZE:
         return 'invalid', None, None
-    if data[0] != robot_id or not any(data[1:]):
+    if data[0] != data[1 + CHECK_COUNTER] or not any(data[1:]):
         return 'empty', None, None
     cmd = data[1:]
     return 'ok', cmd[CONTROL_MODE], cmd[CHECK_COUNTER]
@@ -54,7 +54,8 @@ def distribution(values):
 def main():
     parser = argparse.ArgumentParser(description='CM4 UDP受信監視 (UART送信なし)')
     parser.add_argument('--port', type=int, default=12345)
-    parser.add_argument('--robot-id', type=int, default=8)
+    parser.add_argument('--robot-id', type=int, default=8,
+                        help='表示用の機体ID。受信パケットの先頭にはIDを含まない')
     parser.add_argument('--stream-key', choices=('ip', 'peer'), default='ip',
                         help='周期比較の単位。ipは送信元ポート変更を許容、peerはIP+port')
     parser.add_argument('--duration', type=float, default=0, help='秒。0はCtrl+Cまで')
@@ -143,7 +144,7 @@ def main():
                     if drops is not None:
                         totals['socket_drop'] += (drops - last_drop) & 0xffffffff
                         last_drop = drops
-                    status, mode, counter = decode(data, args.robot_id)
+                    status, mode, counter = decode(data)
                     if flags & socket.MSG_TRUNC:
                         status = 'invalid'
                     totals[status] += 1

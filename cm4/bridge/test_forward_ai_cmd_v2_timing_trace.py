@@ -85,7 +85,7 @@ class TimingTraceTest(unittest.TestCase):
                     # Suspend the consumer so all three datagrams are drained in one loop.
                     os.kill(proc.pid, signal.SIGSTOP)
                     for sequence in (101, 102, 103):
-                        sender.sendto(build_packet(0, command(sequence)), ("127.0.0.1", ports[0]))
+                        sender.sendto(build_packet(command(sequence)), ("127.0.0.1", ports[0]))
                     os.kill(proc.pid, signal.SIGCONT)
                     time.sleep(0.2)
                     proc.terminate()

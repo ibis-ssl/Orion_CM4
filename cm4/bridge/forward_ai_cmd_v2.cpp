@@ -53,7 +53,7 @@
 
 constexpr int AI_CMD_V2_SIZE = 64;
 constexpr int AI_CMD_V2_ROBOT_NUM = 11;
-constexpr int AI_CMD_V2_PACKET_SIZE = AI_CMD_V2_SIZE + 1;  // robot_id 1B + コマンド 64B
+constexpr int AI_CMD_V2_PACKET_SIZE = AI_CMD_V2_SIZE + 1;  // CHECK_COUNTER 1B + コマンド 64B
 constexpr int CAM_BUF_SIZE = 7;                                      // camera 7 + ck1
 constexpr int UART_PACKET_SIZE = AI_CMD_V2_SIZE + CAM_BUF_SIZE + 1;  // local cam + ck
 constexpr long long LOCAL_CAMERA_TIMEOUT_MS = 100;
@@ -595,8 +595,8 @@ int main(int argc, char * argv[])
     // 設定が届かないことを理由に既定値へ戻すとかえって挙動が飛ぶ。
     orion::drainConfigSocket(config_sock, &machine_id, 1, &control_config, &config_receiver);
 
-    // --- crane からの自機宛て65バイト ---
-    // データグラム長とrobot_idを検査し、自機の最新コマンドだけを採用する。
+    // --- crane からの自機IP宛て65バイト ---
+    // データグラム長と先頭CHECK_COUNTERの一致を検査する。
     size_t last_trace_adopt_index = SIZE_MAX;
     while (1) {
       // MSG_TRUNCを付けると、65バイトより長いデータグラムも実長で拒否できる。
@@ -648,8 +648,14 @@ int main(int argc, char * argv[])
           timing_trace.socket_drop_total});
         continue;
       }
-      if ((uint8_t)ai_cmd_buf[0] == (uint8_t)machine_id &&
-        !commandSlotIsEmpty((const uint8_t *)&ai_cmd_buf[1])) {
+      if ((uint8_t)ai_cmd_buf[0] != (uint8_t)ai_cmd_buf[1 + CHECK_COUNTER]) {
+        rx_discard_count++;
+        appendTimingRecord(&timing_trace, {"rx", 0, 0, false, false, false,
+          rx_realtime_ns, rx_kernel_ns, rx_monotonic_ns, 0, 0,
+          timing_trace.socket_drop_total});
+        continue;
+      }
+      if (!commandSlotIsEmpty((const uint8_t *)&ai_cmd_buf[1])) {
         const uint8_t * command = (const uint8_t *)&ai_cmd_buf[1];
         if (timing_trace.enabled) {
           trace_valid_self = true;

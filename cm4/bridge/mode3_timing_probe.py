@@ -128,7 +128,7 @@ def main():
         sequence = 1
         skipped = 0
         while deadline < end:
-            packet = build_packet(args.robot_id, command(sequence))
+            packet = build_packet(command(sequence))
             while True:
                 remaining = deadline - time.monotonic_ns()
                 if remaining <= 0:

@@ -6,7 +6,7 @@
 // 位置制御は行わない。
 //
 //   実機:  crane --UDP:12345 mode4--> ai_cmd_v2.out --UART mode3--> G474
-//   sim :  crane --UDP:12345 mode4--> cm4_sim       --UDP:12346 mode3--> simulator-cli
+//   sim :  crane --UDP:12400+id mode4--> cm4_sim    --UDP:12346 mode3--> simulator-cli
 //
 // feedback は simulator-cli から 127.0.0.1:(50100+id) へ届き、実機の
 // robot_feedback.out と同じ multicast 224.5.20.(100+id):(50100+id) へ再配信する。
@@ -51,7 +51,7 @@ namespace
 constexpr int kRobotSlots = 11;
 constexpr int kCmdSize = 64;
 constexpr int kSlotSize = kCmdSize + 1;
-constexpr int kInputPacketSize = kSlotSize;  // craneからの自機宛てユニキャスト: 65B
+constexpr int kInputPacketSize = kSlotSize;  // CHECK_COUNTER 1B + 指令64B
 constexpr int kPacketSize = kSlotSize * kRobotSlots;  // simulator-cliへの出力: 715B
 // feedback のレイアウトと位置の取り出しは robot_feedback_packet.h が正本。
 constexpr int kFeedbackSize = FEEDBACK_PACKET_SIZE;
@@ -65,7 +65,7 @@ constexpr uint8_t kEmptySlotRobotId = 0xFF;  // 担当しないスロットの�
 struct Options
 {
   std::vector<int> robot_ids;
-  int in_port = 12345;
+  int in_port_base = 12400;
   std::string out_addr = "127.0.0.1";
   int out_port = 12346;
   int feedback_port_base = 50100;
@@ -107,7 +107,7 @@ void printUsage(const char * argv0)
     "使い方: %s [オプション]\n"
     "\n"
     "  --robot-ids 0,1,2         担当するスロット (既定: 0..10 の全 11 台)\n"
-    "  --in-port 12345           crane からの65B指令を受ける UDP ポート\n"
+    "  --in-port-base 12400      機体IDごとの入力ポート (base+id)\n"
     "  --out-addr 127.0.0.1      simulator-cli の待つアドレス\n"
     "  --out-port 12346          simulator-cli の --ibis-port と揃える\n"
     "  --feedback-port-base 50100 simulator-cli の --ibis-feedback-port-base と揃える\n"
@@ -172,9 +172,9 @@ bool parseOptions(int argc, char * argv[], Options * o)
     } else if (a == "--robot-ids") {
       if (!next(&v)) return false;
       if (!parseIntList(v, &o->robot_ids)) return false;
-    } else if (a == "--in-port") {
+    } else if (a == "--in-port-base") {
       if (!next(&v)) return false;
-      o->in_port = atoi(v);
+      o->in_port_base = atoi(v);
     } else if (a == "--out-addr") {
       if (!next(&v)) return false;
       o->out_addr = v;
@@ -244,6 +244,10 @@ bool parseOptions(int argc, char * argv[], Options * o)
   }
 
   if (o->rate_hz <= 0) o->rate_hz = 1000;
+  if (o->in_port_base < 1 || o->in_port_base + kRobotSlots - 1 > 65535) {
+    fprintf(stderr, "--in-port-base は 1..65525 の範囲で指定してください\n");
+    return false;
+  }
   // --feedback-port-base だけを動かしたときに再配信先が一緒に動くと、
   // crane の crane_robot_receiver (50100+id 固定) から外れて
   // 「再配信が来ない」という誤診を招く。既定のまま据え置く。
@@ -294,7 +298,7 @@ public:
   bool enabled() const { return delay_ms_ > 0.0 || jitter_ms_ > 0.0 || loss_rate_ > 0.0; }
 
   // 受信したパケットを取り込む。捨てた場合は false。
-  bool push(const uint8_t * data, uint64_t now_ms)
+  bool push(int robot_id, const uint8_t * data, uint64_t now_ms)
   {
     if (loss_rate_ > 0.0) {
       std::uniform_real_distribution<double> coin(0.0, 1.0);
@@ -312,8 +316,10 @@ public:
     }
     if (delay < 0.0) delay = 0.0;
     pushed_++;
+    mixHash(static_cast<uint64_t>(robot_id));
     mixHash(static_cast<uint64_t>(delay * 1000.0 + 0.5));
     Entry e;
+    e.robot_id = robot_id;
     e.deliver_ms = now_ms + static_cast<uint64_t>(delay + 0.5);
     memcpy(e.data, data, kInputPacketSize);
     queue_.push_back(e);
@@ -323,9 +329,10 @@ public:
   }
 
   // 期限の到来したパケットを 1 つ取り出す。無ければ false。
-  bool pop(uint64_t now_ms, uint8_t * out)
+  bool pop(uint64_t now_ms, int * robot_id, uint8_t * out)
   {
     if (queue_.empty() || queue_.front().deliver_ms > now_ms) return false;
+    *robot_id = queue_.front().robot_id;
     memcpy(out, queue_.front().data, kInputPacketSize);
     queue_.pop_front();
     return true;
@@ -346,6 +353,7 @@ private:
 
   struct Entry
   {
+    int robot_id;
     uint64_t deliver_ms;
     uint8_t data[kInputPacketSize];
   };
@@ -364,6 +372,7 @@ private:
 struct RobotState
 {
   bool handled = false;
+  int input_sock = -1;
   int feedback_sock = -1;
 
   // crane から最後に届いたコマンド (64 バイトの生バイト列)。
@@ -525,9 +534,11 @@ int main(int argc, char * argv[])
   RobotState robots[kRobotSlots];
   for (int id : opt.robot_ids) robots[id].handled = true;
 
-  // crane からの入力
-  const int in_sock = bindUdp(nullptr, opt.in_port, /*reuse_addr=*/false);
-  if (in_sock < 0) return 1;
+  // 機体IDごとに異なるloopbackポートを使う。指令本体に機体IDは含めない。
+  for (int id : opt.robot_ids) {
+    robots[id].input_sock = bindUdp("127.0.0.1", opt.in_port_base + id, /*reuse_addr=*/false);
+    if (robots[id].input_sock < 0) return 1;
+  }
 
   // 設定入力はユニキャストとloopbackの双方を受けるためINADDR_ANYにbindする。
   const int config_sock = orion::openConfigSocket(opt.config_port);
@@ -581,7 +592,7 @@ int main(int argc, char * argv[])
   }
 
   printf("cm4_sim 開始\n");
-  printf("  crane 入力      : 0.0.0.0:%d (機体別65B)\n", opt.in_port);
+  printf("  crane 入力      : 127.0.0.1:%d+id (CHECK_COUNTER + 指令64B)\n", opt.in_port_base);
   printf("  simulator 出力  : %s:%d (mode 3, 715B)\n", opt.out_addr.c_str(), opt.out_port);
   printf("  feedback 入力   : 127.0.0.1:%d+id\n", opt.feedback_port_base);
   printf("  設定入力        : 0.0.0.0:%d (28B)\n", opt.config_port);
@@ -608,21 +619,22 @@ int main(int argc, char * argv[])
 
   // --- crane からの受信を劣化キューへ積む（ノンブロッキング） ---
   auto drainCraneInput = [&]() {
-    while (true) {
-      // MSG_TRUNCで実長を得て、65バイトを超えるデータグラムを拒否する。
-      const ssize_t n = recv(in_sock, rx, sizeof(rx), MSG_DONTWAIT | MSG_TRUNC);
-      if (n < 0) break;
-      if (n != kInputPacketSize) continue;
-      degrader.push(rx, clock.nowMs());
+    for (int id : opt.robot_ids) {
+      while (true) {
+        // MSG_TRUNCで実長を得て、65バイトを超えるデータグラムを拒否する。
+        const ssize_t n = recv(robots[id].input_sock, rx, sizeof(rx), MSG_DONTWAIT | MSG_TRUNC);
+        if (n < 0) break;
+        if (n != kInputPacketSize || rx[0] != rx[1 + CHECK_COUNTER]) continue;
+        degrader.push(id, rx, clock.nowMs());
+      }
     }
   };
 
   // --- 劣化キューから期限到来分を取り出してロボット状態へ反映 ---
   auto applyDeliveredCommands = [&]() {
     uint8_t pkt[kInputPacketSize];
-    while (degrader.pop(clock.nowMs(), pkt)) {
-      const uint8_t robot_id = pkt[0];
-      if (robot_id >= kRobotSlots || !robots[robot_id].handled) continue;
+    int robot_id = -1;
+    while (degrader.pop(clock.nowMs(), &robot_id, pkt)) {
       const uint8_t * cmd = pkt + 1;
       if (commandSlotIsEmpty(cmd)) continue;
       memcpy(robots[robot_id].command, cmd, kCmdSize);
@@ -767,9 +779,11 @@ int main(int argc, char * argv[])
   fflush(stdout);
 
   close(config_sock);
-  close(in_sock);
   close(out_sock);
   if (relay_sock >= 0) close(relay_sock);
-  for (int id : opt.robot_ids) close(robots[id].feedback_sock);
+  for (int id : opt.robot_ids) {
+    close(robots[id].input_sock);
+    close(robots[id].feedback_sock);
+  }
   return 0;
 }

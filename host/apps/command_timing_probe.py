@@ -110,7 +110,7 @@ def run_probe(
         while deadline_ns < end_ns:
             safe_command = command(sequence)
             safe_command[CONTROL_MODE] = args.mode
-            packet = build_packet(args.robot_id, safe_command)
+            packet = build_packet(safe_command)
             _wait_until(deadline_ns, clock_ns, sleeper)
             tx = fixed_socket
             if args.socket_per_packet:

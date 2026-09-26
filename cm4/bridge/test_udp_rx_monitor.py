@@ -16,9 +16,11 @@ from udp_rx_monitor import decode, ancillary_values, SO_TIMESTAMPNS_NEW, SO_RXQ_
 
 class MonitorTest(unittest.TestCase):
     def test_decode_and_ancillary(self):
-        self.assertEqual(decode(build_packet(8, command(1)), 8), ('ok', 3, 1))
-        self.assertEqual(decode(build_packet(8, command(1)), 7)[0], 'empty')
-        self.assertEqual(decode(b'bad', 8)[0], 'invalid')
+        self.assertEqual(decode(build_packet(command(1))), ('ok', 3, 1))
+        bad_counter = bytearray(build_packet(command(1)))
+        bad_counter[0] ^= 1
+        self.assertEqual(decode(bad_counter)[0], 'empty')
+        self.assertEqual(decode(b'bad')[0], 'invalid')
         self.assertEqual(ancillary_values([
             (socket.SOL_SOCKET, SO_TIMESTAMPNS_NEW, struct.pack('=qq', 10, 123)),
             (socket.SOL_SOCKET, SO_RXQ_OVFL, struct.pack('=I', 7))]),
@@ -45,10 +47,12 @@ class MonitorTest(unittest.TestCase):
                 for sequence in range(1, 11):
                     # 送信ごとにportが変わっても同じIPの周期比較を継続できること。
                     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as changing_tx:
-                        changing_tx.sendto(build_packet(8, command(sequence)), ('127.0.0.1', port))
+                        changing_tx.sendto(build_packet(command(sequence)), ('127.0.0.1', port))
                     time.sleep(.02)
                 tx.sendto(b'bad', ('127.0.0.1', port))
-                tx.sendto(build_packet(7, command(1)), ('127.0.0.1', port))
+                bad_counter = bytearray(build_packet(command(1)))
+                bad_counter[0] ^= 1
+                tx.sendto(bad_counter, ('127.0.0.1', port))
                 output, _ = proc.communicate(timeout=5)
                 self.assertEqual(proc.returncode, 0, output)
                 with open(csv_path, encoding='utf-8') as stream:
