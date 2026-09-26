@@ -152,7 +152,7 @@ docker compose up --build
 - カメラ座標 multicast: `224.5.10.(100 + N):5100 + N`
 - robot feedback multicast: `224.5.20.(100 + N):50000 + (100 + N)`
 
-4輪駆動・4輪操舵の`4WS_MainFW`を通信相手に加える計画がある。crane→CM4の指令には4WS専用の`CONTROL_MODE=5`を追加し、CM4→MainをSPIにする案を検討中である。バイト配置と制御分担は未確定で、実装はない。[4WS MainとのSPI通信案](4ws_spi_packet_proposal.md)に仮仕様とOrion_CM4側の拡張方針を分離して記す。
+Orion（4輪オムニ）と4WS（4輪駆動・4輪操舵）はmode 3・4を共通で使う方針とし、各輪目標には4WS専用のmode 5、Orion専用のmode 6を定義した。mode 4はCM4でmode 3・5・6のいずれかに変換し、G474へ直接送らない。[制御モード互換性](control_mode_compatibility.md)に機体別の対応とmode 6の配置、[4WS MainとのSPI通信案](4ws_spi_packet_proposal.md)にmode 5の配置とSPIの仮仕様を記す。mode 5・6と4WS向け経路は未実装。
 
 ## 関連ドキュメント
 
@@ -161,6 +161,7 @@ docker compose up --build
 - [MCUファームウェア更新](firmware_update.md)
 - [カメラ制御・デバッグ](camera.md)
 - [制御パケット](control_packet.md)
+- [制御モード互換性](control_mode_compatibility.md)
 - [4WS MainとのSPI通信案（未確定・未実装）](4ws_spi_packet_proposal.md)
 - [フィードバックパケット](feedback_packet.md)
 - [開発とドキュメントのルール](development.md)
