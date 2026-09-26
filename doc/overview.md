@@ -1,5 +1,40 @@
 # overview
 
+## ログの管理方針（2026-09-26）
+
+- ログはGitへ追加しない。`.gitignore`で`*.log`とルートの`runtime/`全体を除外し、実行ログ・計測CSV・packet capture・一時BINはローカルに保存する。既存の追跡対象もファイル本体を残してindexから除外した。過去のGit履歴は書き換えていない。
+
+## CM4_101・103～110のMain更新結果（2026-09-20実施）
+
+- 対象9台すべてでMainのbuild ID=`1789881653`、CONFIRMED状態、期待BINとのCRC32C一致を確認した。103は導入済みのため再書込みせず、他8台を更新した。
+- 105はSlot A（CRC32C=`78EAC00D`）、101・103・104・106～110はSlot B（CRC32C=`736AA93F`）から起動。各機の旧active slotは保持し、CAN基板のFWは書き換えていない。
+- 最終確認では全9台の制御APIが`running:true`、`ai_cmd_v2.out`と`robot_feedback`の稼働を確認した。一部の更新直後にはBLDCのFW情報照会が一時的に応答しなかったため、全機のCAN状態まで保証する結果ではない。
+- 103・104・105・106・109・110では制御再開時、`cm4/camera/dist/cam_server_v3`欠落によるHTTP 500を確認した。制御ブリッジは起動しているが、カメラ起動は別途修正が必要である。
+
+## CM4_107のデフォルトゲートウェイ調査（2026-09-20）
+
+- SSHで確認したNetworkManager 1.52.1の接続`SSL_ibis`（wlan0）は、`ipv4.method=manual`、`192.168.20.107/24`、DNS=`8.8.8.8`。保存設定は`ipv4.never-default=yes`、`ipv4.gateway`と`ipv4.routes`は空だった。デフォルト経路を禁止する設定のため、ゲートウェイ入力だけでは解決しない。
+- 実行時には`default via 192.168.20.1 dev wlan0`（metric 0）が存在し、ユーザー申告の手動追加と整合する。`https://example.com`へのHEADはHTTP 200で成功。保存プロファイルと実行時の経路は区別する。
+- nmtuiでは`SSL_ibis`のIPv4設定で「デフォルト経路として使用しない」に相当するチェックを外し、ゲートウェイ`192.168.20.1`を保存する。CLIでの同等操作は`sudo nmcli connection modify SSL_ibis ipv4.never-default no ipv4.gateway 192.168.20.1`、適用は`sudo nmcli device reapply wlan0`。調査時には機体設定の変更・再適用は実施していない。
+- `doc/fleet.md`の「ロボット用LANはインターネットに到達できない」は従来の環境前提であり、今回のAP環境には一律に当てはまらない。
+
+## CM4_103のMain単独更新完了（2026-09-20）
+
+- ユーザー指示によりMainのみ更新した。Mainリポジトリのコミット`7cf72de6e07db6908fc7986888de542e6482ed6f`（dirtyなし）から`Script/build_slot_b.ps1 -Rebuild`でA/Bを再ビルドし、build ID=`1789881653`を生成した。
+- CM4_103の`/home/ibis/main-fw-update-oqubcbwn/`へ更新CLI・確認CLI・A/B BINを配置し、転送前後のSHA-256一致を確認。`main_ab_updater.py`で非active Slot Bへ84,864 byteを書込み、generation=2、CRC32C=`736AA93F`、9.672秒で成功した。ログは同ディレクトリの`update.log`に保存した。
+- 更新後のFWVR応答は`active_slot=B`、Main Bのbuild ID=`1789881653`・CRC32C=`736AA93F`で期待BINと`SAME`。Mainソースではvalid maskをCONFIRMED metadata（state=4）の場合にだけ立てるため、確定済み状態も確認できた。
+- 旧Main Aはbuild ID=`1789875047`・CRC32C=`D79444C7`のまま保持。Sub=`1789483368/12E9586C`、BLDC CAN1=`1789881156/4E0D4BEB`、BLDC CAN2=`1789870533/F542F566`、Power=`1789874792/F4F0A5A2`も更新前後で一致し、CAN基板には書込みを行っていない。
+- 通常制御APIは更新前後とも`running:false`。走行試験は行っていない。
+
+## CM4_103のMain更新可否確認（2026-09-20）
+
+- `CM4_103`（`192.168.20.103`）へSSH接続し、確認前後とも同IPの8000番APIで`running:false`、UART使用プロセスなしを確認した。APIはlocalhostにはbindしていない。
+- `/dev/serial0`は`ttyS0`（mini UART）。1 MbaudでFWVR照会とMain bootloaderのOFW1通信に成功した。長時間転送の安定性は今回未検証。
+- MainはSlot Aで稼働し、build ID=`1789875047`（2026-09-20 03:30:47 UTC）、CRC32C=`D79444C7`。Slot BはFWVRで`UNREACHABLE`（descriptor未検出）。
+- FWUP command 4でMainを一時的に更新モードへ移し、書込みを伴わないINFOを実行。`status=0, target_slot=1(B), valid_mask=1(Aのみ有効), generation=2`を取得し、Aを保持してBへ更新する入口が実機で動作することを確認した。BEGIN/CHUNK/FINALIZE/CONFIRMは送信していない。
+- REBOOT後、Slot Aの同一build ID・CRC32Cと全CAN基板のFW情報応答を再確認した。FW書込みは未実施で、更新成功そのものを検証した結果ではない。
+- CM4側checkoutは`28c3ca0`。`/home/ibis`配下を深さ5まで探索した範囲にはMain更新CLIやBINがなかった。今回はローカルの既存PythonツールをSSH標準入力から実行した。実更新時は更新対象版のSlot A/B用BINと更新ツールを用意する。
+
 ## PC→CM4→G474 実機タイミング調査結果（2026-09-20）
 
 詳細は [timing_investigation_20260920.md](timing_investigation_20260920.md)。PC有線キャプチャ、CM4 kernel/recv/write、COM56、STM32記録SRAMを同時評価した。

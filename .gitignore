@@ -26,6 +26,8 @@ venv/
 htmlcov/
 
 # Runtime / temporary files
+*.log
+/runtime/
 runtime/*.json
 runtime/*.tmp
 cm4/runtime/*.json
