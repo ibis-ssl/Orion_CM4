@@ -39,7 +39,7 @@ from packet_codec import (  # noqa: E402
     CHECK_COUNTER, CMD_SIZE, CONTROL_MODE, CONTROL_MODE_ARGS, DRIBBLE_POWER, FEEDBACK_POS_X_OFFSET,
     FEEDBACK_POS_Y_OFFSET, FEEDBACK_SIZE, FEEDBACK_SYNC, FLAGS, KICK_POWER,
     LINEAR_VELOCITY_LIMIT_HIGH, INPUT_PACKET_SIZE, STOP_EMERGENCY_BIT, TARGET_GLOBAL_POS_X_HIGH,
-    TERMINAL_VELOCITY_HIGH, build_config_packet, build_packet, encode_two_byte as enc)
+    TERMINAL_VELOCITY_HIGH, build_config_packet, build_packet, feedback_crc8, encode_two_byte as enc)
 from packet_codec import MODE_POLAR_VELOCITY as POLAR_VELOCITY_TARGET_MODE  # noqa: E402
 from packet_codec import MODE_POSITION_TARGET as POSITION_TARGET_WITH_TERMINAL_VELOCITY_MODE  # noqa: E402
 
@@ -91,6 +91,7 @@ def build_feedback(x, y):
     fb[0], fb[1] = FEEDBACK_SYNC
     fb[FEEDBACK_POS_X_OFFSET:FEEDBACK_POS_X_OFFSET + 4] = struct.pack("<f", x)
     fb[FEEDBACK_POS_Y_OFFSET:FEEDBACK_POS_Y_OFFSET + 4] = struct.pack("<f", y)
+    fb[2] = feedback_crc8(fb)
     return bytes(fb)
 
 

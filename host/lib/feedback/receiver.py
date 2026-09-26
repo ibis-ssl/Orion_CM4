@@ -42,7 +42,6 @@ def iter_feedback_packets(sock: socket.socket) -> Iterator[bytes]:
 def packet_to_dict(packet: RobotFeedbackPacket) -> dict[str, object]:
     values = asdict(packet)
     values["sync_valid"] = packet.is_sync_valid
-    values["checksum_valid"] = packet.is_checksum_valid
     values["camera_pos_x"] = packet.camera_pos_x
     values["camera_radius"] = packet.camera_radius
     values["kick_state"] = packet.kick_state
@@ -57,7 +56,7 @@ def format_packet_summary(index: int, packet: RobotFeedbackPacket) -> str:
         f"#{index} "
         f"counter={packet.check_counter} "
         f"sync={int(packet.is_sync_valid)} "
-        f"checksum={int(packet.is_checksum_valid)} "
+        f"crc={int(packet.is_crc_valid)} "
         f"yaw={packet.imu_yaw_deg:.3f} "
         f"battery={packet.battery_voltage_bldc_right:.3f} "
         f"camera=({packet.camera_pos_x},{packet.camera_pos_y},r={packet.camera_radius},fps={packet.camera_fps}) "

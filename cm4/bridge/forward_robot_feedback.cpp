@@ -190,6 +190,7 @@ int main(int argc, char * argv[])
         buf_idx++;
         if (buf_idx >= PACKET_SIZE) {
           buf_idx = 0;
+          if (!isFeedbackPacketValid(uart_rx_buf, PACKET_SIZE)) continue;
           sendto(sock, uart_rx_buf, PACKET_SIZE, 0, (struct sockaddr *)&addr, sizeof(addr));
           sendto(sock, uart_rx_buf, PACKET_SIZE, 0, (struct sockaddr *)&loopback_addr, sizeof(loopback_addr));
           printf("check_counter : %3d / ", (uint8_t)uart_rx_buf[3]);

@@ -202,7 +202,7 @@ flowchart LR
     end
     subgraph cm4["CM4内部処理"]
         receive["指令の長さ・カウンタ・空指令を検査"]
-        fb_receive["feedback受信・再配信<br/>現在位置と鮮度を取得"]
+        fb_receive["feedback受信・CRC検証・再配信<br/>現在位置と鮮度を取得"]
         cam_receive["カメラ受信<br/>ボール検出・鮮度を判定"]
         mode{"CONTROL_MODE"}
         pass["mode 3<br/>速度指令を素通し"]
@@ -237,6 +237,8 @@ flowchart LR
 ```
 
 入力はcrane出力、G474 feedback、ローカルカメラの3系統で、出力はG474向け72バイトUARTパケットである。未定義領域byte 64..70はCM4が0で初期化する。mode 4の位置制御にはfeedbackのbyte 44..51を現在位置として使用する。mode 7・8ではCM4内部の制御にカメラ観測値を反映する。ボール未検出、カメラ未起動、更新途絶から100 ms超過はいずれも「有効なボール観測なし」とし、mode 7はmode 3、mode 8はmode 4相当の指令へ切り替える。詳細は[制御パケット](control_packet.md)と[制御モード互換性](control_mode_compatibility.md)を参照。
+
+G474 feedbackは128バイト固定で、byte 2にbyte 3..127のCRC-8/ATMを格納する。CM4は長さ・同期バイト・CRCを検証し、不正なfeedbackを制御と再配信から除外する。詳細は[フィードバックパケット](feedback_packet.md)を参照。
 
 ### シミュレータ構成
 

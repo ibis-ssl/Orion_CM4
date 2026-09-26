@@ -32,9 +32,7 @@ struct RobotFeedbackPacketHeader
 {
   uint8_t sync0;
   uint8_t sync1;
-  // 実機は定数 10 を書くだけで、実際のチェックサムは計算していない
-  // (ai_comm.c の `buf[2] = 10;  // CRC, 10:dummy`)。検証に使ってはいけない。
-  uint8_t checksum;
+  uint8_t crc8;  // byte 3..127のCRC-8/ATM
   uint8_t check_counter;
 };
 
@@ -80,15 +78,35 @@ static_assert(sizeof(RobotFeedbackPacket) == FEEDBACK_PACKET_SIZE, "RobotFeedbac
 constexpr size_t FEEDBACK_POS_X_OFFSET = offsetof(RobotFeedbackPacket, vision_based_position_x);
 constexpr size_t FEEDBACK_POS_Y_OFFSET = offsetof(RobotFeedbackPacket, vision_based_position_y);
 
-// 受信バッファから位置 [m] を取り出す。長さと同期バイトを検査する。
+// CRC-8/ATM: poly=0x07, init=0x00, refin/refout=false, xorout=0x00。
+inline uint8_t feedbackCrc8(const uint8_t * data, size_t size)
+{
+  uint8_t crc = 0;
+  for (size_t i = 0; i < size; i++) {
+    crc ^= data[i];
+    for (int bit = 0; bit < 8; bit++) {
+      crc = (crc & 0x80U) ? static_cast<uint8_t>((crc << 1) ^ 0x07U) : static_cast<uint8_t>(crc << 1);
+    }
+  }
+  return crc;
+}
+
+inline bool isFeedbackPacketValid(const void * buf, size_t size)
+{
+  if (size != FEEDBACK_PACKET_SIZE) return false;
+  const uint8_t * bytes = static_cast<const uint8_t *>(buf);
+  return bytes[0] == FEEDBACK_SYNC0 && bytes[1] == FEEDBACK_SYNC1 &&
+         bytes[2] == feedbackCrc8(bytes + 3, FEEDBACK_PACKET_SIZE - 3);
+}
+
+// 受信バッファから位置 [m] を取り出す。長さ・同期バイト・CRCを検査する。
 //
 // yaw (byte 4..7) は実機が度・シミュレータがラジアンでずれており、制御則も
 // 使わないので読まない。入力に含めると 57.3 倍の食い違いを作り込むことになる。
 inline bool decodeFeedbackPosition(const void * buf, size_t size, float out_pos[2])
 {
-  if (size != FEEDBACK_PACKET_SIZE) return false;
+  if (!isFeedbackPacketValid(buf, size)) return false;
   const uint8_t * bytes = static_cast<const uint8_t *>(buf);
-  if (bytes[0] != FEEDBACK_SYNC0 || bytes[1] != FEEDBACK_SYNC1) return false;
   memcpy(&out_pos[0], bytes + FEEDBACK_POS_X_OFFSET, sizeof(float));
   memcpy(&out_pos[1], bytes + FEEDBACK_POS_Y_OFFSET, sizeof(float));
   return true;

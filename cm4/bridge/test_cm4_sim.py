@@ -38,7 +38,7 @@ from packet_codec import (  # noqa: E402
     MODE_POSITION_TARGET, PACKET_SIZE, SLOT_SIZE, SLOTS, STOP_EMERGENCY_BIT,
     TARGET_GLOBAL_POS_X_HIGH, TARGET_GLOBAL_POS_Y_HIGH, TARGET_GLOBAL_THETA_HIGH,
     TERMINAL_VELOCITY_HIGH, VISION_GLOBAL_THETA_HIGH, VISION_GLOBAL_X_HIGH, VISION_GLOBAL_Y_HIGH,
-    build_config_packet, build_packet, decode_two_byte, encode_two_byte)
+    build_config_packet, build_packet, decode_two_byte, encode_two_byte, feedback_crc8)
 
 # 既定 (12400+id / 12346 / 50100) から離す
 # ポートはテストごとにずらし、さらにプロセスごとにもずらす。
@@ -86,14 +86,12 @@ def build_command(counter, target=(1.0, 0.0), vision=(0.0, 0.0), mode=MODE_POSIT
 def build_feedback(robot_id, counter, x, y):
     """simulator-cli の ibisBuildFeedbackPacket と同じバイト配置。
 
-    framework PR #4 (2026-09-13 マージ) で実機フォーマットに揃ったので、
-    byte 2 は定数 10、byte 14 は tx_cycle_count、byte 60..63 は 0 である。
+    byte 2 はCRC-8/ATM、byte 14 は tx_cycle_count、byte 60..63 は 0 である。
     robot_id は宛先ポートの選択にだけ使い、パケットには載らない。
     cm4_sim が読むのは byte 44..51 だけなので制御には影響しない。
     """
     d = bytearray(FEEDBACK_SIZE)
     d[0], d[1] = FEEDBACK_SYNC
-    d[2] = 10                            # 定数。チェックサムではない
     d[3] = counter & 0xFF                # 実機は指令の check_counter の反射、sim は自走
     struct.pack_into("<f", d, 4, 0.0)    # imu_yaw_deg [deg] (制御では使わない)
     d[14] = counter & 0xFF               # tx_cycle_count
@@ -101,6 +99,7 @@ def build_feedback(robot_id, counter, x, y):
     struct.pack_into("<f", d, FEEDBACK_POS_Y_OFFSET, y)
     struct.pack_into("<f", d, 52, 0.0)   # 速度
     struct.pack_into("<f", d, 56, 0.0)
+    d[2] = feedback_crc8(d)
     return bytes(d)
 
 

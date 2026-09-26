@@ -65,13 +65,13 @@ STM32
 
 - `0`: 同期バイト `0xAB`
 - `1`: 同期バイト `0xEA`
-- `2`: **定数 `10`**（`ai_comm.c` に `// CRC, 10:dummy` とある通り、チェックサムは未実装）
+- `2`: CRC-8/ATM（byte 3..127 を対象）
 - `3`: `check_counter`（AI から受けた指令の `check_counter` をそのまま返す）
 
-> **byte 2 はチェックサムではありません。** 現行の G474 ファームウェア
-> (`Core/Src/ai_comm.c` の `sendRobotInfo()`) は `buf[2] = 10;` を書きます。
-> `host/lib/feedback/packet.py` の `is_checksum_valid()` は `data[3:]` の総和と比較するので
-> **常に false になります**。受信側でこの判定を有効にしてはいけません。
+CRC-8/ATM のパラメータは多項式 `0x07`、初期値 `0x00`、入力・出力とも反転なし、最終 XOR `0x00` です。
+計算範囲は **byte 3..127 の125バイト**で、同期バイトとbyte 2は含めません。
+標準検査値は `"123456789" → 0xF4` です。送信側は全ペイロードの確定後にbyte 2を書きます。
+CM4は長さ・同期バイト・CRCを確認し、不正なパケットを位置制御にも再配信にも渡しません。
 
 byte 3 は指令の `check_counter` の反射です。mode 4 の位置制御経路では **CM4 が `check_counter` を採番する**
 ので、ここを見れば「CM4 が出した指令がどこまで G474 に届いたか」が分かります
@@ -142,7 +142,7 @@ feedbackのbyte 60..63はレイアウト上のフィールドとして残しま�
 `host/lib/feedback/packet.py` は次を担当します。
 
 - 同期バイトの確認
-- チェックサム検証
+- CRC-8/ATM検証
 - 128 バイト固定長レイアウトのデコード
 - little-endian IEEE754 float の復元
 - `tx_value_array[14]` のラベル付け
@@ -155,7 +155,7 @@ GUI フロントエンドや Rerun には依存しないため、通信とパー
 ### 出力する主な値
 
 - 同期バイトの検証結果
-- チェックサムの検証結果
+- CRCの検証結果
 - 電圧
 - 姿勢
 - エラー情報
@@ -187,7 +187,7 @@ GUI フロントエンドや Rerun には依存しないため、通信とパー
 - モーター電流
 - `mouse->global_vel[0]`, `mouse->global_vel[1]`
 - `omni->local_odom_speed_mvf[0]`, `omni->local_odom_speed_mvf[1]`
-- 同期バイトとチェックサムの検証結果
+- 同期バイトとCRCの検証結果
 - エラー情報
 - mouse quality
 
@@ -224,12 +224,14 @@ GUI フロントエンドや Rerun には依存しないため、通信とパー
 
 ## シミュレータとの一致
 
-`framework` の `simulator-cli` も実機と同じ 128 バイト形式を出します。
+`framework` の `simulator-cli` も128バイト形式を使います。CM4のCRC検証を通すには、
+シミュレータ側もbyte 3..127からCRC-8/ATMを計算してbyte 2に入れる必要があります。
+このリポジトリ内のシミュレータ用テストフレームはCRCを生成します。
 `cm4_sim` と `ai_cmd_v2.out` は位置制御に byte 44..51 の位置を使用します。
-byte 2 は定数 `10`、byte 4..7 は度単位の `imu_yaw_deg`、byte 14 は
+byte 4..7 は度単位の `imu_yaw_deg`、byte 14 は
 `tx_cycle_count`、byte 60 は `camera_pos_x_div2` です。
 
-シミュレータ出力は `host/lib/feedback/packet.py` で復号でき、
+CRC付きのシミュレータ出力は `host/lib/feedback/packet.py` で復号でき、
 `robot-feedback-viewer` などのツールで表示できます。
 
 ### シミュレータのbyte 52..59（速度）
@@ -262,14 +264,6 @@ byte 3 は実機では指令の `check_counter` の反射ですが、シミュ�
 陳腐化の検出には使えますが、**特定の指令とは対応しません**。
 「CM4 が出した指令がどこまで G474 に届いたか」を byte 3 で追う使い方は
 実機でのみ成立します。
-
-## 既知の不整合（host 側デコーダ）
-
-`host/lib/feedback/packet.py` は次の 2 点が現行ファームウェアと食い違っています。
-このドキュメントの記載（上記）が正です。
-
-- `ball_detection=(data[12], data[13], data[14])` — `data[14]` は `tx_cycle_count` です。
-- `is_checksum_valid()` — byte 2 は定数 `10` なので常に false になります。
 
 ## 補足
 

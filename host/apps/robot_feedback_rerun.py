@@ -43,8 +43,8 @@ def log_packet(packet_index: int, packet_bytes: bytes) -> None:
     rr.set_time("wall_clock", timestamp=datetime.now(timezone.utc))
 
     log_scalar("/robot_feedback/status/check_counter", packet.check_counter)
-    log_scalar("/robot_feedback/status/checksum", packet.checksum)
-    log_scalar("/robot_feedback/status/checksum_valid", int(packet.is_checksum_valid))
+    log_scalar("/robot_feedback/status/crc8", packet.crc8)
+    log_scalar("/robot_feedback/status/crc_valid", int(packet.is_crc_valid))
     log_scalar("/robot_feedback/status/sync_valid", int(packet.is_sync_valid))
 
     log_scalar("/robot_feedback/power/battery_voltage_bldc_right", packet.battery_voltage_bldc_right)
@@ -72,6 +72,7 @@ def log_packet(packet_index: int, packet_bytes: bytes) -> None:
 
     for index, value in enumerate(packet.ball_detection):
         log_scalar(f"/robot_feedback/status/ball_detection_{index}", value)
+    log_scalar("/robot_feedback/status/tx_cycle_count", packet.tx_cycle_count)
     log_scalar("/robot_feedback/status/ball_detection_extra", packet.ball_detection_extra)
 
     log_scalar("/robot_feedback/camera_timeseries/camera_pos_x", packet.camera_pos_x)

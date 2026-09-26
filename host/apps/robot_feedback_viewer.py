@@ -219,7 +219,7 @@ class FeedbackWindow(QWidget):
         value_names = (
             "counter",
             "sync",
-            "checksum",
+            "crc",
             "battery",
             "capacitor",
             "yaw",
@@ -326,7 +326,7 @@ class FeedbackWindow(QWidget):
 
         self.value_labels["counter"].setText(str(packet.check_counter))
         self.value_labels["sync"].setText(str(packet.is_sync_valid))
-        self.value_labels["checksum"].setText(str(packet.is_checksum_valid))
+        self.value_labels["crc"].setText(str(packet.is_crc_valid))
         self.value_labels["battery"].setText(f"{packet.battery_voltage_bldc_right:.3f}")
         self.value_labels["capacitor"].setText(f"{packet.capacitor_boost_voltage:.3f}")
         self.value_labels["yaw"].setText(f"{packet.imu_yaw_deg:.3f}")

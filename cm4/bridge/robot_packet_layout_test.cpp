@@ -76,6 +76,7 @@ static_assert(sizeof(RobotCommandSerializedV2) == 64, "RobotCommandSerializedV2 
 // 目標と無関係な位置へ走り出すのに単体テストは緑のままになる。ここで止める。
 static_assert(sizeof(RobotFeedbackPacket) == 128, "feedback packet must be 128 bytes");
 static_assert(offsetof(RobotFeedbackPacket, header) == 0, "feedback header offset");
+static_assert(offsetof(RobotFeedbackPacketHeader, crc8) == 2, "feedback CRC offset");
 static_assert(offsetof(RobotFeedbackPacket, imu_yaw_deg) == 4, "feedback imu_yaw_deg offset");
 static_assert(offsetof(RobotFeedbackPacket, battery_voltage_bldc_right) == 8, "feedback battery offset");
 static_assert(offsetof(RobotFeedbackPacket, ball_detection) == 12, "feedback ball_detection offset");
@@ -94,6 +95,31 @@ static_assert(offsetof(RobotFeedbackPacket, reserved) == 120, "feedback reserved
 static_assert(FEEDBACK_POS_X_OFFSET == 44, "decodeFeedbackPosition reads byte 44");
 static_assert(FEEDBACK_POS_Y_OFFSET == 48, "decodeFeedbackPosition reads byte 48");
 static_assert(TERMINAL_VELOCITY_LOW < 64, "packet fields must fit in 64 bytes");
+
+static void check(bool ok, const char * name);
+
+static void testFeedbackCrc(void)
+{
+  const uint8_t vector[] = {'1', '2', '3', '4', '5', '6', '7', '8', '9'};
+  check(feedbackCrc8(vector, sizeof(vector)) == 0xF4, "CRC-8/ATM check vector");
+  uint8_t frame[FEEDBACK_PACKET_SIZE] = {};
+  frame[0] = FEEDBACK_SYNC0;
+  frame[1] = FEEDBACK_SYNC1;
+  frame[3] = 0x12;
+  const float x = 1.25f;
+  const float y = -0.5f;
+  memcpy(frame + FEEDBACK_POS_X_OFFSET, &x, sizeof(x));
+  memcpy(frame + FEEDBACK_POS_Y_OFFSET, &y, sizeof(y));
+  frame[2] = feedbackCrc8(frame + 3, FEEDBACK_PACKET_SIZE - 3);
+  float pos[2] = {};
+  check(decodeFeedbackPosition(frame, sizeof(frame), pos), "feedback CRC valid");
+  check(pos[0] == x && pos[1] == y, "feedback position after CRC");
+  frame[44] ^= 1;
+  check(!decodeFeedbackPosition(frame, sizeof(frame), pos), "feedback payload corruption rejected");
+  frame[44] ^= 1;
+  frame[2] ^= 1;
+  check(!isFeedbackPacketValid(frame, sizeof(frame)), "feedback CRC corruption rejected");
+}
 
 // ---------------------------------------------------------------------------
 // 3. ControlMode / FlagAddress
@@ -377,6 +403,7 @@ int main(int argc, char * argv[])
   testModeArgsUnion();
   testClamp();
   testUInt16Fields();
+  testFeedbackCrc();
   printf("\n%s (%d failure%s)\n", g_failures == 0 ? "PASS" : "FAIL", g_failures, g_failures == 1 ? "" : "s");
   return g_failures == 0 ? 0 : 1;
 }

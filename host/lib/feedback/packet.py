@@ -18,11 +18,12 @@ FLOAT_BLOCK_COUNT = 14
 class RobotFeedbackPacket:
     sync0: int
     sync1: int
-    checksum: int
+    crc8: int
     check_counter: int
     imu_yaw_deg: float
     battery_voltage_bldc_right: float
-    ball_detection: tuple[int, int, int]
+    ball_detection: tuple[int, int]
+    tx_cycle_count: int
     kick_state_div10: int
     current_error_id: int
     current_error_info: int
@@ -44,14 +45,15 @@ class RobotFeedbackPacket:
     camera_fps: int
     tx_value_array: tuple[float, ...]
     reserved: bytes
+    crc_valid: bool
 
     @property
     def is_sync_valid(self) -> bool:
         return self.sync0 == SYNC0 and self.sync1 == SYNC1
 
     @property
-    def is_checksum_valid(self) -> bool:
-        return self.checksum == calc_checksum(self.to_bytes())
+    def is_crc_valid(self) -> bool:
+        return self.crc_valid
 
     @property
     def camera_pos_x(self) -> int:
@@ -73,11 +75,12 @@ class RobotFeedbackPacket:
         data = bytearray(PACKET_SIZE)
         data[0] = self.sync0
         data[1] = self.sync1
-        data[2] = self.checksum
+        data[2] = self.crc8
         data[3] = self.check_counter
         struct.pack_into("<f", data, 4, self.imu_yaw_deg)
         struct.pack_into("<f", data, 8, self.battery_voltage_bldc_right)
-        data[12:15] = bytes(self.ball_detection)
+        data[12:14] = bytes(self.ball_detection)
+        data[14] = self.tx_cycle_count
         data[15] = self.kick_state_div10
         struct.pack_into("<H", data, 16, self.current_error_id)
         struct.pack_into("<H", data, 18, self.current_error_info)
@@ -102,10 +105,19 @@ class RobotFeedbackPacket:
         return bytes(data)
 
 
-def calc_checksum(data: bytes) -> int:
+def crc8_atm(data: bytes) -> int:
+    crc = 0
+    for value in data:
+        crc ^= value
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x07) & 0xFF if crc & 0x80 else (crc << 1) & 0xFF
+    return crc
+
+
+def calc_feedback_crc8(data: bytes) -> int:
     if len(data) != PACKET_SIZE:
         raise ValueError(f"packet size must be {PACKET_SIZE}, got {len(data)}")
-    return sum(data[3:]) & 0xFF
+    return crc8_atm(data[3:])
 
 
 def decode_robot_feedback_packet(data: bytes) -> RobotFeedbackPacket:
@@ -116,11 +128,12 @@ def decode_robot_feedback_packet(data: bytes) -> RobotFeedbackPacket:
     return RobotFeedbackPacket(
         sync0=data[0],
         sync1=data[1],
-        checksum=data[2],
+        crc8=data[2],
         check_counter=data[3],
         imu_yaw_deg=struct.unpack_from("<f", data, 4)[0],
         battery_voltage_bldc_right=struct.unpack_from("<f", data, 8)[0],
-        ball_detection=(data[12], data[13], data[14]),
+        ball_detection=(data[12], data[13]),
+        tx_cycle_count=data[14],
         kick_state_div10=data[15],
         current_error_id=struct.unpack_from("<H", data, 16)[0],
         current_error_info=struct.unpack_from("<H", data, 18)[0],
@@ -142,6 +155,7 @@ def decode_robot_feedback_packet(data: bytes) -> RobotFeedbackPacket:
         camera_fps=data[63],
         tx_value_array=tx_value_array,
         reserved=data[120:128],
+        crc_valid=data[2] == calc_feedback_crc8(data),
     )
 
 

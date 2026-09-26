@@ -21,6 +21,18 @@ FEEDBACK_SYNC = (0xAB, 0xEA)
 FEEDBACK_POS_X_OFFSET = 44
 FEEDBACK_POS_Y_OFFSET = 48
 
+
+def feedback_crc8(data):
+    """128バイトfeedbackのbyte 3..127からCRC-8/ATMを計算する。"""
+    if len(data) != FEEDBACK_SIZE:
+        raise ValueError("feedbackは128バイトが必要")
+    crc = 0
+    for value in data[3:]:
+        crc ^= value
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x07) & 0xFF if crc & 0x80 else (crc << 1) & 0xFF
+    return crc
+
 # robot_packet.h の enum Address
 CHECK_COUNTER = 1
 VISION_GLOBAL_X_HIGH = 2
