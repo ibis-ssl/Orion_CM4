@@ -4,7 +4,7 @@
 
 craneが制御に使う位置・グローバル速度・ボール検出・yawと、監視に使う温度・電圧・電流・エラーを、CM4が固定の形式に変換して送る。Mainの共通feedback packetを変更しても、craneとメインPCはその配置を解釈しない。変換はCM4に閉じ込める。
 
-この文書は**仮仕様**であり、共通パケット生成・crane側の受信・メインPCの共通監視ツール・4WS Mainの生データ配信は未実装。両機種のfeedback packetは[フィードバックパケット](feedback_packet.md)、4WSの転送方針は[4WS MainとのSPI通信案](4ws_spi_packet_proposal.md)に記す。
+この文書は**仮仕様**であり、共通パケット生成・crane側の受信・メインPCの共通監視ツール・4WS Mainの生データ配信は未実装。両機種のMain→CM4の仕様は[フィードバックパケット](feedback_packet.md)、CM4→Mainの仕様は[制御パケット](control_packet.md)に記す。
 
 ## 送信データのブロック図
 

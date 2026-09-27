@@ -154,7 +154,7 @@ OrionMainはUART接続のOrion用Main、4WS MainはSPI接続を予定する4WS�
 
 Mainの生フィードバックは機体別の`50100 + N`へ配信する。Main→CM4の128バイトfeedback packetは両機種で共通とする。CM4からのUDP転送コピーではOrionMainの同期値を`0xAB 0xEA`、4WS Mainを`0xAB 0xEB`とし、PCデバッグツールが機体を判別して共通配置を解析する。craneとOrion/4WS共通のメインPC監視ツールには、CM4が位置・グローバル速度・ボールセンサ検出・yaw・statusへ変換し、機体タイプ（`OrionMain=1`、`4WS=2`）とCM4のローカルカメラ搭載フラグを付けた共通状態パケットを`50200 + N`へ送る案とする。feedback配置の変更はCM4の変換とデバッグツールの共通デコーダへ反映し、共通監視ツールには波及させない。[送信経路と共通状態パケット案](cm4_status_packet_proposal.md)を参照。OrionMainの生配信は実装済みで、共通状態の送受信と4WS生配信は未実装。
 
-Orion（4輪オムニ）と4WS（4輪駆動・4輪操舵）は64バイトの`RobotCommandSerializedV2`を共通で使い、対応するcontrol modeだけが異なる。mode 3は両機種に直接送る。mode 4はCM4でmode 3・5・6のいずれかに変換する。各輪目標には4WS専用のmode 5、Orion専用のmode 6を定義した。両機体共通のmode 7・8はCM4のローカルカメラを使い、有効なボール観測がないときはそれぞれmode 3・4相当の指令へ切り替える。[制御モード互換性](control_mode_compatibility.md)に機体別の対応とmode 6～8の配置、[4WS MainとのSPI通信案](4ws_spi_packet_proposal.md)にmode 5の配置とSPI転送方針を記す。mode 5～8と4WS向け経路は未実装。
+Orion（4輪オムニ）と4WS（4輪駆動・4輪操舵）は64バイトの`RobotCommandSerializedV2`を共通で使い、対応するcontrol modeだけが異なる。mode 3は両機種に直接送る。mode 4はCM4でmode 3・5・6のいずれかに変換する。各輪目標には4WS専用のmode 5、Orion専用のmode 6を定義した。両機体共通のmode 7・8はCM4のローカルカメラを使い、有効なボール観測がないときはそれぞれmode 3・4相当の指令へ切り替える。機体別の対応、mode 5～8の配置、UART・SPIの転送は[制御パケット](control_packet.md)に記す。mode 5～8と4WS向け経路は未実装。
 
 ## 関連ドキュメント
 
@@ -163,8 +163,6 @@ Orion（4輪オムニ）と4WS（4輪駆動・4輪操舵）は64バイトの`Rob
 - [MCUファームウェア更新](firmware_update.md)
 - [カメラ制御・デバッグ](camera.md)
 - [制御パケット](control_packet.md)
-- [制御モード互換性](control_mode_compatibility.md)
-- [4WS MainとのSPI通信案（未確定・未実装）](4ws_spi_packet_proposal.md)
 - [フィードバックパケット](feedback_packet.md)
 - [CM4共通状態パケット案（未実装）](cm4_status_packet_proposal.md)
 - [開発とドキュメントのルール](development.md)
@@ -239,7 +237,7 @@ flowchart LR
     uart --> output
 ```
 
-入力はcrane出力、OrionMain feedback、ローカルカメラの3系統で、出力はOrionMain向け72バイトUARTパケットである。未定義領域byte 64..70はCM4が0で初期化する。更新後のfeedback仕様では、mode 4の位置制御にbyte 112..119を現在位置として使用する。mode 7・8ではCM4内部の制御にカメラ観測値を反映する。ボール未検出、カメラ未起動、更新途絶から100 ms超過はいずれも「有効なボール観測なし」とし、mode 7はmode 3、mode 8はmode 4相当の指令へ切り替える。詳細は[制御パケット](control_packet.md)と[制御モード互換性](control_mode_compatibility.md)を参照。
+入力はcrane出力、OrionMain feedback、ローカルカメラの3系統で、出力はOrionMain向け72バイトUARTパケットである。未定義領域byte 64..70はCM4が0で初期化する。更新後のfeedback仕様では、mode 4の位置制御にbyte 112..119を現在位置として使用する。mode 7・8ではCM4内部の制御にカメラ観測値を反映する。ボール未検出、カメラ未起動、更新途絶から100 ms超過はいずれも「有効なボール観測なし」とし、mode 7はmode 3、mode 8はmode 4相当の指令へ切り替える。詳細は[制御パケット](control_packet.md)を参照。
 
 両機種共通のfeedback packetは128バイト固定で、byte 2にbyte 3..127のCRC-8/ATMを格納する。CM4は長さ・同期バイト・CRCを検証し、不正なfeedbackを制御と再配信から除外する。詳細は[フィードバックパケット](feedback_packet.md)を参照。
 

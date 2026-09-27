@@ -1,6 +1,6 @@
 ﻿# 制御パケット
 
-このドキュメントは、AI(crane)からCM4を経由してMainへ送る制御指令の共通レイアウトと、実装済みのOrionMain向けUART転送をまとめます。CM4→Mainの指令本体は両機種とも64バイトの`RobotCommandSerializedV2`で、対応するcontrol modeだけが異なります。機体別の対応関係は[制御モード互換性](control_mode_compatibility.md)、4WS MainとのSPI転送方針は[仮仕様](4ws_spi_packet_proposal.md)を参照してください。
+このドキュメントは、CM4→Mainの共通制御指令`RobotCommandSerializedV2`を定義します。crane→CM4の入力形式、各control modeの配置と機体別対応、UART・SPIでの転送もここにまとめます。指令本体は両機種とも64バイトで、対応するcontrol modeだけが異なります。
 
 ## SSOT（この仕様の正本）
 
@@ -83,13 +83,13 @@ GUI_Qtの送信実装も
 ## RobotCommandSerializedV2
 
 `cm4/bridge/robot_packet.h` の `RobotCommandSerializedV2` は 64 バイト固定長です。
-実際に使用しているのは byte 0..37 で、38..63 は未使用です。
+実装済みのmode 3・4ではbyte 0..37を使用します。mode 5～8では、以下のモード別配置を使用します。
 
 ### バイトオフセット
 
 | offset | 名前 | 符号化 |
 |---|---|---|
-| `0` | `HEADER` | 生値（crane は `0x00`。CM4 が UART へ出す直前に `254` で上書きする） |
+| `0` | `HEADER` | crane→CM4では`0x00`。CM4→Mainでは両機種とも`254` |
 | `1` | `CHECK_COUNTER` | 生値（後述） |
 | `2..3` | `VISION_GLOBAL_X` | float, range `32.767` |
 | `4..5` | `VISION_GLOBAL_Y` | float, range `32.767` |
@@ -103,11 +103,10 @@ GUI_Qtの送信実装も
 | `18..19` | `LATENCY_TIME_MS` | **uint16 生値**（float 変換なし） |
 | `20..21` | `ELAPSED_TIME_MS_SINCE_LAST_VISION` | **uint16 生値** |
 | `22` | `FLAGS` | 後述 |
-| `23` | `CONTROL_MODE` | 3 または 4 |
+| `23` | `CONTROL_MODE` | 3～8。機体別の対応は下表 |
 | `24..31` | `CONTROL_MODE_ARGS` | **union**（`CONTROL_MODE` により意味が変わる） |
-| `32..33` | `TARGET_GLOBAL_POS_X` | float, range `32.767` |
-| `34..35` | `TARGET_GLOBAL_POS_Y` | float, range `32.767` |
-| `36..37` | `TERMINAL_VELOCITY` | float, range `32.767` |
+| `32..37` | mode 4・5・8の追加フィールド | 制御モードごとの配置を参照 |
+| `38..63` | モード別領域 | 現在定義したmode 3～8では予約 |
 
 ### FLAGS
 
@@ -132,21 +131,24 @@ GUI_Qtの送信実装も
 
 ## 制御モード
 
-`CONTROL_MODE`(byte 23) は次の値です。
+`CONTROL_MODE`は指令本体のbyte 23です。mode 3・5・6はMainへ直接送る指令です。mode 4・7・8はCM4で制御処理を行い、対応する直接指令へ変換します。
 
-| 値 | 名前 | ARGS(24..31) の意味 | 送信元 → 受信先 |
-|---|---|---|---|
-| `3` | `POLAR_VELOCITY_TARGET_MODE` | `target_global_velocity_r`, `target_global_velocity_theta` | CM4 → OrionMain / cm4_sim → simulator-cli |
-| `4` | `POSITION_TARGET_WITH_TERMINAL_VELOCITY_MODE` | `terminal_velocity_x`, `terminal_velocity_y` | crane → CM4 / crane → cm4_sim |
+| mode | 指令の意味 | OrionMain | 4WS Main | CM4から下流への経路 |
+| --- | --- | --- | --- | --- |
+| `3` | 極座標の速度目標 | 対応 | 対応予定 | 両機種のMainへ共通の`RobotCommandSerializedV2`を直接送る |
+| `4` | 位置目標と到達時速度 | 対応 | 対応予定 | CM4で位置制御し、mode 3・5・6のいずれかへ変換する |
+| `5` | 各輪の駆動周速度と操舵角 | 非対応 | 対応予定 | 4WS Mainへ共通の`RobotCommandSerializedV2`を直接送る |
+| `6` | 各輪の駆動周速度 | 対応予定 | 非対応 | OrionMainへ共通の`RobotCommandSerializedV2`を直接送る |
+| `7` | ボール基準の相対速度 | 対応予定 | 対応予定 | CM4のローカルカメラを使い、mode 3・5・6へ変換する |
+| `8` | ボール基準の相対位置 | 対応予定 | 対応予定 | CM4のローカルカメラと位置制御を使い、mode 3・5・6へ変換する |
 
-4WS専用のmode 5、Orion専用のmode 6、両機体共通のボール基準mode 7・8は[制御モード互換性](control_mode_compatibility.md)で定義しています。いずれも未実装で、この表の実装済みモードには含めません。
+Orionで現在動作するのはmode 3と、CM4がmode 3へ変換するmode 4である。mode 5～8と4WS向け通信は未実装。mode 4から選べる出力はOrionではmode 3または6、4WSではmode 3または5に限る。選択規則と座標・方位変換は実装前に決める。機体が対応しないmode 5・6は拒否して安全停止する。
 
 > **`CONTROL_MODE_ARGS` は union です。`CONTROL_MODE` を見ずに復号してはいけません。**
 > mode 4 のパケットを mode 3 として復号すると `terminal_velocity_x/y` が `r/theta` として
 > 読まれ、無言で暴走します。
 
-**OrionMain は mode 3 しか実装していません。** mode 4 は CM4 が消費して mode 3 に変換するものであり、
-OrionMain へ素通ししてはいけません。
+**OrionMainへ直接送れる実装済みモードはmode 3です。** mode 4をMainへ素通ししません。mode 6の受信にはOrionMain側の復号と車輪制御の拡張が必要です。
 
 ### POLAR_VELOCITY_TARGET_MODE (3)
 
@@ -162,6 +164,62 @@ OrionMain へ素通ししてはいけません。
 
 目標位置そのものは mode_args ではなく **固定フィールド** `TARGET_GLOBAL_POS_X/Y`(32..35) に、
 到達時の速度上限（スカラー）は `TERMINAL_VELOCITY`(36..37) に入ります。
+
+### FOUR_WHEEL_STEERING_TARGET_MODE (5)
+
+4WS Mainへ直接送る4輪駆動・4輪操舵の目標である。指令本体byte 23を`5`とし、byte 0..23の共通フィールドを使用する。
+
+| 指令本体のbyte | 内容 |
+| --- | --- |
+| 24..25 | モジュール0の駆動周速度 [m/s] |
+| 26..27 | モジュール0の操舵角 [rad] |
+| 28..31 | モジュール1の駆動周速度、操舵角 |
+| 32..35 | モジュール2の駆動周速度、操舵角 |
+| 36..39 | モジュール3の駆動周速度、操舵角 |
+| 40..63 | 予約、0 |
+
+各値は2バイトで上位バイトから格納する。`raw = uint16_t(32767 × (x / R) + 32767)`、`x = (raw - 32767) × R / 32767`とする。速度の`R`は`32.767 m/s`、操舵角の`R`は`10π rad`。`0x7FFF`は0、`0xFFFF`は未使用値として拒否する。範囲外の値は黙って飽和させず拒否する。車輪番号と配置、回転・操舵の正方向、機構上の許容範囲は実装前に定義する。`STOP_EMERGENCY`は輪の目標より優先する。
+
+mode 5のbyte 32..37は輪の目標であり、mode 4の位置目標として復号しない。crane、CM4、4WS Mainにmode 5用のシリアライザ・デシリアライザが必要である。4WS Mainの通信・制御は未実装であり、対応するまでmode 5を走行指令として送らない。
+
+### OMNI_WHEEL_SPEED_TARGET_MODE (6)
+
+OrionMainへ直接送る4輪の駆動周速度目標である。指令本体byte 23を`6`とする。mode 5から操舵角を除いた配置を使う。
+
+| 指令本体のbyte | 内容 |
+| --- | --- |
+| 24..25 | 車輪0の駆動周速度 [m/s] |
+| 26..27 | 車輪1の駆動周速度 [m/s] |
+| 28..29 | 車輪2の駆動周速度 [m/s] |
+| 30..31 | 車輪3の駆動周速度 [m/s] |
+| 32..63 | 予約、0 |
+
+各速度はmode 5と同じ2バイト符号化を使用する。符号化範囲は±32.767 m/sで、上位バイト、下位バイトの順に格納する。`0x7FFF`は0、`0xFFFF`は無効値とする。機構上の速度上限、車輪番号と配置、正回転方向は実装前に定義する。`STOP_EMERGENCY`は車輪目標より優先する。
+
+mode 6ではbyte 32..37をmode 4の位置目標として復号しない。送信側とCM4側にはmode 6専用のシリアライザとデシリアライザが必要である。OrionMain側の受信・制御も未実装である。
+
+### BALL_RELATIVE_VELOCITY_MODE (7)・BALL_RELATIVE_POSITION_MODE (8)
+
+mode 7・8はCM4内部の制御にローカルカメラ観測値を反映する。mode 7はボール基準の相対速度、mode 8はボール基準の相対位置を指示する。ボール基準の目標と、ボール未検出時に使う通常の目標は別フィールドに入れる。`STOP_EMERGENCY`は検出状態と目標値より優先する。
+
+| 指令本体のbyte | mode 7：ボール基準の相対速度 | mode 8：ボール基準の相対位置 |
+| --- | --- | --- |
+| 24..25 | 未検出時のmode 3 `target_global_velocity_r` [m/s] | 未検出時のmode 4 `terminal_velocity_x` [m/s] |
+| 26..27 | 未検出時のmode 3 `target_global_velocity_theta` [rad] | 未検出時のmode 4 `terminal_velocity_y` [m/s] |
+| 28..29 | 検出時のボール基準相対速度 `relative_velocity_x` [m/s] | 検出時のボール基準相対目標位置 `relative_target_x` [m] |
+| 30..31 | 検出時のボール基準相対速度 `relative_velocity_y` [m/s] | 検出時のボール基準相対目標位置 `relative_target_y` [m] |
+| 32..33 | 予約、0 | 未検出時のmode 4 `TARGET_GLOBAL_POS_X` [m] |
+| 34..35 | 予約、0 | 未検出時のmode 4 `TARGET_GLOBAL_POS_Y` [m] |
+| 36..37 | 予約、0 | 未検出時のmode 4 `TERMINAL_VELOCITY` [m/s] |
+| 38..63 | 予約、0 | 予約、0 |
+
+各2バイト値は上位バイト先行の符号化を使う。位置と並進速度の符号化範囲は±32.767 mまたはm/s、mode 7の未検出時の方向角はmode 3と同じ±32.767 radとする。実際に許す速度・距離は別途制限する。共通フィールドの目標方位はグローバル方位とし、ボール基準にするのは並進2軸である。
+
+CM4はローカルカメラUDPの最新7バイトから有効なボール観測の有無を判定する。候補条件は`radius > 0`かつ最終受信から100 ms以内である。カメラが未起動で受信が一度もない場合や、停止・通信断により最終受信から100 msを超えた場合は条件を満たさない。`x`・`y`は画像座標、`radius`は画像上の半径であり、そのままメートル単位の目標と比較しない。有効な観測がある場合、CM4内部の制御に位置・半径と観測の鮮度を反映し、ボール基準の位置・速度を求め、機体向けのmode 3・5・6指令へ変換する。mode 8の相対目標に到達したときの目標速度は0とする。
+
+有効なボール観測がないときは、mode 7のbyte 24..27からmode 3相当の指令を生成し、mode 8のbyte 24..27と32..37からmode 4相当の指令を生成する。mode 8ではCM4の位置制御を通した後、Orionならmode 3または6、4WSならmode 3または5へ変換する。検出状態の切り替え時はボール追従側の制御状態をリセットし、保存したボール位置を有効な新規観測として使わない。crane指令や機体feedbackが失効した場合は、カメラが見えていても安全停止を優先する。
+
+カメラが出すのは画像座標と半径であり、ボール基準のメートル座標や速度ではない。実装前にカメラ較正、距離推定、軸の向き、ボール速度の推定方法、検出の信頼度と制御周期を決める。変換が未定義のままmode 7・8を走行指令として採用しない。mode 7・8の処理は未実装である。
 
 ### `LINEAR_VELOCITY_LIMIT = 0` の扱い
 
@@ -547,7 +605,13 @@ crane が沈黙しても、**CM4 は `check_counter` を進めながら送信を
 
 ### CM4内のローカルカメラ受信
 
-`cm4/camera/cam_server_v3.py` は検出結果をローカルUDP `127.0.0.1:8890`へ7バイトで送ります。`cm4/bridge/forward_ai_cmd_v2.cpp`はCM4内でこれを受信し、100 ms以内の最新値を保持します。UARTのbyte 64..70には反映しません。カメラパケットの形式とmode 7・8の利用案は[カメラ](camera.md)と[制御モード互換性](control_mode_compatibility.md)を参照してください。
+`cm4/camera/cam_server_v3.py` は検出結果をローカルUDP `127.0.0.1:8890`へ7バイトで送ります。`cm4/bridge/forward_ai_cmd_v2.cpp`はCM4内でこれを受信し、100 ms以内の最新値を保持します。UARTのbyte 64..70には反映しません。カメラパケットの形式は[カメラ](camera.md)、mode 7・8の利用方法は上記の制御モード節を参照してください。
+
+## 4WS MainへのSPI転送（仮仕様）
+
+4WS MainとはSPIで通信し、CM4がSPIマスターになる。制御指令本体には上記の64バイト`RobotCommandSerializedV2`を使用する。4WS Mainはmode 3・5を直接受け、mode 4・7・8はCM4がmode 3または5へ変換してから送る。mode 6を4WS Mainへ送らない。
+
+SPIのmode、クロック、CS配線、転送周期、全二重転送の手順は実機で決める。指令本体のbyte 0はOrionMain向けと同じ`254`とする。転送単位やダミーバイトが必要でも、指令本体に4WS固有のヘッダ、メッセージ種別、長さ、CRC、別の制御ペイロードを追加しない。4WS MainのSPI通信は未実装である。Main→CM4のSPI受信でも共通の[フィードバックパケット](feedback_packet.md)を使用する。
 
 ## ホスト側制御ツール
 

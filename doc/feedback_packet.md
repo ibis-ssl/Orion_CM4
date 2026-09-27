@@ -19,7 +19,7 @@ craneの制御・監視とメインPCの共通監視ツール向けの項目は�
 
 ## 通信経路
 
-以下は実装済みのOrionMain向け経路です。4WS Main向けのSPI受信は未実装です。
+以下は実装済みのOrionMain向け経路です。4WS MainはSPIで同じ128バイトfeedback packetをCM4へ送る。4WS Main向けのSPI受信は未実装です。
 
 ```text
 STM32
@@ -137,7 +137,7 @@ byte 3 は指令の `check_counter` の反射です。mode 4 の位置制御経�
 | `108..111` | `temp_steering_motor[4]` | 各1バイト、ステアモーター温度 |
 
 `steering_angle[0..3]`は輪番号順に各2バイトを上位バイトから格納します。
-符号化範囲は±10π radで、[4WS指令](4ws_spi_packet_proposal.md)の操舵角と同じ2バイト表現です。
+符号化範囲は±10π radで、[制御指令のmode 5](control_packet.md#four_wheel_steering_target_mode-5)の操舵角と同じ2バイト表現です。
 `temp_steering_motor[0..3]`の輪番号も操舵角と対応させます。
 
 #### 制御
