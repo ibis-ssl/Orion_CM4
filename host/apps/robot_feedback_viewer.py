@@ -1,5 +1,5 @@
 # このファイルはOrionMainと4WS Mainの生フィードバックをQt GUIで表示する。
-# 機体別の現在値・時系列を示し、通信とデコードはhost.lib.feedbackに委譲する。
+# 共通パケットの現在値・時系列と機体種別を示し、通信とデコードはhost.lib.feedbackに委譲する。
 from __future__ import annotations
 
 import argparse
@@ -11,7 +11,6 @@ import threading
 import time
 
 from host.lib.feedback.packet import PACKET_SIZE, RobotFeedbackPacket, TX_VALUE_LABELS
-from host.lib.feedback.packet_4ws import FourWsFeedbackPacket
 from host.lib.feedback.receiver import (
     DEFAULT_INTERFACE_IP,
     MACHINE_TYPES,
@@ -33,7 +32,6 @@ try:
         QLabel,
         QPushButton,
         QSpinBox,
-        QTabWidget,
         QVBoxLayout,
         QWidget,
     )
@@ -226,12 +224,6 @@ class FeedbackWindow(QWidget):
         self.status_label = QLabel("waiting")
         root_layout.addWidget(self.status_label)
 
-        self.tabs = QTabWidget()
-        root_layout.addWidget(self.tabs)
-        orion_tab = QWidget()
-        orion_layout = QVBoxLayout(orion_tab)
-        self.tabs.addTab(orion_tab, "OrionMain")
-
         value_layout = QGridLayout()
         self.value_labels = {}
         value_names = (
@@ -256,7 +248,7 @@ class FeedbackWindow(QWidget):
             label = QLabel("-")
             self.value_labels[name] = label
             value_layout.addWidget(label, index // 2, (index % 2) * 2 + 1)
-        orion_layout.addLayout(value_layout)
+        root_layout.addLayout(value_layout)
 
         self.plots = (
             PlotWidget("Power", ("battery", "capacitor/10"), self.history_size, y_range=(0.0, 40.0)),
@@ -275,35 +267,7 @@ class FeedbackWindow(QWidget):
         plot_layout.addWidget(self.plots[3], 2, 0, 1, 2)
         plot_layout.addWidget(self.plots[4], 3, 0)
         plot_layout.addWidget(self.plots[5], 3, 1)
-        orion_layout.addLayout(plot_layout)
-
-        ws_tab = QWidget()
-        ws_layout = QVBoxLayout(ws_tab)
-        self.tabs.addTab(ws_tab, "4WS Main")
-        ws_value_layout = QGridLayout()
-        self.ws_value_labels = {}
-        ws_names = (
-            "version", "message_type", "sequence", "accepted_sequence", "main_state",
-            "error_summary", "uptime_ms", "payload_length", "header", "crc", "padding",
-            "wheel_speed_mps", "steering_angle_rad", "packet_count", "packet_rate", "payload_hex",
-        )
-        for index, name in enumerate(ws_names):
-            ws_value_layout.addWidget(QLabel(name), index // 2, (index % 2) * 2)
-            label = QLabel("-")
-            label.setWordWrap(name == "payload_hex")
-            self.ws_value_labels[name] = label
-            ws_value_layout.addWidget(label, index // 2, (index % 2) * 2 + 1)
-        ws_layout.addLayout(ws_value_layout)
-        self.ws_plots = (
-            PlotWidget("Wheel Speed [m/s]", tuple(f"wheel_{i}" for i in range(4)), self.history_size),
-            PlotWidget("Steering Angle [rad]", tuple(f"steer_{i}" for i in range(4)), self.history_size),
-            PlotWidget("Receive Rate", ("packets/s",), self.history_size, y_range=(0.0, 150.0)),
-        )
-        ws_plot_layout = QGridLayout()
-        ws_plot_layout.addWidget(self.ws_plots[0], 0, 0)
-        ws_plot_layout.addWidget(self.ws_plots[1], 0, 1)
-        ws_plot_layout.addWidget(self.ws_plots[2], 1, 0, 1, 2)
-        ws_layout.addLayout(ws_plot_layout)
+        root_layout.addLayout(plot_layout)
 
     def closeEvent(self, event) -> None:
         self.running = False
@@ -326,9 +290,7 @@ class FeedbackWindow(QWidget):
         self.packet_timestamps.clear()
         for plot in self.plots:
             plot.clear()
-        for plot in self.ws_plots:
-            plot.clear()
-        for label in (*self.value_labels.values(), *self.ws_value_labels.values()):
+        for label in self.value_labels.values():
             label.setText("-")
 
         group, port = multicast_endpoint(machine_no)
@@ -355,7 +317,11 @@ class FeedbackWindow(QWidget):
                     continue
                 if not self.running or connection_id != self.connection_id:
                     break
-                packet = decode_feedback_packet(payload, machine_type)
+                try:
+                    packet = decode_feedback_packet(payload, machine_type)
+                except ValueError as exc:
+                    self.signals.status_ready.emit(f"decode error: {exc}")
+                    continue
                 self.signals.packet_ready.emit(connection_id, packet)
         except socket.timeout:
             if self.running and connection_id == self.connection_id:
@@ -367,7 +333,7 @@ class FeedbackWindow(QWidget):
             if sock is not None:
                 sock.close()
 
-    def on_packet_ready(self, connection_id: int, packet: RobotFeedbackPacket | FourWsFeedbackPacket) -> None:
+    def on_packet_ready(self, connection_id: int, packet: RobotFeedbackPacket) -> None:
         if connection_id != self.connection_id:
             return
 
@@ -377,11 +343,6 @@ class FeedbackWindow(QWidget):
         while self.packet_timestamps and self.packet_timestamps[0] < now - 1.0:
             self.packet_timestamps.popleft()
         packet_rate = len(self.packet_timestamps)
-        if isinstance(packet, FourWsFeedbackPacket):
-            self._show_4ws_packet(packet, packet_rate)
-            return
-
-        self.tabs.setCurrentIndex(0)
         tx_values = dict(zip(TX_VALUE_LABELS, packet.tx_value_array))
 
         self.value_labels["counter"].setText(str(packet.check_counter))
@@ -407,7 +368,7 @@ class FeedbackWindow(QWidget):
         )
         self.value_labels["packet_count"].setText(str(self.packet_count))
         self.value_labels["packet_rate"].setText(f"{packet_rate:.0f} packets/s")
-        self.status_label.setText("receiving OrionMain")
+        self.status_label.setText(f"receiving {packet.machine_type}")
 
         self.plots[0].append(
             {"battery": packet.battery_voltage_bldc_right, "capacitor/10": packet.capacitor_boost_voltage / 10.0}
@@ -430,42 +391,6 @@ class FeedbackWindow(QWidget):
             }
         )
         self.plots[6].append({"packets/s": packet_rate})
-
-    def _show_4ws_packet(self, packet: FourWsFeedbackPacket, packet_rate: int) -> None:
-        self.tabs.setCurrentIndex(1)
-        values = {
-            "version": str(packet.version),
-            "message_type": f"0x{packet.message_type:02X}",
-            "sequence": str(packet.sequence),
-            "accepted_sequence": str(packet.accepted_sequence) if packet.accepted_sequence is not None else "-",
-            "main_state": str(packet.main_state) if packet.main_state is not None else "-",
-            "error_summary": str(packet.error_summary) if packet.error_summary is not None else "-",
-            "uptime_ms": str(packet.uptime_ms) if packet.uptime_ms is not None else "-",
-            "payload_length": str(packet.payload_length),
-            "header": str(packet.is_header_valid),
-            "crc": str(packet.crc_valid),
-            "padding": str(packet.is_padding_zero),
-            "wheel_speed_mps": self._format_four_values(packet.wheel_speed_mps),
-            "steering_angle_rad": self._format_four_values(packet.steering_angle_rad),
-            "packet_count": str(self.packet_count),
-            "packet_rate": f"{packet_rate} packets/s",
-            "payload_hex": packet.payload.hex(" "),
-        }
-        for name, value in values.items():
-            self.ws_value_labels[name].setText(value)
-        self.status_label.setText("receiving 4WS Main")
-
-        if packet.wheel_speed_mps is not None and all(value is not None for value in packet.wheel_speed_mps):
-            self.ws_plots[0].append({f"wheel_{index}": value for index, value in enumerate(packet.wheel_speed_mps)})
-        if packet.steering_angle_rad is not None and all(value is not None for value in packet.steering_angle_rad):
-            self.ws_plots[1].append({f"steer_{index}": value for index, value in enumerate(packet.steering_angle_rad)})
-        self.ws_plots[2].append({"packets/s": packet_rate})
-
-    @staticmethod
-    def _format_four_values(values: tuple[float | None, ...] | None) -> str:
-        if values is None:
-            return "-"
-        return ", ".join("invalid" if value is None else f"{value:.3f}" for value in values)
 
 
 def build_parser() -> argparse.ArgumentParser:

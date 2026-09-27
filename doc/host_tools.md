@@ -66,11 +66,11 @@ Orionと4WSを同じ画面で監視するメインPCツールは、CM4が送る[
 
 ## 生フィードバック用デバッグツール
 
-以下のCLIとQtビューアはOrionMainと4WS Mainの128バイト生フィードバックを解析します。先頭バイトから形式を自動判別し、必要なら`--machine-type orion`または`--machine-type 4ws`で指定できます。マイコン側のフィールド変更に合わせて更新するツールであり、共通状態パケットの監視ツールとは別です。4WS Mainの生データ配信は未実装です。
+以下のCLIとQtビューアはOrionMainと4WS Mainの128バイト生フィードバックを扱います。UDP転送コピーの同期値`0xAB 0xEA`（OrionMain）と`0xAB 0xEB`（4WS Main）で機体を自動判別し、両機種とも共通のデコーダを使います。必要なら`--machine-type orion`または`--machine-type 4ws`で受信する種別を指定できます。共通状態パケットの監視ツールとは別です。4WS Mainの生データ配信は未実装です。
 
 ### `robot-feedback-receiver`
 
-CM4から送信されるMainの生フィードバックをUDP multicastで受信し、形式別にデコードして標準出力へ出します。
+CM4から送信されるMainの生フィードバックをUDP multicastで受信し、共通形式でデコードして標準出力へ出します。
 
 ```powershell
 uv run robot-feedback-receiver --machine-no 3
@@ -82,7 +82,7 @@ uv run robot-feedback-receiver --machine-no 3 --machine-type 4ws --json
 
 ### `robot-feedback-viewer`
 
-OrionMainと4WS Mainの生フィードバックをQt GUIの形式別タブに表示します。
+OrionMainと4WS Mainの生フィードバックをQt GUIの共通画面に表示します。表示中の機体タイプは同期値から示します。
 
 ```powershell
 uv run robot-feedback-viewer --machine-no 10
@@ -90,7 +90,7 @@ uv run robot-feedback-viewer --machine-no 10 --interface-ip 192.168.20.200
 uv run robot-feedback-viewer --machine-no 10 --machine-type 4ws
 ```
 
-4WS Mainのデコード対象は[SPI通信案](4ws_spi_packet_proposal.md)の種別`0x82`状態通知です。マイコン側で形式が確定したらデコーダと表示項目を更新します。
+現在のデコーダが復号するフィールド配置はOrionMainの実装に対応しています。[共通feedback配置](feedback_packet.md)へのマイコン側移行時に、デコーダと表示項目を同時に更新します。
 
 ## フリート管理ツール
 
@@ -115,6 +115,5 @@ uv run cm4-fleet status --all
 - `host/lib/feedback/receiver.py`
 - `host/apps/robot_feedback_receiver_cli.py`
 - `host/apps/robot_feedback_viewer.py`
-- `host/lib/feedback/packet_4ws.py`
 - `host/apps/cm4_fleet_cli.py`
 - `host/lib/fleet/`

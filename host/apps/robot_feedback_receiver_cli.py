@@ -1,5 +1,5 @@
 # このファイルはOrionMainと4WS Mainの生フィードバック受信CLIを担当する。
-# multicast受信と形式別デコードの共通処理はhost.lib.feedbackに置く。
+# multicast受信と共通パケットのデコード処理はhost.lib.feedbackに置く。
 import argparse
 import json
 import socket
@@ -44,11 +44,18 @@ def main() -> None:
     print(f"listen multicast={group}:{port} interface={args.interface_ip}")
     try:
         for index, payload in enumerate(iter_feedback_packets(sock), start=1):
-            packet = decode_feedback_packet(payload, args.machine_type)
-            if args.json:
-                print(json.dumps(packet_to_dict(packet), ensure_ascii=False, separators=(",", ":")))
+            try:
+                packet = decode_feedback_packet(payload, args.machine_type)
+            except ValueError as exc:
+                if args.json:
+                    print(json.dumps({"decode_error": str(exc), "raw": payload.hex()}, separators=(",", ":")))
+                else:
+                    print(f"#{index} decode_error={exc} raw={payload.hex()}")
             else:
-                print(format_packet_summary(index, packet))
+                if args.json:
+                    print(json.dumps(packet_to_dict(packet), ensure_ascii=False, separators=(",", ":")))
+                else:
+                    print(format_packet_summary(index, packet))
 
             if args.max_packets > 0 and index >= args.max_packets:
                 break

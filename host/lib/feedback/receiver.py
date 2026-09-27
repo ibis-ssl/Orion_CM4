@@ -1,5 +1,5 @@
-# このファイルはOrionMainと4WS Mainの生フィードバック受信を担当する。
-# CLIやGUIから共通利用するソケット、形式選択、表示用変換を提供する。
+# このファイルはMain共通フィードバックのUDP受信とデコード補助を担当する。
+# 同期値からUDP転送元の機体種別を判別し、ペイロードは単一のデコーダで読む。
 from __future__ import annotations
 
 from dataclasses import asdict
@@ -7,15 +7,21 @@ import socket
 import struct
 from typing import Iterator
 
-from host.lib.feedback.packet import PACKET_SIZE, TX_VALUE_LABELS, RobotFeedbackPacket, decode_robot_feedback_packet
-from host.lib.feedback.packet_4ws import MAGIC as FOUR_WS_MAGIC
-from host.lib.feedback.packet_4ws import FourWsFeedbackPacket, decode_4ws_feedback_packet
+from host.lib.feedback.packet import (
+    PACKET_SIZE,
+    SYNC0,
+    SYNC1,
+    UDP_4WS_SYNC1,
+    TX_VALUE_LABELS,
+    RobotFeedbackPacket,
+    decode_robot_feedback_packet,
+)
 
 DEFAULT_INTERFACE_IP = "0.0.0.0"
 RECEIVE_BUFFER_SIZE = 4096
 CM4_IP_OFFSET = 100
 MACHINE_TYPES = ("auto", "orion", "4ws")
-FeedbackPacket = RobotFeedbackPacket | FourWsFeedbackPacket
+FeedbackPacket = RobotFeedbackPacket
 
 
 def multicast_endpoint(machine_no: int) -> tuple[str, int]:
@@ -46,24 +52,26 @@ def iter_feedback_packets(sock: socket.socket) -> Iterator[bytes]:
 def decode_feedback_packet(data: bytes, machine_type: str = "auto") -> FeedbackPacket:
     if machine_type not in MACHINE_TYPES:
         raise ValueError(f"unknown machine type: {machine_type}")
-    if machine_type == "4ws" or (machine_type == "auto" and data.startswith(FOUR_WS_MAGIC)):
-        return decode_4ws_feedback_packet(data)
+    if len(data) != PACKET_SIZE:
+        raise ValueError(f"packet size must be {PACKET_SIZE}, got {len(data)}")
+
+    expected_sync = {
+        "orion": bytes((SYNC0, SYNC1)),
+        "4ws": bytes((SYNC0, UDP_4WS_SYNC1)),
+    }
+    actual_sync = data[:2]
+    if machine_type == "auto":
+        if actual_sync not in expected_sync.values():
+            raise ValueError(f"unknown feedback sync bytes: {actual_sync.hex()}")
+    elif actual_sync != expected_sync[machine_type]:
+        raise ValueError(f"unexpected feedback sync bytes for {machine_type}: {actual_sync.hex()}")
+
     return decode_robot_feedback_packet(data)
 
 
 def packet_to_dict(packet: FeedbackPacket) -> dict[str, object]:
     values = asdict(packet)
-    if isinstance(packet, FourWsFeedbackPacket):
-        values["machine_type"] = "4ws"
-        values["magic"] = packet.magic.decode("ascii", errors="replace")
-        values["reserved"] = packet.reserved.hex()
-        values["payload"] = packet.payload.hex()
-        values["padding"] = packet.padding.hex()
-        values["header_valid"] = packet.is_header_valid
-        values["padding_zero"] = packet.is_padding_zero
-        values["known_status_layout"] = packet.has_known_status_layout
-        return values
-    values["machine_type"] = "orion"
+    values["machine_type"] = packet.machine_type
     values["sync_valid"] = packet.is_sync_valid
     values["camera_pos_x"] = packet.camera_pos_x
     values["camera_radius"] = packet.camera_radius
@@ -75,28 +83,13 @@ def packet_to_dict(packet: FeedbackPacket) -> dict[str, object]:
 
 
 def format_packet_summary(index: int, packet: FeedbackPacket) -> str:
-    if isinstance(packet, FourWsFeedbackPacket):
-        details = (
-            f"accepted={packet.accepted_sequence} state={packet.main_state} "
-            f"error={packet.error_summary} uptime_ms={packet.uptime_ms} "
-            f"wheel_speed={packet.wheel_speed_mps} steering_angle={packet.steering_angle_rad}"
-            if packet.has_known_status_layout
-            else f"payload={packet.payload.hex()}"
-        )
-        return (
-            f"#{index} type=4ws seq={packet.sequence} version={packet.version} "
-            f"message=0x{packet.message_type:02x} length={packet.payload_length} "
-            f"header={int(packet.is_header_valid)} crc={int(packet.crc_valid)} "
-            f"padding={int(packet.is_padding_zero)} {details}"
-        )
     return (
-        f"#{index} type=orion "
+        f"#{index} type={packet.machine_type} "
         f"counter={packet.check_counter} "
         f"sync={int(packet.is_sync_valid)} "
         f"crc={int(packet.is_crc_valid)} "
         f"yaw={packet.imu_yaw_deg:.3f} "
         f"battery={packet.battery_voltage_bldc_right:.3f} "
-        f"camera=({packet.camera_pos_x},{packet.camera_pos_y},r={packet.camera_radius},fps={packet.camera_fps}) "
         f"kick={packet.kick_state} "
         f"motor_current={','.join(f'{value:.1f}' for value in packet.motor_current)} "
         f"error=({packet.current_error_id},{packet.current_error_info},{packet.current_error_value:.3f})"

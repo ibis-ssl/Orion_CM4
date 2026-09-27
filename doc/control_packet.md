@@ -1,12 +1,12 @@
 ﻿# 制御パケット
 
-このドキュメントは、OrionMain搭載機体でAI(crane)からCM4を経由してOrionMain（STM32G474）へ送る制御パケットの責務とレイアウトをまとめます。Orionと4WSのmode 3～8の対応関係は[制御モード互換性](control_mode_compatibility.md)、4WS MainとのSPI通信は[仮仕様](4ws_spi_packet_proposal.md)を参照してください。
+このドキュメントは、AI(crane)からCM4を経由してMainへ送る制御指令の共通レイアウトと、実装済みのOrionMain向けUART転送をまとめます。CM4→Mainの指令本体は両機種とも64バイトの`RobotCommandSerializedV2`で、対応するcontrol modeだけが異なります。機体別の対応関係は[制御モード互換性](control_mode_compatibility.md)、4WS MainとのSPI転送方針は[仮仕様](4ws_spi_packet_proposal.md)を参照してください。
 
 ## SSOT（この仕様の正本）
 
 `RobotCommandSerializedV2`（64 バイト）のレイアウトの正本は **crane 側**の
 `crane/crane_sender/include/crane_sender/robot_packet.h` です。
-次の 4 者が一致していなければなりません。
+次の実装が一致していなければなりません。4WS Mainの実装でも同じ64バイト配置を使用します。
 
 | リポジトリ | ファイル | 状態 |
 |---|---|---|
@@ -14,6 +14,7 @@
 | G474_Orion_main | `Core/Inc/robot_packet.h` | byte 0..31 一致（32..37 は OrionMain が使わないので未定義） |
 | framework | `src/simulator/ibis_protocol.h` | 一致 |
 | Orion_CM4 | `cm4/bridge/robot_packet.h` | 一致 |
+| 4WS_MainFW | 未実装 | 実装時に同じ`RobotCommandSerializedV2`を受信する |
 
 `cm4/bridge/robot_packet_layout_test.cpp` が
 byte 0..37 の全オフセット・`ControlMode`・`FlagAddress` を `static_assert` で固定し、

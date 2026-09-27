@@ -10,6 +10,7 @@ import struct
 PACKET_SIZE = 128
 SYNC0 = 0xAB
 SYNC1 = 0xEA
+UDP_4WS_SYNC1 = 0xEB
 FLOAT_BLOCK_OFFSET = 64
 FLOAT_BLOCK_COUNT = 14
 
@@ -49,7 +50,11 @@ class RobotFeedbackPacket:
 
     @property
     def is_sync_valid(self) -> bool:
-        return self.sync0 == SYNC0 and self.sync1 == SYNC1
+        return self.sync0 == SYNC0 and self.sync1 in (SYNC1, UDP_4WS_SYNC1)
+
+    @property
+    def machine_type(self) -> str:
+        return "4ws" if self.sync1 == UDP_4WS_SYNC1 else "orion"
 
     @property
     def is_crc_valid(self) -> bool:

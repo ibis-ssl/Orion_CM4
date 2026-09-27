@@ -1,7 +1,7 @@
-﻿# OrionMainフィードバックパケット
+﻿# Main共通フィードバックパケット
 
-このドキュメントは、OrionMain（STM32G474）からCM4を経由してホストPCへ送るフィードバックパケットの責務とレイアウトをまとめます。
-craneの制御・監視とメインPCの共通監視ツール向けの項目は、[CM4共通状態パケット案](cm4_status_packet_proposal.md)に分けて定義します。この生フィードバックは、Orion/4WS両対応デバッグツールのOrionMain用デコーダで扱います。
+このドキュメントは、OrionMainと4WS MainからCM4へ送る共通のfeedback packetの責務とレイアウトをまとめます。両機種とも128バイトの同じ配置・同期値・CRCを使います。搭載しない装置の値は0とします。
+craneの制御・監視とメインPCの共通監視ツール向けの項目は、[CM4共通状態パケット案](cm4_status_packet_proposal.md)に分けて定義します。生フィードバックはOrion/4WS両対応デバッグツールの共通デコーダで扱います。
 
 ## 対象ファイル
 
@@ -18,6 +18,8 @@ craneの制御・監視とメインPCの共通監視ツール向けの項目は�
   - 受信・パース結果を Qt GUI で時系列グラフ表示します。
 
 ## 通信経路
+
+以下は実装済みのOrionMain向け経路です。4WS Main向けのSPI受信は未実装です。
 
 ```text
 STM32
@@ -72,6 +74,8 @@ CRC-8/ATM のパラメータは多項式 `0x07`、初期値 `0x00`、入力・�
 標準検査値は `"123456789" → 0xF4` です。送信側は全ペイロードの確定後にbyte 2を書きます。
 CM4は長さ・同期バイト・CRCを確認し、不正なパケットを位置制御にも再配信にも渡しません。
 
+Main→CM4ではOrionMainと4WS Mainのどちらも同期値`0xAB 0xEA`を使います。CM4からPCへUDP multicastで送る際、4WSに限り転送コピーのbyte 1を`0xEB`に変更します。OrionのUDPコピーは`0xAB 0xEA`のままです。PCのデバッグツールはこの値で機体を判別し、同じペイロードデコーダを使います。同期バイトはCRC対象外なのでbyte 1の変更後もCRC値は有効です。4WSのUDP配信は未実装です。
+
 byte 3 は指令の `check_counter` の反射です。mode 4 の位置制御経路では **CM4 が `check_counter` を採番する**
 ので、ここを見れば「CM4 が出した指令がどこまで OrionMain に届いたか」が分かります
 （詳細は [制御パケット](control_packet.md) の CHECK_COUNTER を参照）。
@@ -79,8 +83,7 @@ byte 3 は指令の `check_counter` の反射です。mode 4 の位置制御経�
 （下記「シミュレータとの一致」を参照）。
 
 ### ペイロード
-ヘッダの後、byte 4から下表の記述順に隙間なく配置します。`tx_value_array[n]`は項目の論理番号です。
-各値は表の位置に配置し、14要素を連続した配列としては扱いません。
+ヘッダの後、byte 4から下表の記述順に隙間なく配置します。各項目は表のバイト位置で扱います。
 
 #### コア機能
 
@@ -109,11 +112,11 @@ byte 3 は指令の `check_counter` の反射です。mode 4 の位置制御経�
 | `29` | `temp_fet` | 1バイト |
 | `30..31` | `temp_coil[2]` | 各1バイト |
 | `32..35` | `capacitor_boost_voltage` | little-endian IEEE754 float |
-| `36..39` | `tx_value_array[0]`: `mouse_odom_x` | little-endian IEEE754 float |
-| `40..43` | `tx_value_array[1]`: `mouse_odom_y` | little-endian IEEE754 float |
-| `44..47` | `tx_value_array[2]`: `mouse_global_vel_x` | little-endian IEEE754 float |
-| `48..51` | `tx_value_array[3]`: `mouse_global_vel_y` | little-endian IEEE754 float |
-| `52..55` | `tx_value_array[13]`: `mouse_quality` | little-endian IEEE754 float |
+| `36..39` | `mouse_odom_x` | little-endian IEEE754 float |
+| `40..43` | `mouse_odom_y` | little-endian IEEE754 float |
+| `44..47` | `mouse_global_vel_x` | little-endian IEEE754 float |
+| `48..51` | `mouse_global_vel_y` | little-endian IEEE754 float |
+| `52..55` | `mouse_quality` | little-endian IEEE754 float |
 
 #### モーター基板
 
@@ -121,15 +124,15 @@ byte 3 は指令の `check_counter` の反射です。mode 4 の位置制御経�
 | --- | --- | --- |
 | `56..59` | `motor_current_x10[4]` | 各1バイト、電流の10倍 |
 | `60..63` | `temp_motor[4]` | 各1バイト |
-| `64..67` | `tx_value_array[4]`: `output_vel_x` | little-endian IEEE754 float |
-| `68..71` | `tx_value_array[5]`: `output_vel_y` | little-endian IEEE754 float |
-| `72..75` | `tx_value_array[6]`: `motor_feedback_0` | little-endian IEEE754 float |
-| `76..79` | `tx_value_array[7]`: `motor_feedback_1` | little-endian IEEE754 float |
-| `80..83` | `tx_value_array[8]`: `motor_feedback_2` | little-endian IEEE754 float |
-| `84..87` | `tx_value_array[9]`: `motor_feedback_3` | little-endian IEEE754 float |
-| `88..91` | `tx_value_array[10]`: `local_odom_speed_mvf_x` | little-endian IEEE754 float |
-| `92..95` | `tx_value_array[11]`: `local_odom_speed_mvf_y` | little-endian IEEE754 float |
-| `96..99` | `tx_value_array[12]`: `local_odom_speed_mvf_w` | little-endian IEEE754 float |
+| `64..67` | `output_vel_x` | little-endian IEEE754 float |
+| `68..71` | `output_vel_y` | little-endian IEEE754 float |
+| `72..75` | `motor_feedback_0` | little-endian IEEE754 float |
+| `76..79` | `motor_feedback_1` | little-endian IEEE754 float |
+| `80..83` | `motor_feedback_2` | little-endian IEEE754 float |
+| `84..87` | `motor_feedback_3` | little-endian IEEE754 float |
+| `88..91` | `local_odom_speed_mvf_x` | little-endian IEEE754 float |
+| `92..95` | `local_odom_speed_mvf_y` | little-endian IEEE754 float |
+| `96..99` | `local_odom_speed_mvf_w` | little-endian IEEE754 float |
 | `100..107` | `steering_angle[4]` | 各2バイト、ステア現在角度 [rad] |
 | `108..111` | `temp_steering_motor[4]` | 各1バイト、ステアモーター温度 |
 
@@ -160,7 +163,7 @@ CM4のローカルカメラ情報は、このfeedbackパケットとは別の経
 - CRC-8/ATM検証
 - 128 バイト固定長レイアウトのデコード
 - little-endian IEEE754 float の復元
-- 各`tx_value_array[n]`のラベル付け（配置は上表）
+- 上表のバイト位置に対応する項目名の付与
 
 ## host/lib/feedback/receiver.py
 
