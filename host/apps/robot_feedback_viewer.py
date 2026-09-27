@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 
-from host.lib.feedback.packet import PACKET_SIZE, RobotFeedbackPacket, TX_VALUE_LABELS
+from host.lib.feedback.packet import PACKET_SIZE, RobotFeedbackPacket
 from host.lib.feedback.receiver import (
     DEFAULT_INTERFACE_IP,
     MACHINE_TYPES,
@@ -234,7 +234,7 @@ class FeedbackWindow(QWidget):
             "capacitor",
             "yaw",
             "diff_angle",
-            "camera",
+            "position",
             "motor_current",
             "error",
             "mouse_quality",
@@ -253,7 +253,7 @@ class FeedbackWindow(QWidget):
         self.plots = (
             PlotWidget("Power", ("battery", "capacitor/10"), self.history_size, y_range=(0.0, 40.0)),
             PlotWidget("Angle", ("yaw", "diff_angle"), self.history_size, y_range=(-180.0, 180.0)),
-            PlotWidget("Camera", ("camera_x", "camera_y", "camera_radius"), self.history_size),
+            PlotWidget("Position", ("position_x", "position_y"), self.history_size),
             PlotWidget("Motor Current", ("motor_0", "motor_1", "motor_2", "motor_3"), self.history_size, y_range=(0.0, 3.0)),
             PlotWidget("Velocity X", ("mouse_global_vel_x100", "local_odom_speed_mvf_x"), self.history_size, y_range=(-3.0, 3.0)),
             PlotWidget("Velocity Y", ("mouse_global_vel_y100", "local_odom_speed_mvf_y"), self.history_size, y_range=(-3.0, 3.0)),
@@ -343,51 +343,50 @@ class FeedbackWindow(QWidget):
         while self.packet_timestamps and self.packet_timestamps[0] < now - 1.0:
             self.packet_timestamps.popleft()
         packet_rate = len(self.packet_timestamps)
-        tx_values = dict(zip(TX_VALUE_LABELS, packet.tx_value_array))
 
         self.value_labels["counter"].setText(str(packet.check_counter))
         self.value_labels["sync"].setText(str(packet.is_sync_valid))
         self.value_labels["crc"].setText(str(packet.is_crc_valid))
-        self.value_labels["battery"].setText(f"{packet.battery_voltage_bldc_right:.3f}")
+        self.value_labels["battery"].setText(f"{packet.battery_voltage:.3f}")
         self.value_labels["capacitor"].setText(f"{packet.capacitor_boost_voltage:.3f}")
         self.value_labels["yaw"].setText(f"{packet.imu_yaw_deg:.3f}")
         self.value_labels["diff_angle"].setText(f"{packet.diff_angle_deg:.3f}")
-        self.value_labels["camera"].setText(
-            f"x={packet.camera_pos_x}, y={packet.camera_pos_y}, r={packet.camera_radius}, fps={packet.camera_fps}"
+        self.value_labels["position"].setText(
+            f"x={packet.vision_based_position_x:.3f}, y={packet.vision_based_position_y:.3f}"
         )
         self.value_labels["motor_current"].setText(", ".join(f"{value:.1f}" for value in packet.motor_current))
         self.value_labels["error"].setText(
             f"id={packet.current_error_id}, info={packet.current_error_info}, value={packet.current_error_value:.3f}"
         )
-        self.value_labels["mouse_quality"].setText(f"{tx_values['mouse_quality']:.1f}")
+        self.value_labels["mouse_quality"].setText(f"{packet.mouse_quality:.1f}")
         self.value_labels["mouse_global_vel"].setText(
-            f"x={tx_values['mouse_global_vel_x'] * 100.0:.3f}, y={tx_values['mouse_global_vel_y'] * 100.0:.3f}"
+            f"x={packet.mouse_global_vel_x * 100.0:.3f}, y={packet.mouse_global_vel_y * 100.0:.3f}"
         )
         self.value_labels["local_odom_speed_mvf"].setText(
-            f"x={tx_values['local_odom_speed_mvf_x']:.3f}, y={tx_values['local_odom_speed_mvf_y']:.3f}"
+            f"x={packet.local_odom_speed_mvf_x:.3f}, y={packet.local_odom_speed_mvf_y:.3f}"
         )
         self.value_labels["packet_count"].setText(str(self.packet_count))
         self.value_labels["packet_rate"].setText(f"{packet_rate:.0f} packets/s")
         self.status_label.setText(f"receiving {packet.machine_type}")
 
         self.plots[0].append(
-            {"battery": packet.battery_voltage_bldc_right, "capacitor/10": packet.capacitor_boost_voltage / 10.0}
+            {"battery": packet.battery_voltage, "capacitor/10": packet.capacitor_boost_voltage / 10.0}
         )
         self.plots[1].append({"yaw": packet.imu_yaw_deg, "diff_angle": packet.diff_angle_deg})
         self.plots[2].append(
-            {"camera_x": packet.camera_pos_x, "camera_y": packet.camera_pos_y, "camera_radius": packet.camera_radius}
+            {"position_x": packet.vision_based_position_x, "position_y": packet.vision_based_position_y}
         )
         self.plots[3].append({f"motor_{index}": value for index, value in enumerate(packet.motor_current)})
         self.plots[4].append(
             {
-                "mouse_global_vel_x100": tx_values["mouse_global_vel_x"] * 100.0,
-                "local_odom_speed_mvf_x": tx_values["local_odom_speed_mvf_x"],
+                "mouse_global_vel_x100": packet.mouse_global_vel_x * 100.0,
+                "local_odom_speed_mvf_x": packet.local_odom_speed_mvf_x,
             }
         )
         self.plots[5].append(
             {
-                "mouse_global_vel_y100": tx_values["mouse_global_vel_y"] * 100.0,
-                "local_odom_speed_mvf_y": tx_values["local_odom_speed_mvf_y"],
+                "mouse_global_vel_y100": packet.mouse_global_vel_y * 100.0,
+                "local_odom_speed_mvf_y": packet.local_odom_speed_mvf_y,
             }
         )
         self.plots[6].append({"packets/s": packet_rate})

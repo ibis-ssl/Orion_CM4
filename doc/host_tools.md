@@ -90,7 +90,7 @@ uv run robot-feedback-viewer --machine-no 10 --interface-ip 192.168.20.200
 uv run robot-feedback-viewer --machine-no 10 --machine-type 4ws
 ```
 
-現在のデコーダが復号するフィールド配置はOrionMainの実装に対応しています。[共通feedback配置](feedback_packet.md)へのマイコン側移行時に、デコーダと表示項目を同時に更新します。
+デコーダと表示項目は[共通feedback配置](feedback_packet.md)に対応しています。
 
 ## フリート管理ツール
 

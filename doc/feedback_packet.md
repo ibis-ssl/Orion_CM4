@@ -9,7 +9,7 @@ craneの制御・監視とメインPCの共通監視ツール向けの項目は�
   - STM32 から UART で受信した 128 バイトの状態パケットを UDP multicast へ転送します。
     あわせて同一 CM4 上の `ai_cmd_v2.out` へ loopback unicast でも渡します。
 - `cm4/bridge/forward_ai_cmd_v2.cpp`
-  - loopback unicast で受けた位置を使って位置制御ループを閉じます。更新後の配置はbyte 112..119です。
+  - loopback unicast で受けたbyte 112..119の位置を使って位置制御ループを閉じます。
 - `host/lib/feedback/packet.py`
   - 128 バイトのフィードバックパケットを Python でデコードします。
 - `host/lib/feedback/receiver.py`
@@ -32,7 +32,7 @@ STM32
 ## loopback unicast（位置制御ループ用）
 
 `ai_cmd_v2.out` は mode 4 を受けたとき位置制御ループを閉じるため、ロボットの現在位置
-（更新後の配置はbyte 112..119）を必要とします。しかし **`/dev/serial0` の読み手は増やしません**。
+（byte 112..119）を必要とします。しかし **`/dev/serial0` の読み手は増やしません**。
 2 プロセスで読むと取り合いになるためです。
 
 `forward_robot_feedback.cpp` が multicast 再配信と同時に
@@ -139,6 +139,7 @@ byte 3 は指令の `check_counter` の反射です。mode 4 の位置制御経�
 `steering_angle[0..3]`は輪番号順に各2バイトを上位バイトから格納します。
 符号化範囲は±10π radで、[制御指令のmode 5](control_packet.md#four_wheel_steering_target_mode-5)の操舵角と同じ2バイト表現です。
 `temp_steering_motor[0..3]`の輪番号も操舵角と対応させます。
+OrionMainはステアを搭載しないため、各角度を0 radの符号化値`0x7FFF`、各ステアモーター温度を0として送ります。
 
 #### 制御
 
@@ -150,10 +151,9 @@ byte 3 は指令の `check_counter` の反射です。mode 4 の位置制御経�
 | `124..127` | `global_odom_speed_y` | little-endian IEEE754 float |
 
 byte 4..127はすべて上表のフィールドに割り当てます。
-FWゲートウェイ応答をbyte 112..126に載せる間は制御用の位置・速度フィールドと重なるため、受信側はその値を位置・速度として解釈しません。
+FW更新ゲートウェイ動作中は通常のfeedback送信を停止し、独立した16バイトの`FWRP`応答フレームを送ります。
 
 CM4のローカルカメラ情報は、このfeedbackパケットとは別の経路で受けます。形式は[カメラ](camera.md)を参照してください。
-この節は更新後のパケット仕様を示します。送信側とホスト側の実装変更は別作業です。
 
 ## host/lib/feedback/packet.py
 
@@ -164,6 +164,18 @@ CM4のローカルカメラ情報は、このfeedbackパケットとは別の経
 - 128 バイト固定長レイアウトのデコード
 - little-endian IEEE754 float の復元
 - 上表のバイト位置に対応する項目名の付与
+
+## 実機の非走行確認
+
+CM4でUARTを使用するプロセスがないことを確認してから、次を実行します。`machine-number`にはCM4のIP末尾、`robot-id`にはその末尾から100を引いた値を指定します。最後のコマンドは停止フラグ付き・速度0・キック0・ドリブラ0のmode 3指令を1回送ります。
+
+```sh
+python3 cm4/firmware/feedback_probe.py --count 50
+python3 cm4/firmware/feedback_bridge_probe.py --bridge cm4/bin/robot_feedback.out --machine-number 104 --count 50
+python3 cm4/firmware/command_probe.py --bridge cm4/bin/ai_cmd_v2.out --robot-id 4
+```
+
+各コマンドは試験中だけUARTを使用します。`feedback_bridge_probe.py`はloopback UDPへの転送を、`command_probe.py`はMainからの`CHECK_COUNTER`反射を検証します。
 
 ## host/lib/feedback/receiver.py
 
@@ -219,9 +231,9 @@ GUIフロントエンドには依存しないため、通信とパースだけ�
 `framework` の `simulator-cli` も128バイト形式を使います。CM4のCRC検証を通すには、
 シミュレータ側もbyte 3..127からCRC-8/ATMを計算してbyte 2に入れる必要があります。
 このリポジトリ内のシミュレータ用テストフレームはCRCを生成します。
-更新後の仕様では、位置制御にbyte 112..119の位置を使用します。
+位置制御にはbyte 112..119の位置を使用します。
 byte 13..16は度単位の`imu_yaw_deg`、byte 4は`tx_cycle_count`です。
-`framework`・`cm4_sim`・`ai_cmd_v2.out`の送受信位置も、この配置への更新が必要です。
+`cm4_sim`・`ai_cmd_v2.out`は同じbyte 112..119の位置を読みます。
 
 CRC付きのシミュレータ出力は `host/lib/feedback/packet.py` で復号でき、
 `robot-feedback-viewer` などのツールで表示できます。

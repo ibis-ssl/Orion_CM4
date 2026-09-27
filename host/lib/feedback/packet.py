@@ -1,18 +1,27 @@
-# このファイルはforward_robot_feedback.cppが転送する128バイトの状態パケットを
-# Python でデコードし、Windows/Linux 共通の受信ツールから扱える形へ変換する。
+# このファイルはMain共通の128バイトfeedbackの配置、CRC、復号と再符号化を担当する。
 from __future__ import annotations
 
-# このファイルは robot feedback の 128 バイト状態パケット定義を担当する。
-# CM4 から転送されたバイナリを Python で扱いやすいデータ構造へ変換する。
 from dataclasses import dataclass
+import math
 import struct
 
 PACKET_SIZE = 128
 SYNC0 = 0xAB
 SYNC1 = 0xEA
 UDP_4WS_SYNC1 = 0xEB
-FLOAT_BLOCK_OFFSET = 64
-FLOAT_BLOCK_COUNT = 14
+STEERING_RANGE_RAD = 10.0 * math.pi
+
+
+def decode_steering_angle(raw: int) -> float:
+    if raw == 0xFFFF:
+        raise ValueError("invalid steering angle encoding: 0xffff")
+    return (raw - 32767) * STEERING_RANGE_RAD / 32767
+
+
+def encode_steering_angle(angle: float) -> int:
+    if not math.isfinite(angle) or not -STEERING_RANGE_RAD <= angle <= STEERING_RANGE_RAD:
+        raise ValueError(f"steering angle out of range: {angle}")
+    return int(32767 * angle / STEERING_RANGE_RAD + 32767)
 
 
 @dataclass(slots=True)
@@ -21,31 +30,41 @@ class RobotFeedbackPacket:
     sync1: int
     crc8: int
     check_counter: int
-    imu_yaw_deg: float
-    battery_voltage_bldc_right: float
-    ball_detection: tuple[int, int]
     tx_cycle_count: int
-    kick_state_div10: int
     current_error_id: int
     current_error_info: int
     current_error_value: float
-    motor_current_x10: tuple[int, int, int, int]
+    imu_yaw_deg: float
+    ball_detection: tuple[int, int]
     ball_detection_extra: int
-    temp_motor: tuple[int, int, int, int]
+    diff_angle_deg: float
+    battery_voltage: float
+    kick_state_div10: int
     temp_fet: int
     temp_coil: tuple[int, int]
-    diff_angle_deg: float
     capacitor_boost_voltage: float
+    mouse_odom_x: float
+    mouse_odom_y: float
+    mouse_global_vel_x: float
+    mouse_global_vel_y: float
+    mouse_quality: float
+    motor_current_x10: tuple[int, int, int, int]
+    temp_motor: tuple[int, int, int, int]
+    output_vel_x: float
+    output_vel_y: float
+    motor_feedback_0: float
+    motor_feedback_1: float
+    motor_feedback_2: float
+    motor_feedback_3: float
+    local_odom_speed_mvf_x: float
+    local_odom_speed_mvf_y: float
+    local_odom_speed_mvf_w: float
+    steering_angle: tuple[float, float, float, float]
+    temp_steering_motor: tuple[int, int, int, int]
     vision_based_position_x: float
     vision_based_position_y: float
     global_odom_speed_x: float
     global_odom_speed_y: float
-    camera_pos_x_div2: int
-    camera_pos_y: int
-    camera_radius_div4: int
-    camera_fps: int
-    tx_value_array: tuple[float, ...]
-    reserved: bytes
     crc_valid: bool
 
     @property
@@ -61,14 +80,6 @@ class RobotFeedbackPacket:
         return self.crc_valid
 
     @property
-    def camera_pos_x(self) -> int:
-        return self.camera_pos_x_div2 * 2
-
-    @property
-    def camera_radius(self) -> int:
-        return self.camera_radius_div4 * 4
-
-    @property
     def kick_state(self) -> int:
         return self.kick_state_div10 * 10
 
@@ -78,35 +89,29 @@ class RobotFeedbackPacket:
 
     def to_bytes(self) -> bytes:
         data = bytearray(PACKET_SIZE)
-        data[0] = self.sync0
-        data[1] = self.sync1
-        data[2] = self.crc8
-        data[3] = self.check_counter
-        struct.pack_into("<f", data, 4, self.imu_yaw_deg)
-        struct.pack_into("<f", data, 8, self.battery_voltage_bldc_right)
-        data[12:14] = bytes(self.ball_detection)
-        data[14] = self.tx_cycle_count
-        data[15] = self.kick_state_div10
-        struct.pack_into("<H", data, 16, self.current_error_id)
-        struct.pack_into("<H", data, 18, self.current_error_info)
-        struct.pack_into("<f", data, 20, self.current_error_value)
-        data[24:28] = bytes(self.motor_current_x10)
-        data[28] = self.ball_detection_extra
-        data[29:33] = bytes(self.temp_motor)
-        data[33] = self.temp_fet
-        data[34:36] = bytes(self.temp_coil)
-        struct.pack_into("<f", data, 36, self.diff_angle_deg)
-        struct.pack_into("<f", data, 40, self.capacitor_boost_voltage)
-        struct.pack_into("<f", data, 44, self.vision_based_position_x)
-        struct.pack_into("<f", data, 48, self.vision_based_position_y)
-        struct.pack_into("<f", data, 52, self.global_odom_speed_x)
-        struct.pack_into("<f", data, 56, self.global_odom_speed_y)
-        data[60] = self.camera_pos_x_div2
-        data[61] = self.camera_pos_y
-        data[62] = self.camera_radius_div4
-        data[63] = self.camera_fps
-        struct.pack_into("<14f", data, FLOAT_BLOCK_OFFSET, *self.tx_value_array)
-        data[120:128] = self.reserved
+        data[0:4] = bytes((self.sync0, self.sync1, self.crc8, self.check_counter))
+        data[4] = self.tx_cycle_count
+        struct.pack_into("<HHff", data, 5, self.current_error_id, self.current_error_info,
+                         self.current_error_value, self.imu_yaw_deg)
+        data[17:19] = bytes(self.ball_detection)
+        data[19] = self.ball_detection_extra
+        struct.pack_into("<ff", data, 20, self.diff_angle_deg, self.battery_voltage)
+        data[28:32] = bytes((self.kick_state_div10, self.temp_fet, *self.temp_coil))
+        struct.pack_into("<6f", data, 32, self.capacitor_boost_voltage, self.mouse_odom_x,
+                         self.mouse_odom_y, self.mouse_global_vel_x, self.mouse_global_vel_y,
+                         self.mouse_quality)
+        data[56:60] = bytes(self.motor_current_x10)
+        data[60:64] = bytes(self.temp_motor)
+        struct.pack_into("<9f", data, 64, self.output_vel_x, self.output_vel_y,
+                         self.motor_feedback_0, self.motor_feedback_1, self.motor_feedback_2,
+                         self.motor_feedback_3, self.local_odom_speed_mvf_x,
+                         self.local_odom_speed_mvf_y, self.local_odom_speed_mvf_w)
+        for index, angle in enumerate(self.steering_angle):
+            struct.pack_into(">H", data, 100 + 2 * index, encode_steering_angle(angle))
+        data[108:112] = bytes(self.temp_steering_motor)
+        struct.pack_into("<4f", data, 112, self.vision_based_position_x,
+                         self.vision_based_position_y, self.global_odom_speed_x,
+                         self.global_odom_speed_y)
         return bytes(data)
 
 
@@ -129,54 +134,28 @@ def decode_robot_feedback_packet(data: bytes) -> RobotFeedbackPacket:
     if len(data) != PACKET_SIZE:
         raise ValueError(f"packet size must be {PACKET_SIZE}, got {len(data)}")
 
-    tx_value_array = struct.unpack_from("<14f", data, FLOAT_BLOCK_OFFSET)
+    f = lambda offset: struct.unpack_from("<f", data, offset)[0]
     return RobotFeedbackPacket(
-        sync0=data[0],
-        sync1=data[1],
-        crc8=data[2],
-        check_counter=data[3],
-        imu_yaw_deg=struct.unpack_from("<f", data, 4)[0],
-        battery_voltage_bldc_right=struct.unpack_from("<f", data, 8)[0],
-        ball_detection=(data[12], data[13]),
-        tx_cycle_count=data[14],
-        kick_state_div10=data[15],
-        current_error_id=struct.unpack_from("<H", data, 16)[0],
-        current_error_info=struct.unpack_from("<H", data, 18)[0],
-        current_error_value=struct.unpack_from("<f", data, 20)[0],
-        motor_current_x10=(data[24], data[25], data[26], data[27]),
-        ball_detection_extra=data[28],
-        temp_motor=(data[29], data[30], data[31], data[32]),
-        temp_fet=data[33],
-        temp_coil=(data[34], data[35]),
-        diff_angle_deg=struct.unpack_from("<f", data, 36)[0],
-        capacitor_boost_voltage=struct.unpack_from("<f", data, 40)[0],
-        vision_based_position_x=struct.unpack_from("<f", data, 44)[0],
-        vision_based_position_y=struct.unpack_from("<f", data, 48)[0],
-        global_odom_speed_x=struct.unpack_from("<f", data, 52)[0],
-        global_odom_speed_y=struct.unpack_from("<f", data, 56)[0],
-        camera_pos_x_div2=data[60],
-        camera_pos_y=data[61],
-        camera_radius_div4=data[62],
-        camera_fps=data[63],
-        tx_value_array=tx_value_array,
-        reserved=data[120:128],
+        sync0=data[0], sync1=data[1], crc8=data[2], check_counter=data[3],
+        tx_cycle_count=data[4],
+        current_error_id=struct.unpack_from("<H", data, 5)[0],
+        current_error_info=struct.unpack_from("<H", data, 7)[0],
+        current_error_value=f(9), imu_yaw_deg=f(13),
+        ball_detection=(data[17], data[18]), ball_detection_extra=data[19],
+        diff_angle_deg=f(20), battery_voltage=f(24), kick_state_div10=data[28],
+        temp_fet=data[29], temp_coil=(data[30], data[31]),
+        capacitor_boost_voltage=f(32), mouse_odom_x=f(36), mouse_odom_y=f(40),
+        mouse_global_vel_x=f(44), mouse_global_vel_y=f(48), mouse_quality=f(52),
+        motor_current_x10=tuple(data[56:60]), temp_motor=tuple(data[60:64]),
+        output_vel_x=f(64), output_vel_y=f(68),
+        motor_feedback_0=f(72), motor_feedback_1=f(76),
+        motor_feedback_2=f(80), motor_feedback_3=f(84),
+        local_odom_speed_mvf_x=f(88), local_odom_speed_mvf_y=f(92),
+        local_odom_speed_mvf_w=f(96),
+        steering_angle=tuple(decode_steering_angle(struct.unpack_from(">H", data, 100 + 2 * i)[0])
+                             for i in range(4)),
+        temp_steering_motor=tuple(data[108:112]),
+        vision_based_position_x=f(112), vision_based_position_y=f(116),
+        global_odom_speed_x=f(120), global_odom_speed_y=f(124),
         crc_valid=data[2] == calc_feedback_crc8(data),
     )
-
-
-TX_VALUE_LABELS = (
-    "mouse_odom_x",
-    "mouse_odom_y",
-    "mouse_global_vel_x",
-    "mouse_global_vel_y",
-    "output_vel_x",
-    "output_vel_y",
-    "motor_feedback_0",
-    "motor_feedback_1",
-    "motor_feedback_2",
-    "motor_feedback_3",
-    "local_odom_speed_mvf_x",
-    "local_odom_speed_mvf_y",
-    "local_odom_speed_mvf_w",
-    "mouse_quality",
-)

@@ -68,32 +68,42 @@ static_assert(TERMINAL_VELOCITY_LOW == 37, "TERMINAL_VELOCITY_LOW");
 // ---------------------------------------------------------------------------
 static_assert(sizeof(RobotCommandSerializedV2) == 64, "RobotCommandSerializedV2 must be 64 bytes");
 
-// --- G474 feedback パケット (robot_feedback_packet.h) ---
-//
-// 制御パケットと違い、こちらは過去にドリフトしていない。だが CM4 が位置ループを
-// 閉じるようになって消費者が 1 つから 3 つに増え、byte 44..51 は位置制御ループ内で
-// 唯一の位置信号になった。G474 がこの手前にフィールドを 1 つ挿入すると、実機は
-// 目標と無関係な位置へ走り出すのに単体テストは緑のままになる。ここで止める。
+// --- Main共通feedbackパケット (robot_feedback_packet.h) ---
 static_assert(sizeof(RobotFeedbackPacket) == 128, "feedback packet must be 128 bytes");
 static_assert(offsetof(RobotFeedbackPacket, header) == 0, "feedback header offset");
 static_assert(offsetof(RobotFeedbackPacketHeader, crc8) == 2, "feedback CRC offset");
-static_assert(offsetof(RobotFeedbackPacket, imu_yaw_deg) == 4, "feedback imu_yaw_deg offset");
-static_assert(offsetof(RobotFeedbackPacket, battery_voltage_bldc_right) == 8, "feedback battery offset");
-static_assert(offsetof(RobotFeedbackPacket, ball_detection) == 12, "feedback ball_detection offset");
-// byte 14 は ball_detection の 3 つ目ではなく送信サイクルカウンタ
-// (STM32 ai_comm.c の `buf[14] = tx_cycle_count;`)。doc/feedback_packet.md 参照。
-static_assert(offsetof(RobotFeedbackPacket, tx_cycle_count) == 14, "feedback tx_cycle_count offset");
-static_assert(offsetof(RobotFeedbackPacket, kick_state_div10) == 15, "feedback kick_state offset");
-static_assert(offsetof(RobotFeedbackPacket, capacitor_boost_voltage) == 40, "feedback capacitor offset");
-static_assert(offsetof(RobotFeedbackPacket, vision_based_position_x) == 44, "feedback pos x offset");
-static_assert(offsetof(RobotFeedbackPacket, vision_based_position_y) == 48, "feedback pos y offset");
-static_assert(offsetof(RobotFeedbackPacket, global_odom_speed_x) == 52, "feedback odom x offset");
-static_assert(offsetof(RobotFeedbackPacket, global_odom_speed_y) == 56, "feedback odom y offset");
-static_assert(offsetof(RobotFeedbackPacket, camera_pos_x_div2) == 60, "feedback camera offset");
-static_assert(offsetof(RobotFeedbackPacket, tx_value_array) == 64, "feedback tx_value_array offset");
-static_assert(offsetof(RobotFeedbackPacket, reserved) == 120, "feedback reserved offset");
-static_assert(FEEDBACK_POS_X_OFFSET == 44, "decodeFeedbackPosition reads byte 44");
-static_assert(FEEDBACK_POS_Y_OFFSET == 48, "decodeFeedbackPosition reads byte 48");
+static_assert(offsetof(RobotFeedbackPacket, tx_cycle_count) == 4, "feedback cycle offset");
+static_assert(offsetof(RobotFeedbackPacket, current_error_id) == 5, "feedback error id offset");
+static_assert(offsetof(RobotFeedbackPacket, current_error_info) == 7, "feedback error info offset");
+static_assert(offsetof(RobotFeedbackPacket, current_error_value) == 9, "feedback error value offset");
+static_assert(offsetof(RobotFeedbackPacket, imu_yaw_deg) == 13, "feedback yaw offset");
+static_assert(offsetof(RobotFeedbackPacket, ball_detection) == 17, "feedback ball offset");
+static_assert(offsetof(RobotFeedbackPacket, ball_detection_extra) == 19, "feedback ball extra offset");
+static_assert(offsetof(RobotFeedbackPacket, diff_angle_deg) == 20, "feedback diff angle offset");
+static_assert(offsetof(RobotFeedbackPacket, battery_voltage) == 24, "feedback battery offset");
+static_assert(offsetof(RobotFeedbackPacket, kick_state_div10) == 28, "feedback kick offset");
+static_assert(offsetof(RobotFeedbackPacket, temp_fet) == 29, "feedback FET temp offset");
+static_assert(offsetof(RobotFeedbackPacket, temp_coil) == 30, "feedback coil temp offset");
+static_assert(offsetof(RobotFeedbackPacket, capacitor_boost_voltage) == 32, "feedback capacitor offset");
+static_assert(offsetof(RobotFeedbackPacket, mouse_odom_x) == 36, "feedback mouse odom x offset");
+static_assert(offsetof(RobotFeedbackPacket, mouse_odom_y) == 40, "feedback mouse odom y offset");
+static_assert(offsetof(RobotFeedbackPacket, mouse_global_vel_x) == 44, "feedback mouse vel x offset");
+static_assert(offsetof(RobotFeedbackPacket, mouse_global_vel_y) == 48, "feedback mouse vel y offset");
+static_assert(offsetof(RobotFeedbackPacket, mouse_quality) == 52, "feedback mouse quality offset");
+static_assert(offsetof(RobotFeedbackPacket, motor_current_x10) == 56, "feedback motor current offset");
+static_assert(offsetof(RobotFeedbackPacket, temp_motor) == 60, "feedback motor temp offset");
+static_assert(offsetof(RobotFeedbackPacket, output_vel_x) == 64, "feedback output velocity x offset");
+static_assert(offsetof(RobotFeedbackPacket, output_vel_y) == 68, "feedback output velocity y offset");
+static_assert(offsetof(RobotFeedbackPacket, motor_feedback) == 72, "feedback motor offset");
+static_assert(offsetof(RobotFeedbackPacket, local_odom_speed_mvf) == 88, "feedback local odom offset");
+static_assert(offsetof(RobotFeedbackPacket, steering_angle) == 100, "feedback steering offset");
+static_assert(offsetof(RobotFeedbackPacket, temp_steering_motor) == 108, "feedback steering temp offset");
+static_assert(offsetof(RobotFeedbackPacket, vision_based_position_x) == 112, "feedback pos x offset");
+static_assert(offsetof(RobotFeedbackPacket, vision_based_position_y) == 116, "feedback pos y offset");
+static_assert(offsetof(RobotFeedbackPacket, global_odom_speed_x) == 120, "feedback global speed x offset");
+static_assert(offsetof(RobotFeedbackPacket, global_odom_speed_y) == 124, "feedback global speed y offset");
+static_assert(FEEDBACK_POS_X_OFFSET == 112, "decodeFeedbackPosition reads byte 112");
+static_assert(FEEDBACK_POS_Y_OFFSET == 116, "decodeFeedbackPosition reads byte 116");
 static_assert(TERMINAL_VELOCITY_LOW < 64, "packet fields must fit in 64 bytes");
 
 static void check(bool ok, const char * name);
@@ -114,11 +124,12 @@ static void testFeedbackCrc(void)
   float pos[2] = {};
   check(decodeFeedbackPosition(frame, sizeof(frame), pos), "feedback CRC valid");
   check(pos[0] == x && pos[1] == y, "feedback position after CRC");
-  frame[44] ^= 1;
+  frame[112] ^= 1;
   check(!decodeFeedbackPosition(frame, sizeof(frame), pos), "feedback payload corruption rejected");
-  frame[44] ^= 1;
+  frame[112] ^= 1;
   frame[2] ^= 1;
   check(!isFeedbackPacketValid(frame, sizeof(frame)), "feedback CRC corruption rejected");
+  frame[2] ^= 1;
 }
 
 // ---------------------------------------------------------------------------

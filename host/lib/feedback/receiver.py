@@ -12,7 +12,6 @@ from host.lib.feedback.packet import (
     SYNC0,
     SYNC1,
     UDP_4WS_SYNC1,
-    TX_VALUE_LABELS,
     RobotFeedbackPacket,
     decode_robot_feedback_packet,
 )
@@ -73,12 +72,8 @@ def packet_to_dict(packet: FeedbackPacket) -> dict[str, object]:
     values = asdict(packet)
     values["machine_type"] = packet.machine_type
     values["sync_valid"] = packet.is_sync_valid
-    values["camera_pos_x"] = packet.camera_pos_x
-    values["camera_radius"] = packet.camera_radius
     values["kick_state"] = packet.kick_state
     values["motor_current"] = packet.motor_current
-    values["tx_values"] = dict(zip(TX_VALUE_LABELS, packet.tx_value_array))
-    values["reserved"] = packet.reserved.hex()
     return values
 
 
@@ -89,7 +84,7 @@ def format_packet_summary(index: int, packet: FeedbackPacket) -> str:
         f"sync={int(packet.is_sync_valid)} "
         f"crc={int(packet.is_crc_valid)} "
         f"yaw={packet.imu_yaw_deg:.3f} "
-        f"battery={packet.battery_voltage_bldc_right:.3f} "
+        f"battery={packet.battery_voltage:.3f} "
         f"kick={packet.kick_state} "
         f"motor_current={','.join(f'{value:.1f}' for value in packet.motor_current)} "
         f"error=({packet.current_error_id},{packet.current_error_info},{packet.current_error_value:.3f})"

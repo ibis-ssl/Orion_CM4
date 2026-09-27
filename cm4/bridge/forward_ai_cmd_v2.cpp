@@ -6,7 +6,7 @@
 //   mode 4 (POSITION_TARGET_WITH_TERMINAL_VELOCITY):
 //       CM4 が位置制御ループを閉じ、mode 3 (POLAR_VELOCITY_TARGET) へ変換して送る。
 //       制御則は cm4/control/position_controller.cpp（cm4_sim.out と同一ソース）。
-//       ロボットの現在位置は G474 feedback の byte 44..51 を使う。feedback は
+//       ロボットの現在位置は Main feedback の byte 112..119 を使う。feedback は
 //       robot_feedback.out が UART から読んで 127.0.0.1:(50000+機体番号) へ
 //       loopback unicast したものを受ける（/dev/serial0 の読み手は増やさない）。
 //

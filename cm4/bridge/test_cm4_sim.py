@@ -88,7 +88,7 @@ def build_feedback(robot_id, counter, x, y):
 
     byte 2 はCRC-8/ATM、byte 14 は tx_cycle_count、byte 60..63 は 0 である。
     robot_id は宛先ポートの選択にだけ使い、パケットには載らない。
-    cm4_sim が読むのは byte 44..51 だけなので制御には影響しない。
+    cm4_sim が読むのは byte 112..119 の位置だけなので制御には影響しない。
     """
     d = bytearray(FEEDBACK_SIZE)
     d[0], d[1] = FEEDBACK_SYNC
@@ -534,8 +534,8 @@ class Cm4SimSmokeTest(unittest.TestCase):
                     got = data
                     break
             self.assertIsNotNone(got, "multicast 再配信を受信できない")
-            self.assertAlmostEqual(struct.unpack_from("<f", got, 44)[0], 0.5, delta=1e-6)
-            self.assertAlmostEqual(struct.unpack_from("<f", got, 48)[0], -0.25, delta=1e-6)
+            self.assertAlmostEqual(struct.unpack_from("<f", got, FEEDBACK_POS_X_OFFSET)[0], 0.5, delta=1e-6)
+            self.assertAlmostEqual(struct.unpack_from("<f", got, FEEDBACK_POS_Y_OFFSET)[0], -0.25, delta=1e-6)
         finally:
             sim.close()
             mc.close()

@@ -31,25 +31,6 @@
 // ai_cmd_v2.out と cm4_sim.out も同じ定義を使う (消費者が 3 つに増えたため)。
 constexpr int PACKET_SIZE = FEEDBACK_PACKET_SIZE;
 
-/*
- * RobotFeedbackPacket.tx_value_array の意味:
- * STM32 Core/Src/ai_comm.c の sendRobotInfo() で enqueueFloatArray() した順番に対応する。
- * [0]  mouse->odom[0]
- * [1]  mouse->odom[1]
- * [2]  mouse->global_vel[0]
- * [3]  mouse->global_vel[1]
- * [4]  out->velocity[0]
- * [5]  out->velocity[1]
- * [6]  can_raw->motor_feedback[0]
- * [7]  can_raw->motor_feedback[1]
- * [8]  can_raw->motor_feedback[2]
- * [9]  can_raw->motor_feedback[3]
- * [10] omni->local_odom_speed_mvf[0]
- * [11] omni->local_odom_speed_mvf[1]
- * [12] omni->local_odom_speed_mvf[2]
- * [13] mouse->quality
- */
-
 union Data {
   float f;
   char b[4];
