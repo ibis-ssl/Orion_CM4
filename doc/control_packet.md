@@ -1,6 +1,6 @@
 ﻿# 制御パケット
 
-このドキュメントは、現行のG474搭載機体でAI(crane)からCM4を経由してSTM32(G474)へ送る制御パケットの責務とレイアウトをまとめます。Orionと4WSのmode 3～8の対応関係は[制御モード互換性](control_mode_compatibility.md)、4WS MainとのSPI通信は[仮仕様](4ws_spi_packet_proposal.md)を参照してください。
+このドキュメントは、OrionMain搭載機体でAI(crane)からCM4を経由してOrionMain（STM32G474）へ送る制御パケットの責務とレイアウトをまとめます。Orionと4WSのmode 3～8の対応関係は[制御モード互換性](control_mode_compatibility.md)、4WS MainとのSPI通信は[仮仕様](4ws_spi_packet_proposal.md)を参照してください。
 
 ## SSOT（この仕様の正本）
 
@@ -11,7 +11,7 @@
 | リポジトリ | ファイル | 状態 |
 |---|---|---|
 | crane | `crane_sender/include/crane_sender/robot_packet.h` | **正本** |
-| G474_Orion_main | `Core/Inc/robot_packet.h` | byte 0..31 一致（32..37 は G474 が使わないので未定義） |
+| G474_Orion_main | `Core/Inc/robot_packet.h` | byte 0..31 一致（32..37 は OrionMain が使わないので未定義） |
 | framework | `src/simulator/ibis_protocol.h` | 一致 |
 | Orion_CM4 | `cm4/bridge/robot_packet.h` | 一致 |
 
@@ -135,7 +135,7 @@ GUI_Qtの送信実装も
 
 | 値 | 名前 | ARGS(24..31) の意味 | 送信元 → 受信先 |
 |---|---|---|---|
-| `3` | `POLAR_VELOCITY_TARGET_MODE` | `target_global_velocity_r`, `target_global_velocity_theta` | CM4 → G474 / cm4_sim → simulator-cli |
+| `3` | `POLAR_VELOCITY_TARGET_MODE` | `target_global_velocity_r`, `target_global_velocity_theta` | CM4 → OrionMain / cm4_sim → simulator-cli |
 | `4` | `POSITION_TARGET_WITH_TERMINAL_VELOCITY_MODE` | `terminal_velocity_x`, `terminal_velocity_y` | crane → CM4 / crane → cm4_sim |
 
 4WS専用のmode 5、Orion専用のmode 6、両機体共通のボール基準mode 7・8は[制御モード互換性](control_mode_compatibility.md)で定義しています。いずれも未実装で、この表の実装済みモードには含めません。
@@ -144,8 +144,8 @@ GUI_Qtの送信実装も
 > mode 4 のパケットを mode 3 として復号すると `terminal_velocity_x/y` が `r/theta` として
 > 読まれ、無言で暴走します。
 
-**G474 は mode 3 しか実装していません。** mode 4 は CM4 が消費して mode 3 に変換するものであり、
-G474 へ素通ししてはいけません。
+**OrionMain は mode 3 しか実装していません。** mode 4 は CM4 が消費して mode 3 に変換するものであり、
+OrionMain へ素通ししてはいけません。
 
 ### POLAR_VELOCITY_TARGET_MODE (3)
 
@@ -180,9 +180,9 @@ CM4 では**上流（位置制御器）の解釈が先に勝ちます**。`linea
 位置制御ゲインの正本は CM4 の `position_controller` ですが、現地で詰めるには
 crane 側から変えられる必要があります。65バイトの指令パケットとは**別ポートの
 28 バイトのデータグラム**で運びます。相乗りさせないのは、64 バイトのレイアウトが
-crane / G474 / framework / CM4 の 4 者一致を不変条件にしており、しかも crane が
+crane / OrionMain / framework / CM4 の 4 者一致を不変条件にしており、しかも crane が
 使用中のコマンドの byte 28..31 / 38..63 をゼロ初期化していないためです。別ポートなら
-G474 と framework は一切変わりません。
+OrionMain と framework は一切変わりません。
 
 正本は `cm4/bridge/config_packet.h` です。送信側は設定パケットも対象機体のIPへ
 ユニキャストで送る。複数機体に同じ設定を適用する場合は各機体へ個別に送る。
@@ -235,7 +235,7 @@ version不一致は`UnsupportedVersion`として拒否し、理由をログに�
   届かないことを理由に既定値へ戻すとかえって挙動が飛びます。
 - crane は同じ値を定期送信して構いません。値が変わったときだけログに出ます。
 - **変更できるのはこの 5 つだけです。** `command_timeout_ms` / `feedback_timeout_ms` は
-  安全停止の閾値、`vision_age_limit_ms` は G474 の定数と一致させるための値なので、
+  安全停止の閾値、`vision_age_limit_ms` は OrionMain の定数と一致させるための値なので、
   遠隔から動かせるようにしていません（`cm4/control/position_controller.h`）。
   `integral_velocity_limit`（I 項が単独で出せる速度の上限）も同じ理由で載せていません。
   あれは「効き」ではなくワインドアップの暴走幅の上限で、遠隔で緩められるようにすると
@@ -261,14 +261,14 @@ version不一致は`UnsupportedVersion`として拒否し、理由をログに�
   - UDP port: `12350`（`--config-port` で変更可）
   - 28バイト固定。crane がゲインを稼働中に変更するために送ります。
     詳細は上の[位置制御設定パケット](#位置制御設定パケットudp-12350)を参照。
-- G474 feedback（位置制御ループを閉じるため）
+- OrionMain feedback（位置制御ループを閉じるため）
   - UDP port: `127.0.0.1:(50000 + 100 + ロボット ID)`（`--feedback-port` で変更可）
   - `robot_feedback.out` が UART から読んだ 128 バイトを loopback unicast で渡します。
   - 詳細は [フィードバックパケット](feedback_packet.md) を参照。
 
 ロボット ID は `wlan0` の IPv4 最終オクテット `- 100` です。決定できないときは
 **0 号機として動かず終了します**。位置制御では ID が feedback の bind ポートも決めるので、
-黙って 0 に落ちると「自分の G474 へ送りながら 0 号機の feedback で位置ループを閉じる」
+黙って 0 に落ちると「自分の OrionMain へ送りながら 0 号機の feedback で位置ループを閉じる」
 機体跨ぎの制御になります。テスト時は `--robot-id` で明示指定できます。
 
 ### UART 送信
@@ -286,7 +286,7 @@ version不一致は`UnsupportedVersion`として拒否し、理由をログに�
 
 ### 2 つの経路
 
-craneからCM4を経てG474へ届く実機経路と、mode 7・8のカメラ利用案は[処理ブロック図](overview.md#実機の処理ブロック図)を参照してください。
+craneからCM4を経てOrionMainへ届く実機経路と、mode 7・8のカメラ利用案は[処理ブロック図](overview.md#実機の処理ブロック図)を参照してください。
 
 受信パケットの `CONTROL_MODE` で経路が分かれます。**この 2 つは意図的に統合していません。**
 
@@ -298,7 +298,7 @@ craneからCM4を経てG474へ届く実機経路と、mode 7・8のカメラ利�
 素通し経路では `check_counter` が crane 由来なので、値が変化したときに送ります。
 位置制御経路では CM4 が `check_counter` を採番し、時間ベースのレートで送ります。
 
-`--passthrough` は mode 4 が来ても強制的に素通しします。G474 は mode 4 を処理しないため、
+`--passthrough` は mode 4 が来ても強制的に素通しします。OrionMain は mode 4 を処理しないため、
 mode 4 の診断では `--debug` と併用し、実機 UART へ送らないでください。
 
 ### 送信レートとポーリング
@@ -310,7 +310,7 @@ mode 4 の診断では `--debug` と併用し、実機 UART へ送らないで�
 
 - crane からの指令が途絶しても停止指令を送れるよう、時間ゲートで送信します。
 - 100 Hz での UART 占有率は 720 us x 100 = **7.2%** です。
-- `--tx-rate-hz 500` では占有率が約36%になるため、使用前に G474 の
+- `--tx-rate-hz 500` では占有率が約36%になるため、使用前に OrionMain の
   `ORE`/`FE`/`NE`/`PE` カウンタを確認してください。
 
 ### CHECK_COUNTER
@@ -318,7 +318,7 @@ mode 4 の診断では `--debug` と併用し、実機 UART へ送らないで�
 crane は `RobotCommands` メッセージ 1 通につき 1 回インクリメントし、その値を
 **全ロボット共通**で入れます（`0 → 201` で折り返すので実質 1..200 の巡回）。
 
-G474 の `checkConnect2AI()`（`Core/Src/ai_comm.c`）は
+OrionMain の `checkConnect2AI()`（`Core/Src/ai_comm.c`）は
 **`check_counter` が変化し続けること**を AI 接続生存の判定に使います。
 `AI_CMD_TIMEOUT(0.5) * MAIN_LOOP_CYCLE(500)` = **250 ms** 変化が無いと `connected_ai = false` です。
 
@@ -329,7 +329,7 @@ G474 の `checkConnect2AI()`（`Core/Src/ai_comm.c`）は
 mode 4 を受けて位置制御を回す経路では、**CM4 が `check_counter` を採番します**
 （送信ごとに `++c; if (c > 200) c = 0;`）。
 
-この経路では **G474 の `connected_ai` は crane の生存を意味しません**。
+この経路では **OrionMain の `connected_ai` は crane の生存を意味しません**。
 CM4 が生きていれば crane が死んでいても `check_counter` は変化し続けるからです。
 crane 断の安全停止は CM4 側で明示的に行います（下記）。
 
@@ -342,7 +342,7 @@ mode 4 を受けると `cm4/control/position_controller.cpp` を通します。�
 `position_gain = 2.0` / `deceleration = 3.0`（`--kp` / `--decel` は起動時の初期値。
 稼働中は crane からの設定パケットで上書きされます）です。
 
-更新後の仕様では、ロボットの現在位置は **G474 feedback の byte 112..119（`vision_based_position_x/y`）** を
+更新後の仕様では、ロボットの現在位置は **OrionMain feedback の byte 112..119（`vision_based_position_x/y`）** を
 使います。crane のパケットに入っている `vision_global_pos` では閉じません。
 それは今回ループの外へ出そうとしている無線経路そのものだからです。
 このbyte配置の送信・受信実装への反映は別作業です。
@@ -356,7 +356,7 @@ mode 4 を受けると `cm4/control/position_controller.cpp` を通します。�
 |---|---|---|
 | crane が `STOP_EMERGENCY` を立てた | `StopEmergency` | — |
 | crane からのパケットが途絶 | `CommandStale` | `--command-timeout-ms 100` |
-| G474 feedback が途絶（起動直後の未受信を含む） | `FeedbackStale` | `--feedback-timeout-ms 100` |
+| OrionMain feedback が途絶（起動直後の未受信を含む） | `FeedbackStale` | `--feedback-timeout-ms 100` |
 | crane が vision でこのロボットを見失っている | `VisionUnavailable` | — |
 | crane の vision がこのロボットを捉えてから時間が経ちすぎた | `VisionStale` | 500 ms（実機 FW 固定） |
 | 目標位置・現在位置が物理的にありえない値 | `InvalidCommand` | — |
@@ -382,7 +382,7 @@ mode 4 の `terminal_velocity_x/y` はフィードフォワードとして速度
 crane が見失っている間の `target_global_pos` は「見えていないロボット」に対する
 推測値なので、そこへ向かって走らせてはいけません。
 
-実機 G474 の停止条件は `Core/Src/state_func.c:314` の 4 つです。
+実機 OrionMain の停止条件は `Core/Src/state_func.c:314` の 4 つです。
 
 ```c
 sys->stop_flag || ai_cmd->stop_emergency || !ai_cmd->is_vision_available
@@ -391,11 +391,11 @@ sys->stop_flag || ai_cmd->stop_emergency || !ai_cmd->is_vision_available
 
 このうち **`is_vision_available`（byte 22 bit0）と
 `elapsed_time_ms_since_last_vision`（byte 20..21）の 2 つ**を CM4 でも見ます。
-実機 G474 も同条件で停止します。
+実機 OrionMain も同条件で停止します。
 
 `vision_age_limit_ms`（500 ms）に CLI オプションを生やしていないのは意図的です。
 これは調整パラメータではなく実機ファームウェアの定数と一致させるための値で、
-現地で食い違った値を設定できると「CM4 は走らせているのに G474 は止めている」
+現地で食い違った値を設定できると「CM4 は走らせているのに OrionMain は止めている」
 状態を作れてしまいます。境界（500 は動く / 501 は止まる）まで実機と揃えてあります。
 
 判定は `position_controller` にあるので、実機バイナリと `cm4_sim` が同じ経路を通ります。
@@ -432,7 +432,7 @@ sys->stop_flag || ai_cmd->stop_emergency || !ai_cmd->is_vision_available
 したがって **`VisionUnavailable` が主防壁で、`VisionStale` は補助**という位置づけです。
 両方を見ているのはそのためで、片方だけでは足りません。
 
-CM4 側で巻き戻りを補正することは**しません**。実機 G474 と同じ 2 バイトを同じ
+CM4 側で巻き戻りを補正することは**しません**。実機 OrionMain と同じ 2 バイトを同じ
 `uint16_t` として読んでいるので、実機と同じ判定になることのほうが重要です。
 ここだけ賢くすると、実機と CM4 で挙動が分かれます（simulator-cli 側も同じ方針）。
 
@@ -444,7 +444,7 @@ CM4 側で巻き戻りを補正することは**しません**。実機 G474 と
 |---|---|
 | 1 kHz ポーリングの検出遅れ | 最大 1 ms |
 | UART 72 バイト @ 1 Mbps | 0.72 ms |
-| G474 のメインループ 500 Hz | 最大 2 ms |
+| OrionMain のメインループ 500 Hz | 最大 2 ms |
 
 **合計でおよそ 104 ms** です。停止指令は `--tx-rate-hz` のゲートを待ちません
 （停止理由が変わった周期はレートに関わらず即送信します）。実機で測るときは
@@ -457,7 +457,7 @@ CM4 側で巻き戻りを補正することは**しません**。実機 G474 と
 
 ##### 104 ms は「駆動力が切れるまで」で、「止まるまで」ではありません
 
-**安全停止では実機も惰走します。** G474 の停止分岐（`Core/Src/state_func.c:314`）は
+**安全停止では実機も惰走します。** OrionMain の停止分岐（`Core/Src/state_func.c:314`）は
 `omniStopAll()` を呼び、4 輪のモータ電圧を 0 にして CAN へ duty `0.0` を送るだけです。
 
 ```c
@@ -475,7 +475,7 @@ CAN フレーム（`Core/Src/actuator.c:12`）は 4 バイトの float duty だ�
 
 重要なのは**同じ「止まれ」でも 2 通りある**ことです。
 
-| CM4 が送るもの | G474 が通る経路 | 挙動 |
+| CM4 が送るもの | OrionMain が通る経路 | 挙動 |
 |---|---|---|
 | mode 3 で `r = 0`、`STOP_EMERGENCY` **なし** | `speedControl` → `omniMoveIndiv` | 車輪 PID が効く（能動制動） |
 | `STOP_EMERGENCY` **あり** | `omniStopAll` | 駆動力ゼロ（惰走） |
@@ -502,7 +502,7 @@ vision 断の安全停止はすべて下段（惰走）**です。約 104 ms で
 シミュレータが standby に入るまでの猶予は、実機の `connected_ai` タイムアウトより
 短い。したがって**指令途絶時の惰走距離はシミュレータの方が実機より短く出る**。
 
-ただしこれが効くのは **CM4 ごと落ちて G474 への送信が止まった場合だけ**である。
+ただしこれが効くのは **CM4 ごと落ちて OrionMain への送信が止まった場合だけ**である。
 mode 4 の位置制御では CM4 が送り続けるので `connected_ai` は発火せず、crane 断・
 feedback 断・vision 断はすべて `STOP_EMERGENCY` 経路（上表の 2 行目）に入る。
 
@@ -515,22 +515,22 @@ feedback 断・vision 断はすべて `STOP_EMERGENCY` 経路（上表の 2 行�
 （約 104 ms、予算と照合する対象）と、機体が静止する時刻（惰走距離ぶん後ろ）**を
 分けて記録してください。
 
-##### CM4とG474の停止判定
+##### CM4とOrionMainの停止判定
 
 crane が沈黙しても、**CM4 は `check_counter` を進めながら送信を続けます**
 （`forward_ai_cmd_v2.cpp` の位置制御パスは毎送信で `nextCheckCounter()` を呼び、
-停止中も `--tx-rate-hz` で送り続ける）。したがって G474 の `connected_ai` は真のまま
+停止中も `--tx-rate-hz` で送り続ける）。したがって OrionMain の `connected_ai` は真のまま
 であり、車輪が止まる理由は **CM4 が立てた `STOP_EMERGENCY`** です。250 ms の
 `connected_ai` タイムアウトはこの経路には出てきません。
 
 250 ms の判定は **CM4 側（`ai_cmd_v2.out` のプロセス死、UART 断）の通信途絶**
-に適用されます。このとき `check_counter` が凍り、G474 が自力で
+に適用されます。このとき `check_counter` が凍り、OrionMain が自力で
 止めます。
 
 | 何が落ちたか | 止めるのは誰か | 時間 |
 |---|---|---|
 | crane（無線断・プロセス死） | CM4 の `STOP_EMERGENCY` | 約 104 ms |
-| CM4（`ai_cmd_v2.out` の死、UART 断） | G474 の `connected_ai` | 250 ms |
+| CM4（`ai_cmd_v2.out` の死、UART 断） | OrionMain の `connected_ai` | 250 ms |
 
 `--passthrough` では `check_counter` が crane 由来なので、crane 断は
 `connected_ai` の 250 ms 判定に現れます。
@@ -538,9 +538,9 @@ crane が沈黙しても、**CM4 は `check_counter` を進めながら送信を
 出力パケットは受信した 64 バイトをコピーして `CHECK_COUNTER` / `CONTROL_MODE` /
 `CONTROL_MODE_ARGS` だけを差し替えて作ります。ゼロから組み立てると
 `target_global_theta` / `angular_velocity_limit` / `kick_power` / `dribble_power` / flags を
-取りこぼします（G474 も simulator-cli もこれらをすべて使います）。
+取りこぼします（OrionMain も simulator-cli もこれらをすべて使います）。
 
-なお実機では `VISION_GLOBAL_X/Y`(2..5) は crane 由来のまま流します。G474 が vision 融合に
+なお実機では `VISION_GLOBAL_X/Y`(2..5) は crane 由来のまま流します。OrionMain が vision 融合に
 使うので、CM4 の推定値を書き戻すと自己帰還になります。`cm4_sim` だけは simulator-cli の
 0.5 m 照合ゲートを通すために feedback 由来の実位置で上書きします。
 

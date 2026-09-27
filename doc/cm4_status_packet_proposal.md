@@ -2,45 +2,45 @@
 
 ## 目的と範囲
 
-craneが制御に使う位置・グローバル速度・ボール検出・yawと、監視に使う温度・電圧・電流・エラーを、CM4が固定の形式に変換して送る。G474のフィードバック内容や4WS MainのSPI応答を変更しても、craneとメインPCは機体側の配置を解釈しない。機体ごとの変換はCM4の受信アダプタに閉じ込める。
+craneが制御に使う位置・グローバル速度・ボール検出・yawと、監視に使う温度・電圧・電流・エラーを、CM4が固定の形式に変換して送る。OrionMainのフィードバック内容や4WS MainのSPI応答を変更しても、craneとメインPCは機体側の配置を解釈しない。機体ごとの変換はCM4の受信アダプタに閉じ込める。
 
-この文書は**仮仕様**であり、パケット生成・crane側の受信・メインPC側の受信は未実装。G474から受ける128バイトの内容と現在の診断用multicastは[フィードバックパケット](feedback_packet.md)に記す。
+この文書は**仮仕様**であり、パケット生成・crane側の受信・メインPC側の受信は未実装。OrionMainから受ける128バイトの内容と現在の診断用multicastは[フィードバックパケット](feedback_packet.md)に記す。
 
 ## 送信データのブロック図
 
 ```mermaid
 flowchart LR
-    g474["G474<br/>UARTフィードバック"]
+    orion_main["OrionMain<br/>UARTフィードバック"]
     ws["4WS Main<br/>SPI状態応答（予定）"]
 
     subgraph cm4["CM4"]
         hw["機体設定<br/>ローカルカメラ搭載有無"]
-        g_adapter["G474受信アダプタ<br/>長さ・同期・CRCを検証して解釈"]
+        orion_adapter["OrionMain受信アダプタ<br/>長さ・同期・CRCを検証して解釈"]
         ws_adapter["4WS受信アダプタ（予定）<br/>通信と内容を検証して解釈"]
         common["共通状態<br/>位置・グローバル速度・yaw・ボールセンサ・status<br/>値の単位を統一"]
         serialize["共通パケット生成<br/>version 1 / 55B<br/>機体タイプ・ハードウェア仕様フラグを付与"]
         multicast["機体別UDP multicast<br/>224.5.20.(100+N):50200+N"]
-        g_adapter --> common
+        orion_adapter --> common
         ws_adapter -.-> common
         common --> serialize
         hw --> serialize
         serialize --> multicast
     end
 
-    g474 --> g_adapter
+    orion_main --> orion_adapter
     ws -.-> ws_adapter
     multicast --> crane["crane受信器<br/>位置・グローバル速度・yaw・ボール検出を制御へ<br/>statusを監視へ"]
     multicast --> pc["メインPCの監視ツール<br/>共通statusを表示・記録"]
-    g_adapter --> raw["G474生フィードバックの診断配信<br/>既存の50100+N"]
+    orion_adapter --> raw["OrionMain生フィードバックの診断配信<br/>既存の50100+N"]
 ```
 
 ローカルカメラのボール検出はCM4内部のmode 7・8制御で使う別入力である。このパケットの`ball_detect`は**機体のボールセンサ**を表し、カメラの検出結果とは混ぜない。
 `hardware_flags`のカメラ搭載ビットはハードウェア構成を表し、カメラの稼働状態やボール検出状態では変化しない。
-G474のUARTは現在の受信処理1か所で読み、検証後に診断配信と共通状態への変換を分岐させる。
+OrionMainのUARTは現在の受信処理1か所で読み、検証後に診断配信と共通状態への変換を分岐させる。
 
 ## 通信と受信規則
 
-- 機体番号を`N`とし、送信先は`224.5.20.(100+N):50200+N`とする。craneとメインPCは同じグループへ参加する。既存のG474生フィードバック`50100+N`とはポートを分ける。
+- 機体番号を`N`とし、送信先は`224.5.20.(100+N):50200+N`とする。craneとメインPCは同じグループへ参加する。既存のOrionMain生フィードバック`50100+N`とはポートを分ける。
 - 有効な機体側の状態を1件受けるごとに1件送る。入力が途絶えた場合、最後の値を新しいパケットとして繰り返さない。受信側は到着時刻を基準に100 msを超えた状態を制御に使わない。送信周期は機体側の状態更新に従い、固定周期を要求しない。
 - UDPの送信先ポートでこのパケットを識別する。受信側は56バイト以上のバッファを用意し、`recvfrom`等で得たデータ長が55バイトであること、`version`が1であること、`machine_type`が定義済みの値であることを確認する。機体番号は参加したmulticastグループとポートで識別する。送信側はUDPチェックサムを有効にする。
 - ペイロード内にmagic、長さ、機体番号、独自CRC、連番、送信時刻、予約バイトは設けない。ポート・受信長・UDPチェックサムで確認できる情報を重複させず、鮮度は受信側の到着時刻で判定する。
@@ -75,20 +75,20 @@ UDPペイロードは55バイト固定。整数はlittle-endian、浮動小数�
 | 51..54 | `drive_motor_current[4]` | `uint8`×4、0.1 A/LSB |
 
 `version`はポートによるパケット種別の識別とは別に、同じポートで受けた共通パケットの配置を判定するために残す。配置や意味を変える場合は値を更新し、未対応の受信側は破棄する。
-`machine_type`は機体番号とは独立した駆動機構の種類を表す。CM4の機体設定から決定し、G474接続機は`OrionMain=1`、4WS Main接続機は`4WS=2`を送る。未定義の値は受信側で破棄する。
+`machine_type`は機体番号とは独立した駆動機構の種類を表す。CM4の機体設定から決定し、OrionMain接続機は`OrionMain=1`、4WS Main接続機は`4WS=2`を送る。未定義の値は受信側で破棄する。
 `hardware_flags`はbit 0のみ定義する。`1`はCM4にローカルカメラを搭載、`0`は非搭載を表す。送信側はbit 1..7を0にし、受信側はこれらのビットを無視する。搭載機でカメラが停止・故障していてもbit 0は1のままとする。
 
 Orionにステアモーターがない場合は`steering_motor_temp[4]`を0にする。エラー情報の意味は共通のエラーID定義ができるまでは機体依存とし、craneは0/非0と表示用の数値として扱う。
 
-`yaw`は位置と同じフィールド座標に合わせる。G474の`imu_yaw_deg`はCM4で角度単位と原点を変換する。フィールド原点との対応が確定できない場合は共通パケットを送信しない。
+`yaw`は位置と同じフィールド座標に合わせる。OrionMainの`imu_yaw_deg`はCM4で角度単位と原点を変換する。フィールド原点との対応が確定できない場合は共通パケットを送信しない。
 
-G474受信アダプタでは、`vision_based_position_x/y`を位置、`global_odom_speed_x/y`をグローバル速度、`ball_detection[0]`を`ball_detect`、`imu_yaw_deg`をyawの入力候補とする。電圧・温度・電流・エラーは[フィードバックパケット](feedback_packet.md)の同名フィールドから変換する。
+OrionMain受信アダプタでは、`vision_based_position_x/y`を位置、`global_odom_speed_x/y`をグローバル速度、`ball_detection[0]`を`ball_detect`、`imu_yaw_deg`をyawの入力候補とする。電圧・温度・電流・エラーは[フィードバックパケット](feedback_packet.md)の同名フィールドから変換する。
 
 ## 変更時の担当範囲
 
 | 変更内容 | 更新する範囲 |
 | --- | --- |
-| G474のフィードバック配置や物理単位 | CM4のG474受信アダプタ |
+| OrionMainのフィードバック配置や物理単位 | CM4のOrionMain受信アダプタ |
 | 4WS MainのSPI状態応答 | CM4の4WS受信アダプタ |
 | 共通パケットの意味・配置 | CM4の送信処理とcrane・メインPCの受信処理。`version`を更新する |
 

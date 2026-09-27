@@ -1,6 +1,6 @@
 ﻿# MCUファームウェア更新
 
-CM4からUART接続のMain（STM32G474）を更新し、MainをゲートウェイとしてCAN上のSub、左右BLDC、Power（STM32F303）を更新する。MainはA/Bスロット、CANノードは単一アプリ領域を使用する。転送データと書込み結果はCRC32Cで確認する。
+CM4からUART接続のOrionMain（STM32G474）を更新し、OrionMainをゲートウェイとしてCAN上のSub、左右BLDC、Power（STM32F303）を更新する。OrionMainはA/Bスロット、CANノードは単一アプリ領域を使用する。転送データと書込み結果はCRC32Cで確認する。
 
 ## 対象とツール
 

@@ -143,7 +143,7 @@ docker compose up --build
 
 ## 通信の基本
 
-現行のG474搭載機体について、機体番号を `N` とすると、基本的な接続先は次の通りです。
+OrionMainはUART接続のOrion用Main、4WS MainはSPI接続を予定する4WS用Mainを指す。どちらもSTM32G474を使用する。OrionMain搭載機体の機体番号を`N`とすると、基本的な接続先は次の通りです。
 
 - AI制御指令: `192.168.20.(100 + N):12345`（UDPユニキャスト、CHECK_COUNTER + 64バイトの指令）
 - 位置制御設定: `192.168.20.(100 + N):12350`（UDPユニキャスト、28バイト）
@@ -152,9 +152,9 @@ docker compose up --build
 - カメラ座標 multicast: `224.5.10.(100 + N):5100 + N`
 - robot feedback multicast: `224.5.20.(100 + N):50000 + (100 + N)`
 
-CM4からcrane・メインPCへ送る共通状態パケットを別のmulticastポート`50200 + N`に追加する案を定義した。CM4で機体側の状態を位置・グローバル速度・ボールセンサ検出・yaw・statusへ変換し、機体タイプ（`OrionMain=1`、`4WS=2`）とCM4のローカルカメラ搭載フラグを付けて送る。G474側のフィードバック配置の変更をcraneへ波及させない。パケットと送信経路は[CM4共通状態パケット案](cm4_status_packet_proposal.md)を参照。送信・受信とも未実装。
+CM4からcrane・メインPCへ送る共通状態パケットを別のmulticastポート`50200 + N`に追加する案を定義した。CM4で機体側の状態を位置・グローバル速度・ボールセンサ検出・yaw・statusへ変換し、機体タイプ（`OrionMain=1`、`4WS=2`）とCM4のローカルカメラ搭載フラグを付けて送る。OrionMain側のフィードバック配置の変更をcraneへ波及させない。パケットと送信経路は[CM4共通状態パケット案](cm4_status_packet_proposal.md)を参照。送信・受信とも未実装。
 
-Orion（4輪オムニ）と4WS（4輪駆動・4輪操舵）はmode 3・4を共通で使う方針とし、各輪目標には4WS専用のmode 5、Orion専用のmode 6を定義した。さらに両機体共通で、CM4のローカルカメラを使うボール基準の相対速度mode 7と相対位置mode 8を定義した。有効なボール観測がないときは、カメラ非稼働も含めてそれぞれmode 3・4相当の指令へ切り替える。mode 4はCM4でmode 3・5・6のいずれかに変換し、G474へ直接送らない。[制御モード互換性](control_mode_compatibility.md)に機体別の対応とmode 6～8の配置、[4WS MainとのSPI通信案](4ws_spi_packet_proposal.md)にmode 5の配置とSPIの仮仕様を記す。mode 5～8と4WS向け経路は未実装。
+Orion（4輪オムニ）と4WS（4輪駆動・4輪操舵）はmode 3・4を共通で使う方針とし、各輪目標には4WS専用のmode 5、Orion専用のmode 6を定義した。さらに両機体共通で、CM4のローカルカメラを使うボール基準の相対速度mode 7と相対位置mode 8を定義した。有効なボール観測がないときは、カメラ非稼働も含めてそれぞれmode 3・4相当の指令へ切り替える。mode 4はCM4でmode 3・5・6のいずれかに変換し、OrionMainへ直接送らない。[制御モード互換性](control_mode_compatibility.md)に機体別の対応とmode 6～8の配置、[4WS MainとのSPI通信案](4ws_spi_packet_proposal.md)にmode 5の配置とSPIの仮仕様を記す。mode 5～8と4WS向け経路は未実装。
 
 ## 関連ドキュメント
 
@@ -177,7 +177,7 @@ Orion（4輪オムニ）と4WS（4輪駆動・4輪操舵）はmode 3・4を共�
 
 ## MCUファームウェア更新
 
-CM4からMain（STM32G474）のA/Bスロットと、MainのCANゲートウェイ経由でSub・左右BLDC・Power（STM32F303）を更新する。
+CM4からOrionMain（STM32G474）のA/Bスロットと、そのCANゲートウェイ経由でSub・左右BLDC・Power（STM32F303）を更新する。
 更新順序、対象ノード、確認方法は [MCUファームウェア更新](firmware_update.md) を参照する。
 
 ## 開発用FWバージョン確認
@@ -194,13 +194,13 @@ python3 cm4/firmware/fw_version_reader.py --port /dev/serial0 \
 
 ### 実機の処理ブロック図
 
-Orion/G474のmode 3・4の実装経路と、mode 7・8でCM4のローカルカメラを使う処理案を示す。mode 7・8の制御は未実装。
+OrionMainに接続するOrionのmode 3・4の実装経路と、mode 7・8でCM4のローカルカメラを使う処理案を示す。mode 7・8の制御は未実装。
 
 ```mermaid
 flowchart LR
     subgraph inputs["入力"]
         crane["crane出力<br/>制御指令 65B・設定 28B"]
-        feedback["G474 feedback<br/>128B / UART"]
+        feedback["OrionMain feedback<br/>128B / UART"]
         camera["ローカルカメラ<br/>検出結果 7B / UDP"]
     end
     subgraph cm4["CM4内部処理"]
@@ -214,9 +214,9 @@ flowchart LR
         ball_control["ボール基準制御<br/>7:相対速度・8:相対位置"]
         fallback3["mode 7 → mode 3相当<br/>通常速度指令を生成"]
         fallback4["mode 8 → mode 4相当<br/>通常位置指令を生成"]
-        uart["G474向けフレーム生成<br/>64B指令 + 7B未定義領域 + 1Bチェックサム"]
+        uart["OrionMain向けフレーム生成<br/>64B指令 + 7B未定義領域 + 1Bチェックサム"]
     end
-    output["出力: G474向けパケット<br/>72B / UART"]
+    output["出力: OrionMain向けパケット<br/>72B / UART"]
     crane -->|"制御指令 UDP :12345"| receive
     crane -->|"制御設定 UDP :12350"| position
     feedback --> fb_receive
@@ -239,9 +239,9 @@ flowchart LR
     uart --> output
 ```
 
-入力はcrane出力、G474 feedback、ローカルカメラの3系統で、出力はG474向け72バイトUARTパケットである。未定義領域byte 64..70はCM4が0で初期化する。更新後のfeedback仕様では、mode 4の位置制御にbyte 112..119を現在位置として使用する。mode 7・8ではCM4内部の制御にカメラ観測値を反映する。ボール未検出、カメラ未起動、更新途絶から100 ms超過はいずれも「有効なボール観測なし」とし、mode 7はmode 3、mode 8はmode 4相当の指令へ切り替える。詳細は[制御パケット](control_packet.md)と[制御モード互換性](control_mode_compatibility.md)を参照。
+入力はcrane出力、OrionMain feedback、ローカルカメラの3系統で、出力はOrionMain向け72バイトUARTパケットである。未定義領域byte 64..70はCM4が0で初期化する。更新後のfeedback仕様では、mode 4の位置制御にbyte 112..119を現在位置として使用する。mode 7・8ではCM4内部の制御にカメラ観測値を反映する。ボール未検出、カメラ未起動、更新途絶から100 ms超過はいずれも「有効なボール観測なし」とし、mode 7はmode 3、mode 8はmode 4相当の指令へ切り替える。詳細は[制御パケット](control_packet.md)と[制御モード互換性](control_mode_compatibility.md)を参照。
 
-G474 feedbackは128バイト固定で、byte 2にbyte 3..127のCRC-8/ATMを格納する。CM4は長さ・同期バイト・CRCを検証し、不正なfeedbackを制御と再配信から除外する。詳細は[フィードバックパケット](feedback_packet.md)を参照。
+OrionMain feedbackは128バイト固定で、byte 2にbyte 3..127のCRC-8/ATMを格納する。CM4は長さ・同期バイト・CRCを検証し、不正なfeedbackを制御と再配信から除外する。詳細は[フィードバックパケット](feedback_packet.md)を参照。
 
 feedbackのbyte 100..111には4輪分のステア現在角度と追加のモーター温度を配置し、byte 4..127をすべて使用する。ローカルカメラ情報はCM4が別経路で受信する。ペイロードの項目と配置は[フィードバックパケット](feedback_packet.md)に記す。実装への反映は別作業とする。
 
@@ -253,7 +253,7 @@ crane --UDP:12400+id 65B mode4--> cm4_sim.out --UDP:12346 715B mode3--> simulato
                                     +---- UDP 127.0.0.1:(50100+id) ---+
 ```
 
-`simulator-cli`（framework）は **G474 とロボット物理**を担当し、位置制御は行わない。
+`simulator-cli`（framework）は **OrionMain とロボット物理**を担当し、位置制御は行わない。
 simでは機体別の65バイト指令を`127.0.0.1:(12400+id)`へ送り、受信ポートで振り分ける。
 `cm4_sim.out`から`simulator-cli`への出力は11台分を含む715バイト固定とする。
 CM4 の位置制御は `cm4_sim.out` が担当し、**実機と同一のソース**
@@ -291,7 +291,7 @@ CM4 の位置制御は `cm4_sim.out` が担当し、**実機と同一のソー�
 
 mode 4 を受けて位置制御を回す経路では、**CM4 が `check_counter` を採番する**。
 
-その結果 **G474 の `connected_ai` は crane の生存を意味しなくなる**。CM4 が生きていれば
+その結果 **OrionMain の `connected_ai` は crane の生存を意味しなくなる**。CM4 が生きていれば
 crane が死んでいても `check_counter` は変化し続けるからである。
 crane 断の安全停止は CM4 側で明示的に行う（`--command-timeout-ms`、既定 100 ms）。
 判定は `position_controller` の中にあるので実機と `cm4_sim` が必ず同じ判定を通る。
@@ -303,7 +303,7 @@ mode 3 の素通し経路（`--passthrough` を含む）では crane 由来の�
 位置制御経路は `--tx-rate-hz`、**既定 100 Hz**（UART 占有率 7.2%）で送る。
 
 - crane からの指令が途絶しても、安全停止指令を送れるように時間ゲートで送信する。
-- `--tx-rate-hz 500` を指定すると UART 占有率は約 36% になる。使用前に G474 の
+- `--tx-rate-hz 500` を指定すると UART 占有率は約 36% になる。使用前に OrionMain の
   `ORE`/`FE`/`NE`/`PE` カウンタを確認する。
 
 ### ゼロ埋め ≠ ゼロ値
@@ -332,7 +332,7 @@ crane が見失っている、または vision が古すぎるロボットの `t
 | `is_vision_available` が 0 | byte 22 bit0 | `VisionUnavailable` |
 | `elapsed_time_ms_since_last_vision > 500` | byte 20..21 | `VisionStale` |
 
-実機 G474 も `state_func.c:314` でこの 2 条件を確認してホイールを止める。
+実機 OrionMain も `state_func.c:314` でこの 2 条件を確認してホイールを止める。
 500 ms は調整パラメータではなく実機ファームウェアの
 定数なので、CLI オプションを生やしていない。境界（500 は動く / 501 は止まる）まで
 実機と揃えてある。
@@ -403,7 +403,7 @@ crane が見失っている、または vision が古すぎるロボットの `t
      ずれ、全コマンドが捨てられる。
   2. 劣化注入が無くても、crane の world model 推定が 0.5 m ずれれば同じことが起きる。
 
-  **実機では crane 由来の値をそのまま流す**（G474 が vision 融合に使うので、CM4 の
+  **実機では crane 由来の値をそのまま流す**（OrionMain が vision 融合に使うので、CM4 の
   推定値を書き戻すと自己帰還になる）。素通し経路（mode 3）でも同じエコーがかかる。
 
   この破棄は `command dropped` の警告で確認できる。
@@ -444,11 +444,11 @@ compose 側との契約は 3 つで、これを崩すと一括起動が壊れる
 
 ### シミュレータと実機の差（ゲインを詰めるときの注意）
 
-- シミュレータ側の G474 相当は **125 Hz** で、実機の G474（500 Hz）より粗い
+- シミュレータ側の OrionMain 相当は **125 Hz** で、実機の OrionMain（500 Hz）より粗い
 - simulator-cli は `IS_VISION_AVAILABLE` を見ない。CM4 側で止めているので実害は
   無いが、素通し経路では**下流が止めないまま**であることに注意する
 - `cm4_sim` の素通し経路は crane 断で `--command-timeout-ms`（既定 100 ms）で止まる。
-  実機で同じ状況を止めるのは G474 の `connected_ai` タイムアウト
+  実機で同じ状況を止めるのは OrionMain の `connected_ai` タイムアウト
   （`AI_CMD_TIMEOUT(0.5) * MAIN_LOOP_CYCLE(500)` = **250 ms**）なので、素通し経路の
   停止は実機より速い
 
@@ -466,9 +466,9 @@ compose 側との契約は 3 つで、これを崩すと一括起動が壊れる
 
 - `--passthrough` で受信した指令を素通しできること
 - crane が mode 4 を送出したときに `ai_cmd_v2.out` の表示に `mode 4` と `tarPos` が出ること
-- `--tx-rate-hz 500` での UART 占有率。G474 の `uart ORE/FE/NE/PE` と parser timeout
+- `--tx-rate-hz 500` での UART 占有率。OrionMain の `uart ORE/FE/NE/PE` と parser timeout
   カウンタが増えないことを ST-Link で確認する
-- **安全停止時の惰走距離**。G474 は `stop_emergency` で `omniStopAll()`（駆動力ゼロ）
+- **安全停止時の惰走距離**。OrionMain は `stop_emergency` で `omniStopAll()`（駆動力ゼロ）
   に入るので、実機も惰走する。CAN フレームにブレーキフラグが無く、duty 0 が空転か
   短絡制動かはモータボード側のファームウェア次第で、このリポジトリからは確定
   できない（`doc/control_packet.md` の「104 ms は『駆動力が切れるまで』」）。
@@ -476,7 +476,7 @@ compose 側との契約は 3 つで、これを崩すと一括起動が壊れる
   ことを確かめること。** 塞がれた向きでも「それらしい」値が出るので、読みからは
   異常と分からない
 - crane を止めて車輪が止まるまでの時間。予算は `--command-timeout-ms`(100) +
-  ポーリング 1 ms + UART 0.72 ms + G474 メインループ 2 ms = **約 104 ms**
+  ポーリング 1 ms + UART 0.72 ms + OrionMain メインループ 2 ms = **約 104 ms**
   （`doc/control_packet.md` の「crane 断から車輪が止まるまでの時間」）
 
 ### ビルドの構成
