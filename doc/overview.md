@@ -152,6 +152,8 @@ docker compose up --build
 - カメラ座標 multicast: `224.5.10.(100 + N):5100 + N`
 - robot feedback multicast: `224.5.20.(100 + N):50000 + (100 + N)`
 
+CM4からcrane・メインPCへ送る共通状態パケットを別のmulticastポート`50200 + N`に追加する案を定義した。CM4で機体側の状態を位置・グローバル速度・ボールセンサ検出・yaw・statusへ変換し、機体タイプ（`OrionMain=1`、`4WS=2`）とCM4のローカルカメラ搭載フラグを付けて送る。G474側のフィードバック配置の変更をcraneへ波及させない。パケットと送信経路は[CM4共通状態パケット案](cm4_status_packet_proposal.md)を参照。送信・受信とも未実装。
+
 Orion（4輪オムニ）と4WS（4輪駆動・4輪操舵）はmode 3・4を共通で使う方針とし、各輪目標には4WS専用のmode 5、Orion専用のmode 6を定義した。さらに両機体共通で、CM4のローカルカメラを使うボール基準の相対速度mode 7と相対位置mode 8を定義した。有効なボール観測がないときは、カメラ非稼働も含めてそれぞれmode 3・4相当の指令へ切り替える。mode 4はCM4でmode 3・5・6のいずれかに変換し、G474へ直接送らない。[制御モード互換性](control_mode_compatibility.md)に機体別の対応とmode 6～8の配置、[4WS MainとのSPI通信案](4ws_spi_packet_proposal.md)にmode 5の配置とSPIの仮仕様を記す。mode 5～8と4WS向け経路は未実装。
 
 ## 関連ドキュメント
@@ -164,6 +166,7 @@ Orion（4輪オムニ）と4WS（4輪駆動・4輪操舵）はmode 3・4を共�
 - [制御モード互換性](control_mode_compatibility.md)
 - [4WS MainとのSPI通信案（未確定・未実装）](4ws_spi_packet_proposal.md)
 - [フィードバックパケット](feedback_packet.md)
+- [CM4共通状態パケット案（未実装）](cm4_status_packet_proposal.md)
 - [開発とドキュメントのルール](development.md)
 - 統合仕様の正本（framework 側）: `framework/docs/robot-side-position-control.md`
 - [作業ログメモ](work_log.md)
