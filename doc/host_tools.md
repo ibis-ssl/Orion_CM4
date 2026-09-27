@@ -70,7 +70,7 @@ Orionと4WSを同じ画面で監視するメインPCツールは、CM4が送る[
 
 ### `robot-feedback-receiver`
 
-CM4から送信されるMainの生フィードバックをUDP multicastで受信し、共通形式でデコードして標準出力へ出します。
+CM4から送信されるMainの生フィードバックをUDP multicastで受信し、共通形式でデコードして標準出力へ出します。受信インターフェイスIPは対象CM4への経路から自動選択します。必要な場合は`--interface-ip`で明示できます。
 
 ```powershell
 uv run robot-feedback-receiver --machine-no 3
@@ -82,7 +82,8 @@ uv run robot-feedback-receiver --machine-no 3 --machine-type 4ws --json
 
 ### `robot-feedback-viewer`
 
-OrionMainと4WS Mainの生フィードバックをQt GUIの共通画面に表示します。表示中の機体タイプは同期値から示します。
+OrionMainと4WS Mainの生フィードバックをQt GUIの共通画面に表示します。表示中の機体タイプは同期値から示します。受信インターフェイスIPは接続時に対象CM4への経路から自動選択し、画面の`interface IP`欄または`--interface-ip`で指定もできます。接続先の機体番号を変えた場合も、`auto`なら選択し直します。
+受信レート[packets/s]と直近の受信間隔[ms]を左右別の縦軸を持つ同じ時系列プロットに表示します。4輪の駆動モーター回転数[rps]も1つの時系列プロットに表示します。各輪の回転数・電流[A]・温度[°C]、操舵角[rad]・操舵モーター温度[°C]の現在値は表で確認できます。
 
 ```powershell
 uv run robot-feedback-viewer --machine-no 10

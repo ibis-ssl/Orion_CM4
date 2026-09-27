@@ -5,12 +5,12 @@ import json
 import socket
 
 from host.lib.feedback.receiver import (
-    DEFAULT_INTERFACE_IP,
     MACHINE_TYPES,
     decode_feedback_packet,
     iter_feedback_packets,
     multicast_endpoint,
     open_multicast_socket,
+    resolve_feedback_interface_ip,
     packet_to_dict,
     format_packet_summary,
 )
@@ -21,7 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--machine-no", type=int, default=3, help="target machine number N for 192.168.20.(100 + N)")
     parser.add_argument("--multicast-group", default=None, help="override multicast group")
     parser.add_argument("--port", type=int, default=None, help="override UDP port")
-    parser.add_argument("--interface-ip", default=DEFAULT_INTERFACE_IP, help="local interface IP for multicast join")
+    parser.add_argument("--interface-ip", default=None, help="local interface IP for multicast join (default: auto)")
     parser.add_argument("--max-packets", type=int, default=0, help="stop after receiving this many packets")
     parser.add_argument("--receive-timeout", type=float, default=0.0, help="socket receive timeout in seconds")
     parser.add_argument("--json", action="store_true", help="print decoded packets as JSON lines")
@@ -37,11 +37,12 @@ def main() -> None:
     group = args.multicast_group or default_group
     port = args.port or default_port
 
-    sock = open_multicast_socket(group, port, args.interface_ip)
+    interface_ip = resolve_feedback_interface_ip(args.machine_no, args.interface_ip)
+    sock = open_multicast_socket(group, port, interface_ip)
     if args.receive_timeout > 0:
         sock.settimeout(args.receive_timeout)
 
-    print(f"listen multicast={group}:{port} interface={args.interface_ip}")
+    print(f"listen multicast={group}:{port} interface={interface_ip}")
     try:
         for index, payload in enumerate(iter_feedback_packets(sock), start=1):
             try:

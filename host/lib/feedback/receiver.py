@@ -19,6 +19,7 @@ from host.lib.feedback.packet import (
 DEFAULT_INTERFACE_IP = "0.0.0.0"
 RECEIVE_BUFFER_SIZE = 4096
 CM4_IP_OFFSET = 100
+CONNECT_PROBE_PORT = 8000
 MACHINE_TYPES = ("auto", "orion", "4ws")
 FeedbackPacket = RobotFeedbackPacket
 
@@ -26,6 +27,25 @@ FeedbackPacket = RobotFeedbackPacket
 def multicast_endpoint(machine_no: int) -> tuple[str, int]:
     cm4_ip_last_octet = CM4_IP_OFFSET + machine_no
     return f"224.5.20.{cm4_ip_last_octet}", 50000 + cm4_ip_last_octet
+
+
+def resolve_feedback_interface_ip(machine_no: int, explicit_ip: str | None = None) -> str:
+    """機体への経路に使うローカル IPv4 アドレスを multicast 参加用に選ぶ。"""
+    if explicit_ip and explicit_ip.strip() and explicit_ip.strip().lower() != "auto":
+        return explicit_ip.strip()
+
+    target_ip = f"192.168.20.{CM4_IP_OFFSET + machine_no}"
+    sock = None
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # UDP connect はパケットを送らず、Windows/Linux の経路表だけを参照する。
+        sock.connect((target_ip, CONNECT_PROBE_PORT))
+        return sock.getsockname()[0]
+    except OSError:
+        return DEFAULT_INTERFACE_IP
+    finally:
+        if sock is not None:
+            sock.close()
 
 
 def open_multicast_socket(group: str, port: int, interface_ip: str) -> socket.socket:

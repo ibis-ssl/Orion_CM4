@@ -123,18 +123,18 @@ byte 3 は指令の `check_counter` の反射です。mode 4 の位置制御経�
 | バイト | 項目 | 形式 |
 | --- | --- | --- |
 | `56..59` | `motor_current_x10[4]` | 各1バイト、電流の10倍 |
-| `60..63` | `temp_motor[4]` | 各1バイト |
+| `60..63` | `temp_motor[4]` | 各1バイト、駆動モーター温度 [°C] |
 | `64..67` | `output_vel_x` | little-endian IEEE754 float |
 | `68..71` | `output_vel_y` | little-endian IEEE754 float |
-| `72..75` | `motor_feedback_0` | little-endian IEEE754 float |
-| `76..79` | `motor_feedback_1` | little-endian IEEE754 float |
-| `80..83` | `motor_feedback_2` | little-endian IEEE754 float |
-| `84..87` | `motor_feedback_3` | little-endian IEEE754 float |
+| `72..75` | `motor_feedback_0` | little-endian IEEE754 float、回転数 [rps] |
+| `76..79` | `motor_feedback_1` | little-endian IEEE754 float、回転数 [rps] |
+| `80..83` | `motor_feedback_2` | little-endian IEEE754 float、回転数 [rps] |
+| `84..87` | `motor_feedback_3` | little-endian IEEE754 float、回転数 [rps] |
 | `88..91` | `local_odom_speed_mvf_x` | little-endian IEEE754 float |
 | `92..95` | `local_odom_speed_mvf_y` | little-endian IEEE754 float |
 | `96..99` | `local_odom_speed_mvf_w` | little-endian IEEE754 float |
 | `100..107` | `steering_angle[4]` | 各2バイト、ステア現在角度 [rad] |
-| `108..111` | `temp_steering_motor[4]` | 各1バイト、ステアモーター温度 |
+| `108..111` | `temp_steering_motor[4]` | 各1バイト、ステアモーター温度 [°C] |
 
 `steering_angle[0..3]`は輪番号順に各2バイトを上位バイトから格納します。
 符号化範囲は±10π radで、[制御指令のmode 5](control_packet.md#four_wheel_steering_target_mode-5)の操舵角と同じ2バイト表現です。
@@ -213,11 +213,15 @@ GUIフロントエンドには依存しないため、通信とパースだけ�
 - 電圧
 - 姿勢
 - モーター電流
+- 各輪の回転数・駆動モーター温度・操舵モーター温度
+- 受信レートと直近の受信間隔
 - `mouse->global_vel[0]`, `mouse->global_vel[1]`
 - `omni->local_odom_speed_mvf[0]`, `omni->local_odom_speed_mvf[1]`
 - 同期バイトとCRCの検証結果
 - エラー情報
 - mouse quality
+
+受信レート[packets/s]と受信間隔[ms]は同じ時系列プロットの左右別の縦軸で表示します。4輪の駆動モーター回転数[rps]も時系列プロットに表示します。
 
 ### CLI 例
 

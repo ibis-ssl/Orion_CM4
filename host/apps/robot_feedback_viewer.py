@@ -12,25 +12,26 @@ import time
 
 from host.lib.feedback.packet import PACKET_SIZE, RobotFeedbackPacket
 from host.lib.feedback.receiver import (
-    DEFAULT_INTERFACE_IP,
     MACHINE_TYPES,
     RECEIVE_BUFFER_SIZE,
     decode_feedback_packet,
     multicast_endpoint,
     open_multicast_socket,
+    resolve_feedback_interface_ip,
 )
 
 try:
-    from PySide6.QtCore import QObject, QTimer, Qt, Signal
-    from PySide6.QtGui import QColor, QPainter, QPen
+    from PySide6.QtCore import QObject, QRect, QTimer, Qt, Signal
+    from PySide6.QtGui import QColor, QFontDatabase, QPainter, QPen
     from PySide6.QtWidgets import (
         QApplication,
         QComboBox,
-        QFormLayout,
         QGridLayout,
+        QGroupBox,
         QHBoxLayout,
         QLabel,
         QPushButton,
+        QScrollArea,
         QSpinBox,
         QVBoxLayout,
         QWidget,
@@ -42,7 +43,6 @@ except ImportError as exc:
 DEFAULT_MACHINE_NO = 10
 DEFAULT_HISTORY_SIZE = 300
 DEFAULT_RECEIVE_TIMEOUT = 1.0
-CONNECT_PROBE_PORT = 8000
 PLOT_BACKGROUND = QColor("#f7f7f2")
 PLOT_AXIS = QColor("#4a4f54")
 PLOT_GRID = QColor("#d4d6d0")
@@ -52,27 +52,30 @@ PLOT_COLORS = (
     QColor("#1f6fb2"),
     QColor("#8c6a00"),
 )
-
-
-def infer_interface_ip(machine_no: int) -> str:
-    target_ip = f"192.168.20.{100 + machine_no}"
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        sock.connect((target_ip, CONNECT_PROBE_PORT))
-        return sock.getsockname()[0]
-    except OSError:
-        return DEFAULT_INTERFACE_IP
-    finally:
-        sock.close()
+PLOT_LEGEND_NAMES = {
+    "mouse_global_vel_x100": "mouse x ×100",
+    "mouse_global_vel_y100": "mouse y ×100",
+    "local_odom_speed_mvf_x": "odom x",
+    "local_odom_speed_mvf_y": "odom y",
+}
+FIXED_FONT = QFontDatabase.systemFont(QFontDatabase.FixedFont)
 
 
 class PlotWidget(QWidget):
-    def __init__(self, title: str, labels: tuple[str, ...], history_size: int, y_range: tuple[float, float] | None = None):
+    def __init__(
+        self,
+        title: str,
+        labels: tuple[str, ...],
+        history_size: int,
+        y_range: tuple[float, float] | None = None,
+        secondary_labels: tuple[str, ...] = (),
+    ):
         super().__init__()
         self.title = title
         self.labels = labels
         self.history_size = history_size
         self.y_range = y_range
+        self.secondary_labels = secondary_labels
         self.series = {label: deque(maxlen=history_size) for label in labels}
         self.setMinimumHeight(170)
 
@@ -91,10 +94,11 @@ class PlotWidget(QWidget):
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
+        painter.setFont(FIXED_FONT)
         painter.fillRect(self.rect(), PLOT_BACKGROUND)
 
         margin_left = 54
-        margin_right = 12
+        margin_right = 56 if self.secondary_labels else 12
         margin_top = 28
         margin_bottom = 28
         plot_rect = self.rect().adjusted(margin_left, margin_top, -margin_right, -margin_bottom)
@@ -109,17 +113,11 @@ class PlotWidget(QWidget):
             painter.end()
             return
 
-        if self.y_range is None:
-            min_value = min(all_values)
-            max_value = max(all_values)
-            if min_value == max_value:
-                min_value -= 1.0
-                max_value += 1.0
-            padding = (max_value - min_value) * 0.08
-            min_value -= padding
-            max_value += padding
-        else:
-            min_value, max_value = self.y_range
+        primary_values = [value for label, values in self.series.items()
+                          if label not in self.secondary_labels for value in values]
+        min_value, max_value = self._range(primary_values, self.y_range)
+        secondary_values = [value for label in self.secondary_labels for value in self.series[label]]
+        secondary_range = self._range(secondary_values, None, zero_based=True) if secondary_values else None
 
         for i in range(1, 4):
             y = plot_rect.top() + int(plot_rect.height() * i / 4)
@@ -129,27 +127,50 @@ class PlotWidget(QWidget):
         painter.setPen(QPen(PLOT_AXIS, 1))
         painter.drawText(4, plot_rect.top() + 8, f"{max_value:.2f}")
         painter.drawText(4, plot_rect.bottom(), f"{min_value:.2f}")
+        if secondary_range is not None:
+            secondary_min, secondary_max = secondary_range
+            painter.setPen(QPen(PLOT_COLORS[1], 1))
+            painter.drawText(plot_rect.right() + 5, plot_rect.top() + 8, f"{secondary_max:.1f}")
+            painter.drawText(plot_rect.right() + 5, plot_rect.bottom(), f"{secondary_min:.1f}")
 
         for index, label in enumerate(self.labels):
             values = list(self.series[label])
             color = PLOT_COLORS[index % len(PLOT_COLORS)]
             painter.setPen(QPen(color, 2))
+            axis_min, axis_max = secondary_range if label in self.secondary_labels else (min_value, max_value)
 
             if len(values) >= 2:
                 last_x = plot_rect.left()
-                last_y = self._map_y(values[0], min_value, max_value, plot_rect)
+                last_y = self._map_y(values[0], axis_min, axis_max, plot_rect)
                 for value_index, value in enumerate(values[1:], start=1):
                     x = plot_rect.left() + int(plot_rect.width() * value_index / max(1, self.history_size - 1))
-                    y = self._map_y(value, min_value, max_value, plot_rect)
+                    y = self._map_y(value, axis_min, axis_max, plot_rect)
                     painter.drawLine(last_x, last_y, x, y)
                     last_x = x
                     last_y = y
 
-            legend_x = plot_rect.left() + 10 + index * 150
-            legend_y = self.height() - 8
-            painter.drawText(legend_x, legend_y, f"{label}={values[-1]:.2f}" if values else label)
+            legend_width = plot_rect.width() // len(self.labels)
+            legend_x = plot_rect.left() + 8 + index * legend_width
+            legend = PLOT_LEGEND_NAMES.get(label, label)
+            caption = f"{legend}={values[-1]:+9.2f}" if values else legend
+            painter.drawText(QRect(legend_x, self.height() - 24, legend_width - 12, 20),
+                             Qt.AlignLeft | Qt.AlignVCenter, caption)
 
         painter.end()
+
+    @staticmethod
+    def _range(values: list[float], fixed: tuple[float, float] | None, zero_based: bool = False) -> tuple[float, float]:
+        if fixed is not None:
+            return fixed
+        if zero_based:
+            return 0.0, max(20.0, max(values, default=0.0) * 1.1)
+        min_value = min(values, default=0.0)
+        max_value = max(values, default=0.0)
+        if min_value == max_value:
+            min_value -= 1.0
+            max_value += 1.0
+        padding = (max_value - min_value) * 0.08
+        return min_value - padding, max_value + padding
 
     @staticmethod
     def _map_y(value: float, min_value: float, max_value: float, plot_rect) -> int:
@@ -158,15 +179,16 @@ class PlotWidget(QWidget):
 
 
 class FeedbackSignals(QObject):
-    packet_ready = Signal(int, object)
+    packet_ready = Signal(int, object, float)
     status_ready = Signal(str)
 
 
 class FeedbackWindow(QWidget):
-    def __init__(self, machine_no: int, interface_ip: str, history_size: int, exit_after: float, machine_type: str):
+    def __init__(self, machine_no: int, interface_ip: str | None, history_size: int, exit_after: float, machine_type: str):
         super().__init__()
         self.machine_no = machine_no
-        self.interface_ip = interface_ip
+        self.interface_selection = interface_ip or "auto"
+        self.interface_ip = ""
         self.history_size = history_size
         self.exit_after = exit_after
         self.machine_type = machine_type
@@ -174,21 +196,28 @@ class FeedbackWindow(QWidget):
         self.connection_id = 0
         self.packet_count = 0
         self.packet_timestamps = deque()
+        self.last_packet_time: float | None = None
         self.signals = FeedbackSignals()
 
         self._setup_ui()
         self.signals.packet_ready.connect(self.on_packet_ready)
         self.signals.status_ready.connect(self.status_label.setText)
-        self.apply_connection(machine_no, interface_ip, machine_type)
+        self.apply_connection(machine_no, self.interface_selection, machine_type)
 
         if exit_after > 0:
             QTimer.singleShot(int(exit_after * 1000), self.close)
 
     def _setup_ui(self) -> None:
         self.setWindowTitle("Robot Feedback Viewer")
-        self.resize(980, 860)
+        self.resize(1080, 900)
 
-        root_layout = QVBoxLayout(self)
+        window_layout = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        root_layout = QVBoxLayout(content)
+        scroll.setWidget(content)
+        window_layout.addWidget(scroll)
 
         controls = QHBoxLayout()
         controls.addWidget(QLabel("機体番号"))
@@ -200,11 +229,10 @@ class FeedbackWindow(QWidget):
         controls.addWidget(QLabel("interface IP"))
         self.interface_combo = QComboBox()
         self.interface_combo.setEditable(True)
-        inferred_ip = infer_interface_ip(self.machine_no)
-        for value in (self.interface_ip, inferred_ip, DEFAULT_INTERFACE_IP):
+        for value in ("auto", self.interface_selection):
             if value and self.interface_combo.findText(value) < 0:
                 self.interface_combo.addItem(value)
-        self.interface_combo.setCurrentText(self.interface_ip)
+        self.interface_combo.setCurrentText(self.interface_selection)
         controls.addWidget(self.interface_combo)
 
         controls.addWidget(QLabel("形式"))
@@ -235,20 +263,45 @@ class FeedbackWindow(QWidget):
             "yaw",
             "diff_angle",
             "position",
-            "motor_current",
             "error",
             "mouse_quality",
             "mouse_global_vel",
             "local_odom_speed_mvf",
             "packet_count",
             "packet_rate",
+            "packet_interval",
         )
         for index, name in enumerate(value_names):
             value_layout.addWidget(QLabel(name), index // 2, (index % 2) * 2)
             label = QLabel("-")
+            label.setFont(FIXED_FONT)
+            label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            label.setFixedWidth(270)
             self.value_labels[name] = label
             value_layout.addWidget(label, index // 2, (index % 2) * 2 + 1)
         root_layout.addLayout(value_layout)
+
+        motor_group = QGroupBox("モーター")
+        motor_layout = QGridLayout(motor_group)
+        headers = ("輪", "回転数 [rps]", "電流 [A]", "駆動温度 [°C]", "操舵角 [rad]", "操舵温度 [°C]")
+        for column, title in enumerate(headers):
+            header = QLabel(title)
+            header.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            motor_layout.addWidget(header, 0, column)
+        self.motor_labels: list[dict[str, QLabel]] = []
+        motor_columns = ("speed", "current", "temperature", "steering_angle", "steering_temperature")
+        for wheel in range(4):
+            motor_layout.addWidget(QLabel(f"{wheel}"), wheel + 1, 0)
+            labels = {}
+            for column, name in enumerate(motor_columns, start=1):
+                label = QLabel("-")
+                label.setFont(FIXED_FONT)
+                label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                label.setFixedWidth(115)
+                motor_layout.addWidget(label, wheel + 1, column)
+                labels[name] = label
+            self.motor_labels.append(labels)
+        root_layout.addWidget(motor_group)
 
         self.plots = (
             PlotWidget("Power", ("battery", "capacitor/10"), self.history_size, y_range=(0.0, 40.0)),
@@ -257,16 +310,19 @@ class FeedbackWindow(QWidget):
             PlotWidget("Motor Current", ("motor_0", "motor_1", "motor_2", "motor_3"), self.history_size, y_range=(0.0, 3.0)),
             PlotWidget("Velocity X", ("mouse_global_vel_x100", "local_odom_speed_mvf_x"), self.history_size, y_range=(-3.0, 3.0)),
             PlotWidget("Velocity Y", ("mouse_global_vel_y100", "local_odom_speed_mvf_y"), self.history_size, y_range=(-3.0, 3.0)),
-            PlotWidget("Receive Rate", ("packets/s",), self.history_size, y_range=(0.0, 150.0)),
+            PlotWidget("Receive (left: packets/s, right: ms)", ("packets/s", "interval ms"),
+                       self.history_size, y_range=(0.0, 150.0), secondary_labels=("interval ms",)),
+            PlotWidget("Motor Speed [rps]", ("speed_0", "speed_1", "speed_2", "speed_3"), self.history_size),
         )
         plot_layout = QGridLayout()
         plot_layout.addWidget(self.plots[0], 0, 0)
         plot_layout.addWidget(self.plots[6], 0, 1)
         plot_layout.addWidget(self.plots[1], 1, 0)
         plot_layout.addWidget(self.plots[2], 1, 1)
-        plot_layout.addWidget(self.plots[3], 2, 0, 1, 2)
-        plot_layout.addWidget(self.plots[4], 3, 0)
-        plot_layout.addWidget(self.plots[5], 3, 1)
+        plot_layout.addWidget(self.plots[7], 2, 0, 1, 2)
+        plot_layout.addWidget(self.plots[3], 3, 0, 1, 2)
+        plot_layout.addWidget(self.plots[4], 4, 0)
+        plot_layout.addWidget(self.plots[5], 4, 1)
         root_layout.addLayout(plot_layout)
 
     def closeEvent(self, event) -> None:
@@ -276,27 +332,33 @@ class FeedbackWindow(QWidget):
     def on_reconnect(self) -> None:
         self.apply_connection(
             self.machine_spin.value(),
-            self.interface_combo.currentText().strip() or DEFAULT_INTERFACE_IP,
+            self.interface_combo.currentText().strip() or "auto",
             self.machine_type_combo.currentText(),
         )
 
-    def apply_connection(self, machine_no: int, interface_ip: str, machine_type: str) -> None:
+    def apply_connection(self, machine_no: int, interface_selection: str, machine_type: str) -> None:
         self.connection_id += 1
         connection_id = self.connection_id
         self.machine_no = machine_no
-        self.interface_ip = interface_ip
+        self.interface_selection = interface_selection
+        self.interface_ip = resolve_feedback_interface_ip(machine_no, interface_selection)
         self.machine_type = machine_type
         self.packet_count = 0
         self.packet_timestamps.clear()
+        self.last_packet_time = None
         for plot in self.plots:
             plot.clear()
         for label in self.value_labels.values():
             label.setText("-")
+        for motor in self.motor_labels:
+            for label in motor.values():
+                label.setText("-")
 
         group, port = multicast_endpoint(machine_no)
-        self.connection_label.setText(f"機体{machine_no}: {group}:{port} / interface {interface_ip} / {machine_type}")
+        interface_desc = f"{self.interface_ip} (auto)" if interface_selection.lower() == "auto" else self.interface_ip
+        self.connection_label.setText(f"機体{machine_no}: {group}:{port} / interface {interface_desc} / {machine_type}")
         self.signals.status_ready.emit("connecting")
-        threading.Thread(target=self.receive_loop, args=(connection_id, machine_no, interface_ip, machine_type), daemon=True).start()
+        threading.Thread(target=self.receive_loop, args=(connection_id, machine_no, self.interface_ip, machine_type), daemon=True).start()
 
     def receive_loop(self, connection_id: int, machine_no: int, interface_ip: str, machine_type: str) -> None:
         group, port = multicast_endpoint(machine_no)
@@ -322,7 +384,7 @@ class FeedbackWindow(QWidget):
                 except ValueError as exc:
                     self.signals.status_ready.emit(f"decode error: {exc}")
                     continue
-                self.signals.packet_ready.emit(connection_id, packet)
+                self.signals.packet_ready.emit(connection_id, packet, time.monotonic())
         except socket.timeout:
             if self.running and connection_id == self.connection_id:
                 self.signals.status_ready.emit("receive timeout")
@@ -333,40 +395,53 @@ class FeedbackWindow(QWidget):
             if sock is not None:
                 sock.close()
 
-    def on_packet_ready(self, connection_id: int, packet: RobotFeedbackPacket) -> None:
+    def on_packet_ready(self, connection_id: int, packet: RobotFeedbackPacket, received_at: float) -> None:
         if connection_id != self.connection_id:
             return
 
         self.packet_count += 1
-        now = time.monotonic()
+        now = received_at
+        interval_ms = (now - self.last_packet_time) * 1000.0 if self.last_packet_time is not None else None
+        self.last_packet_time = now
         self.packet_timestamps.append(now)
         while self.packet_timestamps and self.packet_timestamps[0] < now - 1.0:
             self.packet_timestamps.popleft()
         packet_rate = len(self.packet_timestamps)
 
-        self.value_labels["counter"].setText(str(packet.check_counter))
-        self.value_labels["sync"].setText(str(packet.is_sync_valid))
-        self.value_labels["crc"].setText(str(packet.is_crc_valid))
-        self.value_labels["battery"].setText(f"{packet.battery_voltage:.3f}")
-        self.value_labels["capacitor"].setText(f"{packet.capacitor_boost_voltage:.3f}")
-        self.value_labels["yaw"].setText(f"{packet.imu_yaw_deg:.3f}")
-        self.value_labels["diff_angle"].setText(f"{packet.diff_angle_deg:.3f}")
+        self.value_labels["counter"].setText(f"{packet.check_counter:3d}")
+        self.value_labels["sync"].setText("OK" if packet.is_sync_valid else "NG")
+        self.value_labels["crc"].setText("OK" if packet.is_crc_valid else "NG")
+        self.value_labels["battery"].setText(f"{packet.battery_voltage:+9.3f} V")
+        self.value_labels["capacitor"].setText(f"{packet.capacitor_boost_voltage:+9.3f} V")
+        self.value_labels["yaw"].setText(f"{packet.imu_yaw_deg:+9.3f} deg")
+        self.value_labels["diff_angle"].setText(f"{packet.diff_angle_deg:+9.3f} deg")
         self.value_labels["position"].setText(
-            f"x={packet.vision_based_position_x:.3f}, y={packet.vision_based_position_y:.3f}"
+            f"x={packet.vision_based_position_x:+9.3f} y={packet.vision_based_position_y:+9.3f}"
         )
-        self.value_labels["motor_current"].setText(", ".join(f"{value:.1f}" for value in packet.motor_current))
         self.value_labels["error"].setText(
-            f"id={packet.current_error_id}, info={packet.current_error_info}, value={packet.current_error_value:.3f}"
+            f"id={packet.current_error_id:5d} info={packet.current_error_info:5d} value={packet.current_error_value:+10.3f}"
         )
-        self.value_labels["mouse_quality"].setText(f"{packet.mouse_quality:.1f}")
+        self.value_labels["mouse_quality"].setText(f"{packet.mouse_quality:+9.1f}")
         self.value_labels["mouse_global_vel"].setText(
-            f"x={packet.mouse_global_vel_x * 100.0:.3f}, y={packet.mouse_global_vel_y * 100.0:.3f}"
+            f"x={packet.mouse_global_vel_x * 100.0:+9.3f} y={packet.mouse_global_vel_y * 100.0:+9.3f}"
         )
         self.value_labels["local_odom_speed_mvf"].setText(
-            f"x={packet.local_odom_speed_mvf_x:.3f}, y={packet.local_odom_speed_mvf_y:.3f}"
+            f"x={packet.local_odom_speed_mvf_x:+9.3f} y={packet.local_odom_speed_mvf_y:+9.3f}"
         )
-        self.value_labels["packet_count"].setText(str(self.packet_count))
-        self.value_labels["packet_rate"].setText(f"{packet_rate:.0f} packets/s")
+        self.value_labels["packet_count"].setText(f"{self.packet_count:8d}")
+        self.value_labels["packet_rate"].setText(f"{packet_rate:6d} packets/s")
+        interval_text = f"{interval_ms:8.2f} ms" if interval_ms is not None else "    --.-- ms"
+        self.value_labels["packet_interval"].setText(interval_text)
+
+        speeds = (packet.motor_feedback_0, packet.motor_feedback_1,
+                  packet.motor_feedback_2, packet.motor_feedback_3)
+        currents = packet.motor_current
+        for wheel, labels in enumerate(self.motor_labels):
+            labels["speed"].setText(f"{speeds[wheel]:+9.2f}")
+            labels["current"].setText(f"{currents[wheel]:6.1f}")
+            labels["temperature"].setText(f"{packet.temp_motor[wheel]:3d}")
+            labels["steering_angle"].setText(f"{packet.steering_angle[wheel]:+9.3f}")
+            labels["steering_temperature"].setText(f"{packet.temp_steering_motor[wheel]:3d}")
         self.status_label.setText(f"receiving {packet.machine_type}")
 
         self.plots[0].append(
@@ -376,7 +451,8 @@ class FeedbackWindow(QWidget):
         self.plots[2].append(
             {"position_x": packet.vision_based_position_x, "position_y": packet.vision_based_position_y}
         )
-        self.plots[3].append({f"motor_{index}": value for index, value in enumerate(packet.motor_current)})
+        self.plots[3].append({f"motor_{index}": value for index, value in enumerate(currents)})
+        self.plots[7].append({f"speed_{index}": value for index, value in enumerate(speeds)})
         self.plots[4].append(
             {
                 "mouse_global_vel_x100": packet.mouse_global_vel_x * 100.0,
@@ -389,7 +465,8 @@ class FeedbackWindow(QWidget):
                 "local_odom_speed_mvf_y": packet.local_odom_speed_mvf_y,
             }
         )
-        self.plots[6].append({"packets/s": packet_rate})
+        if interval_ms is not None:
+            self.plots[6].append({"packets/s": packet_rate, "interval ms": interval_ms})
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -405,10 +482,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args, qt_args = parser.parse_known_args()
-    interface_ip = args.interface_ip or infer_interface_ip(args.machine_no)
 
     app = QApplication([sys.argv[0], *qt_args])
-    window = FeedbackWindow(args.machine_no, interface_ip, args.history_size, args.exit_after, args.machine_type)
+    window = FeedbackWindow(args.machine_no, args.interface_ip, args.history_size, args.exit_after, args.machine_type)
     window.show()
     sys.exit(app.exec())
 
