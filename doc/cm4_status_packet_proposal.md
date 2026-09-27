@@ -4,7 +4,7 @@
 
 craneが制御に使う位置・グローバル速度・ボール検出・yawと、監視に使う温度・電圧・電流・エラーを、CM4が固定の形式に変換して送る。OrionMainのフィードバック内容や4WS MainのSPI応答を変更しても、craneとメインPCは機体側の配置を解釈しない。機体ごとの変換はCM4の受信アダプタに閉じ込める。
 
-この文書は**仮仕様**であり、パケット生成・crane側の受信・メインPC側の受信は未実装。OrionMainから受ける128バイトの内容と現在の診断用multicastは[フィードバックパケット](feedback_packet.md)に記す。
+この文書は**仮仕様**であり、共通パケット生成・crane側の受信・メインPCの共通監視ツール・4WS Mainの生データ配信は未実装。OrionMainの生フィードバック形式は[OrionMainフィードバックパケット](feedback_packet.md)、4WS MainのSPI応答案は[4WS MainとのSPI通信案](4ws_spi_packet_proposal.md)に記す。
 
 ## 送信データのブロック図
 
@@ -20,8 +20,11 @@ flowchart LR
         common["共通状態<br/>位置・グローバル速度・yaw・ボールセンサ・status<br/>値の単位を統一"]
         serialize["共通パケット生成<br/>version 1 / 55B<br/>機体タイプ・ハードウェア仕様フラグを付与"]
         multicast["機体別UDP multicast<br/>224.5.20.(100+N):50200+N"]
+        raw_multicast["生フィードバック multicast<br/>224.5.20.(100+N):50100+N"]
         orion_adapter --> common
         ws_adapter -.-> common
+        orion_adapter -->|"128B UARTフレーム"| raw_multicast
+        ws_adapter -.->|"128B SPI状態応答案"| raw_multicast
         common --> serialize
         hw --> serialize
         serialize --> multicast
@@ -30,17 +33,30 @@ flowchart LR
     orion_main --> orion_adapter
     ws -.-> ws_adapter
     multicast --> crane["crane受信器<br/>位置・グローバル速度・yaw・ボール検出を制御へ<br/>statusを監視へ"]
-    multicast --> pc["メインPCの監視ツール<br/>共通statusを表示・記録"]
-    orion_adapter --> raw["OrionMain生フィードバックの診断配信<br/>既存の50100+N"]
+    multicast --> pc["メインPCの共通監視ツール<br/>共通statusを表示・記録"]
+    raw_multicast --> orion_debug["OrionMain用デバッグツール<br/>UART生フィードバックを解析"]
+    raw_multicast -.-> ws_debug["4WS Main用デバッグツール（予定）<br/>SPI生フィードバックを解析"]
 ```
 
 ローカルカメラのボール検出はCM4内部のmode 7・8制御で使う別入力である。このパケットの`ball_detect`は**機体のボールセンサ**を表し、カメラの検出結果とは混ぜない。
 `hardware_flags`のカメラ搭載ビットはハードウェア構成を表し、カメラの稼働状態やボール検出状態では変化しない。
 OrionMainのUARTは現在の受信処理1か所で読み、検証後に診断配信と共通状態への変換を分岐させる。
 
+## CM4からの送信系統とPCツール
+
+| 送信内容 | multicast先 | 受信側 | 実装状況と変更の扱い |
+| --- | --- | --- | --- |
+| 共通状態（55バイト） | `224.5.20.(100+N):50200+N` | crane、Orion/4WS共通のメインPC監視ツール | 未実装。機体側の変更はCM4の変換で吸収し、共通形式を安定させる |
+| OrionMainの生フィードバック | `224.5.20.(100+N):50100+N` | OrionMain用デバッグツール | 配信・既存ツールあり。マイコン側の変更に追従する |
+| 4WS Mainの生フィードバック | `224.5.20.(100+N):50100+N` | 4WS Main用デバッグツール | 未実装。SPI応答の変更に追従する |
+
+1台のCM4に接続するMainは設定で1種類に確定するため、生フィードバックは機体タイプごとにポートを増やさない。OrionMainでは検証済みのUART 128バイトフレームをそのまま配信する。4WS Mainでは[状態通知](4ws_spi_packet_proposal.md#spiフレーム案)のSPI応答128バイト全体を、ヘッダ・payload・padding・CRCを含めて配信する案とする。CM4は転送前にSPIフレームの種別・長さ・CRCを検査し、共通状態への変換と生データ配信へ分岐する。能力照会応答は生フィードバック配信の対象に含めない。
+
+メインPCの共通監視ツールは生フィードバックを購読しない。現在の`robot-feedback-receiver`・`robot-feedback-viewer`・`robot-feedback-rerun`はOrionMainの生データを扱うデバッグツールとし、4WS Mainには専用の受信・解析ツールを用意する。4WS MainのSPI状態応答とデバッグツールは未実装である。共通パケット自体の意味を変える場合だけ、`version`を更新して共通監視ツールとcraneの受信処理を揃える。
+
 ## 通信と受信規則
 
-- 機体番号を`N`とし、送信先は`224.5.20.(100+N):50200+N`とする。craneとメインPCは同じグループへ参加する。既存のOrionMain生フィードバック`50100+N`とはポートを分ける。
+- 機体番号を`N`とし、送信先は`224.5.20.(100+N):50200+N`とする。craneとメインPCの共通監視ツールは同じグループへ参加する。Mainの生フィードバック`50100+N`とはポートを分ける。
 - 有効な機体側の状態を1件受けるごとに1件送る。入力が途絶えた場合、最後の値を新しいパケットとして繰り返さない。受信側は到着時刻を基準に100 msを超えた状態を制御に使わない。送信周期は機体側の状態更新に従い、固定周期を要求しない。
 - UDPの送信先ポートでこのパケットを識別する。受信側は56バイト以上のバッファを用意し、`recvfrom`等で得たデータ長が55バイトであること、`version`が1であること、`machine_type`が定義済みの値であることを確認する。機体番号は参加したmulticastグループとポートで識別する。送信側はUDPチェックサムを有効にする。
 - ペイロード内にmagic、長さ、機体番号、独自CRC、連番、送信時刻、予約バイトは設けない。ポート・受信長・UDPチェックサムで確認できる情報を重複させず、鮮度は受信側の到着時刻で判定する。
@@ -88,8 +104,8 @@ OrionMain受信アダプタでは、`vision_based_position_x/y`を位置、`glob
 
 | 変更内容 | 更新する範囲 |
 | --- | --- |
-| OrionMainのフィードバック配置や物理単位 | CM4のOrionMain受信アダプタ |
-| 4WS MainのSPI状態応答 | CM4の4WS受信アダプタ |
+| OrionMainのフィードバック配置や物理単位 | CM4のOrionMain受信アダプタとOrionMain用デバッグツール |
+| 4WS MainのSPI状態応答 | CM4の4WS受信アダプタと4WS Main用デバッグツール |
 | 共通パケットの意味・配置 | CM4の送信処理とcrane・メインPCの受信処理。`version`を更新する |
 
-生データを詳しく見たいメインPCの診断ツールは既存の生フィードバックを使用する。craneの制御・監視は共通パケットだけに依存させる。
+craneの制御・監視とメインPCの共通監視ツールは共通パケットだけに依存させる。

@@ -150,9 +150,10 @@ OrionMainはUART接続のOrion用Main、4WS MainはSPI接続を予定する4WS�
 - CM4 制御 API: `http://192.168.20.(100 + N):8000`
 - カメラ API: `http://192.168.20.(100 + N):8001`
 - カメラ座標 multicast: `224.5.10.(100 + N):5100 + N`
-- robot feedback multicast: `224.5.20.(100 + N):50000 + (100 + N)`
+- Mainの生フィードバック multicast: `224.5.20.(100 + N):50100 + N`（OrionMainは運用中、4WS Mainは設計案）
+- CM4共通状態 multicast: `224.5.20.(100 + N):50200 + N`（設計案）
 
-CM4からcrane・メインPCへ送る共通状態パケットを別のmulticastポート`50200 + N`に追加する案を定義した。CM4で機体側の状態を位置・グローバル速度・ボールセンサ検出・yaw・statusへ変換し、機体タイプ（`OrionMain=1`、`4WS=2`）とCM4のローカルカメラ搭載フラグを付けて送る。OrionMain側のフィードバック配置の変更をcraneへ波及させない。パケットと送信経路は[CM4共通状態パケット案](cm4_status_packet_proposal.md)を参照。送信・受信とも未実装。
+Mainの生フィードバックは機体別の`50100 + N`へ配信し、MainごとのPCデバッグツールで解析する。OrionMainの配信とデバッグツールは実装済みで、4WS Main向けは設計案である。craneとOrion/4WS共通のメインPC監視ツールには、CM4が位置・グローバル速度・ボールセンサ検出・yaw・statusへ変換し、機体タイプ（`OrionMain=1`、`4WS=2`）とCM4のローカルカメラ搭載フラグを付けた共通状態パケットを`50200 + N`へ送る案とする。マイコン側のフィードバック配置の変更はCM4の変換と機体別デバッグツールへ反映し、共通監視ツールには波及させない。[送信経路と共通状態パケット案](cm4_status_packet_proposal.md)を参照。共通送信・受信と4WS生フィードバック配信は未実装。
 
 Orion（4輪オムニ）と4WS（4輪駆動・4輪操舵）はmode 3・4を共通で使う方針とし、各輪目標には4WS専用のmode 5、Orion専用のmode 6を定義した。さらに両機体共通で、CM4のローカルカメラを使うボール基準の相対速度mode 7と相対位置mode 8を定義した。有効なボール観測がないときは、カメラ非稼働も含めてそれぞれmode 3・4相当の指令へ切り替える。mode 4はCM4でmode 3・5・6のいずれかに変換し、OrionMainへ直接送らない。[制御モード互換性](control_mode_compatibility.md)に機体別の対応とmode 6～8の配置、[4WS MainとのSPI通信案](4ws_spi_packet_proposal.md)にmode 5の配置とSPIの仮仕様を記す。mode 5～8と4WS向け経路は未実装。
 
