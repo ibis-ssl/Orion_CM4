@@ -8,7 +8,7 @@
   - STM32 から UART で受信した 128 バイトの状態パケットを UDP multicast へ転送します。
     あわせて同一 CM4 上の `ai_cmd_v2.out` へ loopback unicast でも渡します。
 - `cm4/bridge/forward_ai_cmd_v2.cpp`
-  - loopback unicast で受けた位置を使って位置制御ループを閉じます。更新後の配置はbyte 100..107です。
+  - loopback unicast で受けた位置を使って位置制御ループを閉じます。更新後の配置はbyte 112..119です。
 - `host/lib/feedback/packet.py`
   - 128 バイトのフィードバックパケットを Python でデコードします。
 - `host/lib/feedback/receiver.py`
@@ -31,7 +31,7 @@ STM32
 ## loopback unicast（位置制御ループ用）
 
 `ai_cmd_v2.out` は mode 4 を受けたとき位置制御ループを閉じるため、ロボットの現在位置
-（更新後の配置はbyte 100..107）を必要とします。しかし **`/dev/serial0` の読み手は増やしません**。
+（更新後の配置はbyte 112..119）を必要とします。しかし **`/dev/serial0` の読み手は増やしません**。
 2 プロセスで読むと取り合いになるためです。
 
 `forward_robot_feedback.cpp` が multicast 再配信と同時に
@@ -131,24 +131,24 @@ byte 3 は指令の `check_counter` の反射です。mode 4 の位置制御経�
 | `88..91` | `tx_value_array[10]`: `local_odom_speed_mvf_x` | little-endian IEEE754 float |
 | `92..95` | `tx_value_array[11]`: `local_odom_speed_mvf_y` | little-endian IEEE754 float |
 | `96..99` | `tx_value_array[12]`: `local_odom_speed_mvf_w` | little-endian IEEE754 float |
+| `100..107` | `steering_angle[4]` | 各2バイト、ステア現在角度 [rad] |
+| `108..111` | `temp_steering_motor[4]` | 各1バイト、ステアモーター温度 |
+
+`steering_angle[0..3]`は輪番号順に各2バイトを上位バイトから格納します。
+符号化範囲は±10π radで、[4WS指令](4ws_spi_packet_proposal.md)の操舵角と同じ2バイト表現です。
+`temp_steering_motor[0..3]`の輪番号も操舵角と対応させます。
 
 #### 制御
 
 | バイト | 項目 | 形式 |
 | --- | --- | --- |
-| `100..103` | `vision_based_position_x` | little-endian IEEE754 float |
-| `104..107` | `vision_based_position_y` | little-endian IEEE754 float |
-| `108..111` | `global_odom_speed_x` | little-endian IEEE754 float |
-| `112..115` | `global_odom_speed_y` | little-endian IEEE754 float |
+| `112..115` | `vision_based_position_x` | little-endian IEEE754 float |
+| `116..119` | `vision_based_position_y` | little-endian IEEE754 float |
+| `120..123` | `global_odom_speed_x` | little-endian IEEE754 float |
+| `124..127` | `global_odom_speed_y` | little-endian IEEE754 float |
 
-#### 未定義・予約領域
-
-| バイト | 取り扱い |
-| --- | --- |
-| `116..119` | 未定義。受信側は制御に使用しない。 |
-| `120..127` | 予約領域。 |
-
-FWゲートウェイ応答を載せる場合はbyte 112..126を応答データとして使います。この間は、重なる`global_odom_speed_y`・未定義領域・予約領域の値を通常の状態値として解釈しません。
+byte 4..127はすべて上表のフィールドに割り当てます。
+FWゲートウェイ応答をbyte 112..126に載せる間は制御用の位置・速度フィールドと重なるため、受信側はその値を位置・速度として解釈しません。
 
 CM4のローカルカメラ情報は、このfeedbackパケットとは別の経路で受けます。形式は[カメラ](camera.md)を参照してください。
 この節は更新後のパケット仕様を示します。送信側とホスト側の実装変更は別作業です。
@@ -240,23 +240,23 @@ GUI フロントエンドや Rerun には依存しないため、通信とパー
 `framework` の `simulator-cli` も128バイト形式を使います。CM4のCRC検証を通すには、
 シミュレータ側もbyte 3..127からCRC-8/ATMを計算してbyte 2に入れる必要があります。
 このリポジトリ内のシミュレータ用テストフレームはCRCを生成します。
-更新後の仕様では、位置制御にbyte 100..107の位置を使用します。
+更新後の仕様では、位置制御にbyte 112..119の位置を使用します。
 byte 13..16は度単位の`imu_yaw_deg`、byte 4は`tx_cycle_count`です。
 `framework`・`cm4_sim`・`ai_cmd_v2.out`の送受信位置も、この配置への更新が必要です。
 
 CRC付きのシミュレータ出力は `host/lib/feedback/packet.py` で復号でき、
 `robot-feedback-viewer` などのツールで表示できます。
 
-### シミュレータの速度フィールド（byte 108..115）
+### シミュレータの速度フィールド（byte 120..127）
 
 シミュレータの速度フィールドは `RadioResponse` 由来のキャッシュから作られ、
 `RadioResponse` は**指令が届いたときにしか生成されません**。したがって指令が
 落ちている間（経路劣化によるロス、`vision_global_pos` の 0.5 m 照合ゲートによる
-破棄）は、**同じパケットの中で位置（byte 100/104、毎周期 vision から）は新鮮なのに、
-速度（byte 108/112）は破棄直前の値で凍ります**。ロボットが実際に停止したあとも
+破棄）は、**同じパケットの中で位置（byte 112/116、毎周期 vision から）は新鮮なのに、
+速度（byte 120/124）は破棄直前の値で凍ります**。ロボットが実際に停止したあとも
 停止前の速度を返し続けます。
 
-位置制御が参照するのは **byte 100..107 の位置**なので制御には
+位置制御が参照するのは **byte 112..119 の位置**なので制御には
 影響しません。**騙されるのは速度を見る診断だけ**です。feedback の速度を見て
 「動いていないのに速度が出ている」と読んだら、まず指令が届いているかを疑って
 ください。
