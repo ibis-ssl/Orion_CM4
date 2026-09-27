@@ -1,7 +1,7 @@
 ﻿# OrionMainフィードバックパケット
 
 このドキュメントは、OrionMain（STM32G474）からCM4を経由してホストPCへ送るフィードバックパケットの責務とレイアウトをまとめます。
-craneの制御・監視とメインPCの共通監視ツール向けの項目は、[CM4共通状態パケット案](cm4_status_packet_proposal.md)に分けて定義します。この生フィードバックを扱うホスト側ツールはOrionMain専用のデバッグツールです。
+craneの制御・監視とメインPCの共通監視ツール向けの項目は、[CM4共通状態パケット案](cm4_status_packet_proposal.md)に分けて定義します。この生フィードバックは、Orion/4WS両対応デバッグツールのOrionMain用デコーダで扱います。
 
 ## 対象ファイル
 
@@ -16,8 +16,6 @@ craneの制御・監視とメインPCの共通監視ツール向けの項目は�
   - UDP multicast を受信し、デコード結果を標準出力へ出します。
 - `host/apps/robot_feedback_viewer.py`
   - 受信・パース結果を Qt GUI で時系列グラフ表示します。
-- `host/apps/robot_feedback_rerun.py`
-  - デコード済みの robot feedback を `rerun-sdk` で時系列表示します。
 
 ## 通信経路
 
@@ -167,7 +165,7 @@ CM4のローカルカメラ情報は、このfeedbackパケットとは別の経
 ## host/lib/feedback/receiver.py
 
 `host/lib/feedback/receiver.py` は robot feedback の UDP multicast を受信し、標準出力へデコード結果を出します。
-GUI フロントエンドや Rerun には依存しないため、通信とパースだけを確認する用途で使います。
+GUIフロントエンドには依存しないため、通信とパースだけを確認する用途で使います。
 
 ### 出力する主な値
 
@@ -192,7 +190,7 @@ GUI フロントエンドや Rerun には依存しないため、通信とパー
 
 ## host/apps/robot_feedback_viewer.py
 
-`host/apps/robot_feedback_viewer.py` は robot feedback を Qt GUI で確認するためのフロントエンドです。
+`host/apps/robot_feedback_viewer.py` はOrionMainと4WS Mainの生フィードバックをQt GUIで確認するフロントエンドです。この節ではOrionMainの表示項目を示します。
 受信・パースの責務は `host/lib/feedback/receiver.py` と `host/lib/feedback/packet.py` に置き、GUI 側では現在値と時系列グラフの表示だけを行います。
 
 ### 表示する主な値
@@ -212,29 +210,6 @@ GUI フロントエンドや Rerun には依存しないため、通信とパー
   - `uv run robot-feedback-viewer --machine-no 10`
 - interface IP を明示して表示
   - `uv run robot-feedback-viewer --machine-no 10 --interface-ip 192.168.20.200`
-
-## host/apps/robot_feedback_rerun.py
-
-`host/apps/robot_feedback_rerun.py` は robot feedback を Rerun に記録します。
-通信とパースだけを確認したい場合は `host/lib/feedback/receiver.py` を使います。
-
-### 記録する主な値
-
-- 電圧
-- 姿勢
-- エラー情報
-- モーター電流
-- 温度
-- `tx_value_array`
-
-### CLI 例
-
-- 3番機体を表示
-  - `uv run robot-feedback-rerun --machine-no 3`
-- 10 パケット受信して終了
-  - `uv run robot-feedback-rerun --machine-no 3 --max-packets 10`
-- 5 秒だけ待って受信が無ければ終了
-  - `uv run robot-feedback-rerun --machine-no 3 --max-packets 1 --receive-timeout 5`
 
 ## シミュレータとの一致
 

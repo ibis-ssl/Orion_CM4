@@ -1,12 +1,13 @@
-# このファイルは robot feedback 受信 CLI のエントリポイントを担当する。
-# multicast 受信とデコードの共通処理は host.lib.feedback に置く。
+# このファイルはOrionMainと4WS Mainの生フィードバック受信CLIを担当する。
+# multicast受信と形式別デコードの共通処理はhost.lib.feedbackに置く。
 import argparse
 import json
 import socket
 
-from host.lib.feedback.packet import decode_robot_feedback_packet
 from host.lib.feedback.receiver import (
     DEFAULT_INTERFACE_IP,
+    MACHINE_TYPES,
+    decode_feedback_packet,
     iter_feedback_packets,
     multicast_endpoint,
     open_multicast_socket,
@@ -24,6 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-packets", type=int, default=0, help="stop after receiving this many packets")
     parser.add_argument("--receive-timeout", type=float, default=0.0, help="socket receive timeout in seconds")
     parser.add_argument("--json", action="store_true", help="print decoded packets as JSON lines")
+    parser.add_argument("--machine-type", choices=MACHINE_TYPES, default="auto", help="decoder (default: auto)")
     return parser
 
 
@@ -42,7 +44,7 @@ def main() -> None:
     print(f"listen multicast={group}:{port} interface={args.interface_ip}")
     try:
         for index, payload in enumerate(iter_feedback_packets(sock), start=1):
-            packet = decode_robot_feedback_packet(payload)
+            packet = decode_feedback_packet(payload, args.machine_type)
             if args.json:
                 print(json.dumps(packet_to_dict(packet), ensure_ascii=False, separators=(",", ":")))
             else:

@@ -1,20 +1,22 @@
-# このファイルは robot feedback の受信結果を Qt GUI で表示し、
-# 主要な時系列値をグラフにプロットするホスト PC 側ツールを担当する。
-# このファイルは host 側で robot feedback の受信結果を Qt GUI 表示する。
-# 現在値と時系列グラフを表示し、通信・デコード処理は host.lib.feedback.receiver に委譲する。
+# このファイルはOrionMainと4WS Mainの生フィードバックをQt GUIで表示する。
+# 機体別の現在値・時系列を示し、通信とデコードはhost.lib.feedbackに委譲する。
 from __future__ import annotations
 
 import argparse
 from collections import deque
+import math
 import socket
 import sys
 import threading
 import time
 
-from host.lib.feedback.packet import PACKET_SIZE, RobotFeedbackPacket, TX_VALUE_LABELS, decode_robot_feedback_packet
+from host.lib.feedback.packet import PACKET_SIZE, RobotFeedbackPacket, TX_VALUE_LABELS
+from host.lib.feedback.packet_4ws import FourWsFeedbackPacket
 from host.lib.feedback.receiver import (
     DEFAULT_INTERFACE_IP,
+    MACHINE_TYPES,
     RECEIVE_BUFFER_SIZE,
+    decode_feedback_packet,
     multicast_endpoint,
     open_multicast_socket,
 )
@@ -31,6 +33,7 @@ try:
         QLabel,
         QPushButton,
         QSpinBox,
+        QTabWidget,
         QVBoxLayout,
         QWidget,
     )
@@ -81,6 +84,8 @@ class PlotWidget(QWidget):
         self.update()
 
     def append(self, values: dict[str, float]) -> None:
+        if not all(math.isfinite(float(values[label])) for label in self.labels):
+            return
         for label in self.labels:
             self.series[label].append(float(values[label]))
         self.update()
@@ -160,12 +165,13 @@ class FeedbackSignals(QObject):
 
 
 class FeedbackWindow(QWidget):
-    def __init__(self, machine_no: int, interface_ip: str, history_size: int, exit_after: float):
+    def __init__(self, machine_no: int, interface_ip: str, history_size: int, exit_after: float, machine_type: str):
         super().__init__()
         self.machine_no = machine_no
         self.interface_ip = interface_ip
         self.history_size = history_size
         self.exit_after = exit_after
+        self.machine_type = machine_type
         self.running = True
         self.connection_id = 0
         self.packet_count = 0
@@ -175,7 +181,7 @@ class FeedbackWindow(QWidget):
         self._setup_ui()
         self.signals.packet_ready.connect(self.on_packet_ready)
         self.signals.status_ready.connect(self.status_label.setText)
-        self.apply_connection(machine_no, interface_ip)
+        self.apply_connection(machine_no, interface_ip, machine_type)
 
         if exit_after > 0:
             QTimer.singleShot(int(exit_after * 1000), self.close)
@@ -203,6 +209,12 @@ class FeedbackWindow(QWidget):
         self.interface_combo.setCurrentText(self.interface_ip)
         controls.addWidget(self.interface_combo)
 
+        controls.addWidget(QLabel("形式"))
+        self.machine_type_combo = QComboBox()
+        self.machine_type_combo.addItems(MACHINE_TYPES)
+        self.machine_type_combo.setCurrentText(self.machine_type)
+        controls.addWidget(self.machine_type_combo)
+
         reconnect_button = QPushButton("接続")
         reconnect_button.clicked.connect(self.on_reconnect)
         controls.addWidget(reconnect_button)
@@ -213,6 +225,12 @@ class FeedbackWindow(QWidget):
         root_layout.addWidget(self.connection_label)
         self.status_label = QLabel("waiting")
         root_layout.addWidget(self.status_label)
+
+        self.tabs = QTabWidget()
+        root_layout.addWidget(self.tabs)
+        orion_tab = QWidget()
+        orion_layout = QVBoxLayout(orion_tab)
+        self.tabs.addTab(orion_tab, "OrionMain")
 
         value_layout = QGridLayout()
         self.value_labels = {}
@@ -238,7 +256,7 @@ class FeedbackWindow(QWidget):
             label = QLabel("-")
             self.value_labels[name] = label
             value_layout.addWidget(label, index // 2, (index % 2) * 2 + 1)
-        root_layout.addLayout(value_layout)
+        orion_layout.addLayout(value_layout)
 
         self.plots = (
             PlotWidget("Power", ("battery", "capacitor/10"), self.history_size, y_range=(0.0, 40.0)),
@@ -257,31 +275,68 @@ class FeedbackWindow(QWidget):
         plot_layout.addWidget(self.plots[3], 2, 0, 1, 2)
         plot_layout.addWidget(self.plots[4], 3, 0)
         plot_layout.addWidget(self.plots[5], 3, 1)
-        root_layout.addLayout(plot_layout)
+        orion_layout.addLayout(plot_layout)
+
+        ws_tab = QWidget()
+        ws_layout = QVBoxLayout(ws_tab)
+        self.tabs.addTab(ws_tab, "4WS Main")
+        ws_value_layout = QGridLayout()
+        self.ws_value_labels = {}
+        ws_names = (
+            "version", "message_type", "sequence", "accepted_sequence", "main_state",
+            "error_summary", "uptime_ms", "payload_length", "header", "crc", "padding",
+            "wheel_speed_mps", "steering_angle_rad", "packet_count", "packet_rate", "payload_hex",
+        )
+        for index, name in enumerate(ws_names):
+            ws_value_layout.addWidget(QLabel(name), index // 2, (index % 2) * 2)
+            label = QLabel("-")
+            label.setWordWrap(name == "payload_hex")
+            self.ws_value_labels[name] = label
+            ws_value_layout.addWidget(label, index // 2, (index % 2) * 2 + 1)
+        ws_layout.addLayout(ws_value_layout)
+        self.ws_plots = (
+            PlotWidget("Wheel Speed [m/s]", tuple(f"wheel_{i}" for i in range(4)), self.history_size),
+            PlotWidget("Steering Angle [rad]", tuple(f"steer_{i}" for i in range(4)), self.history_size),
+            PlotWidget("Receive Rate", ("packets/s",), self.history_size, y_range=(0.0, 150.0)),
+        )
+        ws_plot_layout = QGridLayout()
+        ws_plot_layout.addWidget(self.ws_plots[0], 0, 0)
+        ws_plot_layout.addWidget(self.ws_plots[1], 0, 1)
+        ws_plot_layout.addWidget(self.ws_plots[2], 1, 0, 1, 2)
+        ws_layout.addLayout(ws_plot_layout)
 
     def closeEvent(self, event) -> None:
         self.running = False
         super().closeEvent(event)
 
     def on_reconnect(self) -> None:
-        self.apply_connection(self.machine_spin.value(), self.interface_combo.currentText().strip() or DEFAULT_INTERFACE_IP)
+        self.apply_connection(
+            self.machine_spin.value(),
+            self.interface_combo.currentText().strip() or DEFAULT_INTERFACE_IP,
+            self.machine_type_combo.currentText(),
+        )
 
-    def apply_connection(self, machine_no: int, interface_ip: str) -> None:
+    def apply_connection(self, machine_no: int, interface_ip: str, machine_type: str) -> None:
         self.connection_id += 1
         connection_id = self.connection_id
         self.machine_no = machine_no
         self.interface_ip = interface_ip
+        self.machine_type = machine_type
         self.packet_count = 0
         self.packet_timestamps.clear()
         for plot in self.plots:
             plot.clear()
+        for plot in self.ws_plots:
+            plot.clear()
+        for label in (*self.value_labels.values(), *self.ws_value_labels.values()):
+            label.setText("-")
 
         group, port = multicast_endpoint(machine_no)
-        self.connection_label.setText(f"機体{machine_no}: {group}:{port} / interface {interface_ip}")
+        self.connection_label.setText(f"機体{machine_no}: {group}:{port} / interface {interface_ip} / {machine_type}")
         self.signals.status_ready.emit("connecting")
-        threading.Thread(target=self.receive_loop, args=(connection_id, machine_no, interface_ip), daemon=True).start()
+        threading.Thread(target=self.receive_loop, args=(connection_id, machine_no, interface_ip, machine_type), daemon=True).start()
 
-    def receive_loop(self, connection_id: int, machine_no: int, interface_ip: str) -> None:
+    def receive_loop(self, connection_id: int, machine_no: int, interface_ip: str, machine_type: str) -> None:
         group, port = multicast_endpoint(machine_no)
         sock = None
         try:
@@ -300,7 +355,7 @@ class FeedbackWindow(QWidget):
                     continue
                 if not self.running or connection_id != self.connection_id:
                     break
-                packet = decode_robot_feedback_packet(payload)
+                packet = decode_feedback_packet(payload, machine_type)
                 self.signals.packet_ready.emit(connection_id, packet)
         except socket.timeout:
             if self.running and connection_id == self.connection_id:
@@ -312,7 +367,7 @@ class FeedbackWindow(QWidget):
             if sock is not None:
                 sock.close()
 
-    def on_packet_ready(self, connection_id: int, packet: RobotFeedbackPacket) -> None:
+    def on_packet_ready(self, connection_id: int, packet: RobotFeedbackPacket | FourWsFeedbackPacket) -> None:
         if connection_id != self.connection_id:
             return
 
@@ -322,6 +377,11 @@ class FeedbackWindow(QWidget):
         while self.packet_timestamps and self.packet_timestamps[0] < now - 1.0:
             self.packet_timestamps.popleft()
         packet_rate = len(self.packet_timestamps)
+        if isinstance(packet, FourWsFeedbackPacket):
+            self._show_4ws_packet(packet, packet_rate)
+            return
+
+        self.tabs.setCurrentIndex(0)
         tx_values = dict(zip(TX_VALUE_LABELS, packet.tx_value_array))
 
         self.value_labels["counter"].setText(str(packet.check_counter))
@@ -347,7 +407,7 @@ class FeedbackWindow(QWidget):
         )
         self.value_labels["packet_count"].setText(str(self.packet_count))
         self.value_labels["packet_rate"].setText(f"{packet_rate:.0f} packets/s")
-        self.status_label.setText("receiving")
+        self.status_label.setText("receiving OrionMain")
 
         self.plots[0].append(
             {"battery": packet.battery_voltage_bldc_right, "capacitor/10": packet.capacitor_boost_voltage / 10.0}
@@ -371,12 +431,49 @@ class FeedbackWindow(QWidget):
         )
         self.plots[6].append({"packets/s": packet_rate})
 
+    def _show_4ws_packet(self, packet: FourWsFeedbackPacket, packet_rate: int) -> None:
+        self.tabs.setCurrentIndex(1)
+        values = {
+            "version": str(packet.version),
+            "message_type": f"0x{packet.message_type:02X}",
+            "sequence": str(packet.sequence),
+            "accepted_sequence": str(packet.accepted_sequence) if packet.accepted_sequence is not None else "-",
+            "main_state": str(packet.main_state) if packet.main_state is not None else "-",
+            "error_summary": str(packet.error_summary) if packet.error_summary is not None else "-",
+            "uptime_ms": str(packet.uptime_ms) if packet.uptime_ms is not None else "-",
+            "payload_length": str(packet.payload_length),
+            "header": str(packet.is_header_valid),
+            "crc": str(packet.crc_valid),
+            "padding": str(packet.is_padding_zero),
+            "wheel_speed_mps": self._format_four_values(packet.wheel_speed_mps),
+            "steering_angle_rad": self._format_four_values(packet.steering_angle_rad),
+            "packet_count": str(self.packet_count),
+            "packet_rate": f"{packet_rate} packets/s",
+            "payload_hex": packet.payload.hex(" "),
+        }
+        for name, value in values.items():
+            self.ws_value_labels[name].setText(value)
+        self.status_label.setText("receiving 4WS Main")
+
+        if packet.wheel_speed_mps is not None and all(value is not None for value in packet.wheel_speed_mps):
+            self.ws_plots[0].append({f"wheel_{index}": value for index, value in enumerate(packet.wheel_speed_mps)})
+        if packet.steering_angle_rad is not None and all(value is not None for value in packet.steering_angle_rad):
+            self.ws_plots[1].append({f"steer_{index}": value for index, value in enumerate(packet.steering_angle_rad)})
+        self.ws_plots[2].append({"packets/s": packet_rate})
+
+    @staticmethod
+    def _format_four_values(values: tuple[float | None, ...] | None) -> str:
+        if values is None:
+            return "-"
+        return ", ".join("invalid" if value is None else f"{value:.3f}" for value in values)
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Qt viewer for robot feedback multicast packets")
     parser.add_argument("--machine-no", type=int, default=DEFAULT_MACHINE_NO)
     parser.add_argument("--interface-ip", default=None, help="local interface IP for multicast join")
     parser.add_argument("--history-size", type=int, default=DEFAULT_HISTORY_SIZE)
+    parser.add_argument("--machine-type", choices=MACHINE_TYPES, default="auto", help="decoder (default: auto)")
     parser.add_argument("--exit-after", type=float, default=0.0, help="close automatically after this many seconds")
     return parser
 
@@ -387,7 +484,7 @@ def main() -> None:
     interface_ip = args.interface_ip or infer_interface_ip(args.machine_no)
 
     app = QApplication([sys.argv[0], *qt_args])
-    window = FeedbackWindow(args.machine_no, interface_ip, args.history_size, args.exit_after)
+    window = FeedbackWindow(args.machine_no, interface_ip, args.history_size, args.exit_after, args.machine_type)
     window.show()
     sys.exit(app.exec())
 

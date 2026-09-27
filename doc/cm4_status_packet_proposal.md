@@ -34,8 +34,7 @@ flowchart LR
     ws -.-> ws_adapter
     multicast --> crane["crane受信器<br/>位置・グローバル速度・yaw・ボール検出を制御へ<br/>statusを監視へ"]
     multicast --> pc["メインPCの共通監視ツール<br/>共通statusを表示・記録"]
-    raw_multicast --> orion_debug["OrionMain用デバッグツール<br/>UART生フィードバックを解析"]
-    raw_multicast -.-> ws_debug["4WS Main用デバッグツール（予定）<br/>SPI生フィードバックを解析"]
+    raw_multicast --> debug["Orion/4WS両対応デバッグツール<br/>機体別の生フィードバックを解析"]
 ```
 
 ローカルカメラのボール検出はCM4内部のmode 7・8制御で使う別入力である。このパケットの`ball_detect`は**機体のボールセンサ**を表し、カメラの検出結果とは混ぜない。
@@ -47,12 +46,12 @@ OrionMainのUARTは現在の受信処理1か所で読み、検証後に診断配
 | 送信内容 | multicast先 | 受信側 | 実装状況と変更の扱い |
 | --- | --- | --- | --- |
 | 共通状態（55バイト） | `224.5.20.(100+N):50200+N` | crane、Orion/4WS共通のメインPC監視ツール | 未実装。機体側の変更はCM4の変換で吸収し、共通形式を安定させる |
-| OrionMainの生フィードバック | `224.5.20.(100+N):50100+N` | OrionMain用デバッグツール | 配信・既存ツールあり。マイコン側の変更に追従する |
-| 4WS Mainの生フィードバック | `224.5.20.(100+N):50100+N` | 4WS Main用デバッグツール | 未実装。SPI応答の変更に追従する |
+| OrionMainの生フィードバック | `224.5.20.(100+N):50100+N` | 両対応デバッグツール | 配信あり。OrionMain用デコーダがマイコン側の変更に追従する |
+| 4WS Mainの生フィードバック | `224.5.20.(100+N):50100+N` | 両対応デバッグツール | 配信は未実装。4WS用デコーダがSPI応答の変更に追従する |
 
 1台のCM4に接続するMainは設定で1種類に確定するため、生フィードバックは機体タイプごとにポートを増やさない。OrionMainでは検証済みのUART 128バイトフレームをそのまま配信する。4WS Mainでは[状態通知](4ws_spi_packet_proposal.md#spiフレーム案)のSPI応答128バイト全体を、ヘッダ・payload・padding・CRCを含めて配信する案とする。CM4は転送前にSPIフレームの種別・長さ・CRCを検査し、共通状態への変換と生データ配信へ分岐する。能力照会応答は生フィードバック配信の対象に含めない。
 
-メインPCの共通監視ツールは生フィードバックを購読しない。現在の`robot-feedback-receiver`・`robot-feedback-viewer`・`robot-feedback-rerun`はOrionMainの生データを扱うデバッグツールとし、4WS Mainには専用の受信・解析ツールを用意する。4WS MainのSPI状態応答とデバッグツールは未実装である。共通パケット自体の意味を変える場合だけ、`version`を更新して共通監視ツールとcraneの受信処理を揃える。
+メインPCの共通監視ツールは生フィードバックを購読しない。`robot-feedback-receiver`と`robot-feedback-viewer`はOrionMainと4WS Mainの生データを扱う両対応デバッグツールであり、形式別のデコーダと表示を持つ。4WS MainのSPI状態応答とCM4からの配信は未実装である。共通パケット自体の意味を変える場合だけ、`version`を更新して共通監視ツールとcraneの受信処理を揃える。
 
 ## 通信と受信規則
 
@@ -104,8 +103,8 @@ OrionMain受信アダプタでは、`vision_based_position_x/y`を位置、`glob
 
 | 変更内容 | 更新する範囲 |
 | --- | --- |
-| OrionMainのフィードバック配置や物理単位 | CM4のOrionMain受信アダプタとOrionMain用デバッグツール |
-| 4WS MainのSPI状態応答 | CM4の4WS受信アダプタと4WS Main用デバッグツール |
+| OrionMainのフィードバック配置や物理単位 | CM4のOrionMain受信アダプタと両対応デバッグツールのOrionMain用デコーダ |
+| 4WS MainのSPI状態応答 | CM4の4WS受信アダプタと両対応デバッグツールの4WS用デコーダ |
 | 共通パケットの意味・配置 | CM4の送信処理とcrane・メインPCの受信処理。`version`を更新する |
 
 craneの制御・監視とメインPCの共通監視ツールは共通パケットだけに依存させる。

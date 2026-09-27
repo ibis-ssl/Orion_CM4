@@ -46,7 +46,6 @@ uv run cm4-control scan
 uv run host-launcher
 uv run cam-viewer --machine-no 10
 uv run robot-feedback-viewer --machine-no 10
-uv run robot-feedback-rerun --machine-no 10
 ```
 
 直接 Python module として実行する場合:

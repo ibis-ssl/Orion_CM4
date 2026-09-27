@@ -64,44 +64,33 @@ uv run cam-viewer --machine-no 10
 
 Orionと4WSを同じ画面で監視するメインPCツールは、CM4が送る[55バイトの共通状態パケット](cm4_status_packet_proposal.md)を使用します。マイコン側の生フィードバックは解釈しません。このツールと共通パケットの送信は未実装です。
 
-## OrionMainの生フィードバック用デバッグツール
+## 生フィードバック用デバッグツール
 
-以下のツールはOrionMainの128バイト生フィードバックを解析します。マイコン側のフィールド変更に合わせて更新するツールであり、Orion/4WS共通の監視ツールとは別です。
+以下のCLIとQtビューアはOrionMainと4WS Mainの128バイト生フィードバックを解析します。先頭バイトから形式を自動判別し、必要なら`--machine-type orion`または`--machine-type 4ws`で指定できます。マイコン側のフィールド変更に合わせて更新するツールであり、共通状態パケットの監視ツールとは別です。4WS Mainの生データ配信は未実装です。
 
 ### `robot-feedback-receiver`
 
-CM4から送信されるOrionMainの生フィードバックをUDP multicastで受信し、128バイトパケットをデコードして標準出力へ出します。
+CM4から送信されるMainの生フィードバックをUDP multicastで受信し、形式別にデコードして標準出力へ出します。
 
 ```powershell
 uv run robot-feedback-receiver --machine-no 3
 uv run robot-feedback-receiver --machine-no 3 --max-packets 10
 uv run robot-feedback-receiver --machine-no 3 --max-packets 1 --receive-timeout 5
 uv run robot-feedback-receiver --machine-no 3 --json
+uv run robot-feedback-receiver --machine-no 3 --machine-type 4ws --json
 ```
 
 ### `robot-feedback-viewer`
 
-OrionMainの生フィードバックをQt GUIで時系列表示します。
+OrionMainと4WS Mainの生フィードバックをQt GUIの形式別タブに表示します。
 
 ```powershell
 uv run robot-feedback-viewer --machine-no 10
 uv run robot-feedback-viewer --machine-no 10 --interface-ip 192.168.20.200
+uv run robot-feedback-viewer --machine-no 10 --machine-type 4ws
 ```
 
-### `robot-feedback-rerun`
-
-OrionMainの生フィードバックをRerunに記録・表示します。
-
-```powershell
-uv run robot-feedback-rerun --machine-no 3
-uv run robot-feedback-rerun --machine-no 3 --max-packets 10
-uv run robot-feedback-rerun --machine-no 3 --max-packets 1 --receive-timeout 5
-uv run robot-feedback-rerun --machine-no 3 --no-spawn
-```
-
-## 4WS Mainの生フィードバック用デバッグツール（予定）
-
-4WS MainのSPI状態応答をCM4が同じ生フィードバック用multicastへ転送し、専用のPCツールで受信・解析します。[SPI通信案](4ws_spi_packet_proposal.md)の状態応答とツールは未実装です。OrionMain用の128バイトデコーダを4WSの応答に共用しません。
+4WS Mainのデコード対象は[SPI通信案](4ws_spi_packet_proposal.md)の種別`0x82`状態通知です。マイコン側で形式が確定したらデコーダと表示項目を更新します。
 
 ## フリート管理ツール
 
@@ -126,6 +115,6 @@ uv run cm4-fleet status --all
 - `host/lib/feedback/receiver.py`
 - `host/apps/robot_feedback_receiver_cli.py`
 - `host/apps/robot_feedback_viewer.py`
-- `host/apps/robot_feedback_rerun.py`
+- `host/lib/feedback/packet_4ws.py`
 - `host/apps/cm4_fleet_cli.py`
 - `host/lib/fleet/`
